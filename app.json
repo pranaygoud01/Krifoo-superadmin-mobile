@@ -28,8 +28,24 @@
       "bundler": "metro"
     },
     "plugins": [
-      "expo-router"
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#0F172A"
+        }
+      ]
     ],
-    "scheme": "krifoo-admin"
+    "scheme": "krifoo-admin",
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "8e0c6426-9675-4b81-a428-1642374aa42b"
+      }
+    },
+    "owner": "krifoos-app"
   }
 }
