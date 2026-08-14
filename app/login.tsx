@@ -136,10 +136,10 @@ export default function LoginScreen() {
         </View>
 
         {/* Configure Backend URL */}
-        <TouchableOpacity style={styles.configBtn} onPress={() => setShowConfigModal(true)}>
+        {/* <TouchableOpacity style={styles.configBtn} onPress={() => setShowConfigModal(true)}>
           <Server size={13} color={Colors.textSubtle} />
           <Text style={styles.configBtnText}>Configure Backend URL</Text>
-        </TouchableOpacity>
+        </TouchableOpacity> */}
       </View>
 
       {/* API URL Config Modal */}
