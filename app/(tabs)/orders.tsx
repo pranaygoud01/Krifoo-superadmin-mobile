@@ -7,7 +7,6 @@ import {
   TextInput,
   RefreshControl,
   ActivityIndicator,
-  Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Header } from '../../components/Header';
@@ -17,43 +16,77 @@ import { OrderDetailModal } from '../../components/OrderDetailModal';
 import { AssignDeliveryModal } from '../../components/AssignDeliveryModal';
 import { Colors } from '../../constants/colors';
 import { orderService } from '../../services/order.service';
+import { useToast } from '../../context/ToastContext';
 import { Order } from '../../types';
 import { Search, ShoppingBag } from 'lucide-react-native';
 
 export default function OrdersScreen() {
   const router = useRouter();
+  const { showToast } = useToast();
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedFilter, setSelectedFilter] = useState<string>('all');
 
+  // Pagination states
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [loadingMore, setLoadingMore] = useState(false);
+
   // Modal states
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [detailModalVisible, setDetailModalVisible] = useState(false);
   const [assignModalVisible, setAssignModalVisible] = useState(false);
 
-  const fetchOrders = async () => {
+  const fetchOrders = async (pageNum = 1, isRefresh = false) => {
     try {
-      const res = await orderService.getAllOrders();
+      if (pageNum === 1) {
+        if (!isRefresh) setLoading(true);
+      } else {
+        setLoadingMore(true);
+      }
+
+      // Backend supports filtering by status
+      const statusParam = selectedFilter !== 'all' ? selectedFilter : undefined;
+
+      const res = await orderService.getAllOrders({
+        page: pageNum,
+        limit: 10,
+        status: statusParam,
+      });
+
       if (res.success && res.data) {
-        setOrders(res.data);
+        if (pageNum === 1) {
+          setOrders(res.data);
+        } else {
+          setOrders((prev) => [...prev, ...res.data!]);
+        }
+        setPage(pageNum);
+        setTotalPages(res.totalPages || 1);
       }
     } catch (e) {
       console.error('Failed fetching orders:', e);
     } finally {
       setLoading(false);
       setRefreshing(false);
+      setLoadingMore(false);
     }
   };
 
   useEffect(() => {
-    fetchOrders();
-  }, []);
+    fetchOrders(1);
+  }, [selectedFilter]);
 
   const onRefresh = () => {
     setRefreshing(true);
-    fetchOrders();
+    fetchOrders(1, true);
+  };
+
+  const handleLoadMore = () => {
+    if (!loadingMore && page < totalPages) {
+      fetchOrders(page + 1);
+    }
   };
 
   const filterOptions = [
@@ -92,12 +125,7 @@ export default function OrdersScreen() {
 
   const filteredOrders = useMemo(() => {
     return orders.filter((order) => {
-      // Status filter
-      if (selectedFilter !== 'all' && order.status !== selectedFilter) {
-        return false;
-      }
-
-      // Search filter
+      // Search filter (on currently loaded list)
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
         const orderIdMatch = order._id?.toLowerCase().includes(q) || order.orderNumber?.toLowerCase().includes(q);
@@ -115,16 +143,16 @@ export default function OrdersScreen() {
 
       return true;
     });
-  }, [orders, selectedFilter, searchQuery]);
+  }, [orders, searchQuery]);
 
   const handleAssignConfirm = async (deliveryPartnerId: string) => {
     if (!selectedOrder) return;
     const res = await orderService.assignDeliveryPartner(selectedOrder._id, deliveryPartnerId);
     if (res.success) {
-      Alert.alert('Success', 'Delivery partner successfully assigned to order.');
-      fetchOrders();
+      showToast({ title: 'Success', message: 'Delivery partner successfully assigned to order.', type: 'success' });
+      fetchOrders(1, true);
     } else {
-      Alert.alert('Error', res.message || 'Failed to assign delivery partner.');
+      showToast({ title: 'Error', message: res.message || 'Failed to assign delivery partner.', type: 'error' });
     }
   };
 
@@ -132,25 +160,33 @@ export default function OrdersScreen() {
     try {
       const res = await orderService.updateOrderStatus(orderId, newStatus);
       if (res.success) {
-        Alert.alert('Success', `Order status updated to '${newStatus}'.`);
+        showToast({ title: 'Success', message: `Order status updated to '${newStatus}'.`, type: 'success' });
         // Update local state
         if (selectedOrder && selectedOrder._id === orderId) {
           setSelectedOrder({ ...selectedOrder, status: newStatus });
         }
-        fetchOrders();
+        fetchOrders(1, true);
       } else {
-        Alert.alert('Error', res.message || 'Failed to update order status.');
+        showToast({ title: 'Error', message: res.message || 'Failed to update order status.', type: 'error' });
       }
     } catch (e) {
-      Alert.alert('Error', 'An unexpected error occurred while updating status.');
+      showToast({ title: 'Error', message: 'An unexpected error occurred while updating status.', type: 'error' });
     }
+  };
+
+  const renderFooter = () => {
+    if (!loadingMore) return null;
+    return (
+      <View style={styles.footerLoader}>
+        <ActivityIndicator size="small" color={Colors.primary} />
+      </View>
+    );
   };
 
   return (
     <View style={styles.container}>
       <Header
         title="Krifoo Admin"
-      // subtitle="Super Admin Management Portal"
       />
 
       {/* Search Input */}
@@ -209,6 +245,9 @@ export default function OrdersScreen() {
               tintColor={Colors.primary}
             />
           }
+          onEndReached={handleLoadMore}
+          onEndReachedThreshold={0.5}
+          ListFooterComponent={renderFooter}
           renderItem={({ item }) => (
             <OrderCard
               order={item}
@@ -302,5 +341,9 @@ const styles = StyleSheet.create({
     fontSize: 13,
     textAlign: 'center',
     marginTop: 4,
+  },
+  footerLoader: {
+    paddingVertical: 16,
+    alignItems: 'center',
   },
 });

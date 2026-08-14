@@ -27,14 +27,23 @@ export interface Restaurant {
   _id: string;
   restaurantName: string;
   ownerName?: string;
+  ownerFullName?: string;
   email?: string;
   phoneNumber?: string;
   address?: {
-    street?: string;
+    shopNo?: string;
+    floor?: string;
+    area?: string;
     city?: string;
+    landmark?: string;
+    street?: string;
     state?: string;
     pincode?: string;
     formattedAddress?: string;
+    coordinates?: {
+      type: 'Point';
+      coordinates: [number, number];
+    };
   } | string;
   cuisineTypes?: string[];
   verificationStatus: VerificationStatus;

@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
 import { Colors } from '../constants/colors';
 import { getApiBaseUrl, setApiBaseUrl } from '../services/api';
 import { ShieldCheck, Server, Lock, Mail, Eye, EyeOff } from 'lucide-react-native';
@@ -31,6 +32,7 @@ export default function LoginScreen() {
   const [apiUrlInput, setApiUrlInput] = useState('');
 
   const { login } = useAuth();
+  const { showToast } = useToast();
   const router = useRouter();
 
   useEffect(() => {
@@ -57,7 +59,7 @@ export default function LoginScreen() {
     if (!apiUrlInput) return;
     await setApiBaseUrl(apiUrlInput.trim());
     setShowConfigModal(false);
-    Alert.alert('Saved', `Backend URL updated to:\n${apiUrlInput.trim()}`);
+    showToast({ title: 'Saved', message: `Backend URL updated to:\n${apiUrlInput.trim()}`, type: 'success' });
   };
 
   return (

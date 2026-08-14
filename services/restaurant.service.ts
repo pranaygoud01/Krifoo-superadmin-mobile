@@ -2,9 +2,24 @@ import { apiRequest } from './api';
 import { Restaurant, VerificationStatus } from '../types';
 
 export const restaurantService = {
-  async getRestaurants(status?: string): Promise<{ success: boolean; data?: Restaurant[]; message?: string }> {
-    const query = status && status !== 'all' ? `?status=${encodeURIComponent(status)}` : '';
-    const res = await apiRequest(`/api/admin/restaurants${query}`, {
+  async getRestaurants(filters?: {
+    status?: string;
+    page?: number;
+    limit?: number;
+  }): Promise<{
+    success: boolean;
+    data?: Restaurant[];
+    totalPages?: number;
+    currentPage?: number;
+    message?: string;
+  }> {
+    const params = new URLSearchParams();
+    if (filters?.status && filters.status !== 'all') params.append('status', filters.status);
+    if (filters?.page) params.append('page', String(filters.page));
+    if (filters?.limit) params.append('limit', String(filters.limit));
+
+    const queryString = params.toString() ? `?${params.toString()}` : '';
+    const res = await apiRequest(`/api/admin/restaurants${queryString}`, {
       method: 'GET',
     });
     return res;

@@ -10,7 +10,6 @@ interface RestaurantCardProps {
   onViewDetails: (restaurant: Restaurant) => void;
   onVerifyStatusChange: (restaurant: Restaurant, status: 'approved' | 'rejected') => void;
   onToggleActive: (restaurant: Restaurant, currentActive: boolean) => void;
-  onDelete: (restaurant: Restaurant) => void;
 }
 
 export const RestaurantCard: React.FC<RestaurantCardProps> = ({
@@ -18,10 +17,13 @@ export const RestaurantCard: React.FC<RestaurantCardProps> = ({
   onViewDetails,
   onVerifyStatusChange,
   onToggleActive,
-  onDelete,
 }) => {
-  const addressText = typeof restaurant.address === 'object'
-    ? restaurant.address?.formattedAddress || `${restaurant.address?.street || ''}, ${restaurant.address?.city || ''}`
+  const addr = restaurant.address;
+  const addressText = typeof addr === 'object'
+    ? addr?.formattedAddress ||
+    [addr?.shopNo, addr?.floor, addr?.street, addr?.area, addr?.city, addr?.pincode]
+      .filter(Boolean)
+      .join(', ')
     : restaurant.address || 'Address not specified';
 
   // Backend aggregation nests verificationStatus inside documents
@@ -47,9 +49,9 @@ export const RestaurantCard: React.FC<RestaurantCardProps> = ({
           <Text style={styles.name} numberOfLines={1}>
             {restaurant.restaurantName}
           </Text>
-          {restaurant.ownerName ? (
+          {restaurant.ownerFullName ?? restaurant.ownerName ? (
             <Text style={styles.ownerText} numberOfLines={1}>
-              Owner: {restaurant.ownerName}
+              Owner: {restaurant.ownerFullName ?? restaurant.ownerName}
             </Text>
           ) : null}
 
@@ -65,7 +67,7 @@ export const RestaurantCard: React.FC<RestaurantCardProps> = ({
       <View style={styles.detailsContainer}>
         <View style={styles.infoRow}>
           <MapPin size={14} color={Colors.textSubtle} style={styles.icon} />
-          <Text style={styles.infoText} numberOfLines={2}>
+          <Text style={styles.infoText}>
             {addressText}
           </Text>
         </View>
@@ -103,7 +105,8 @@ export const RestaurantCard: React.FC<RestaurantCardProps> = ({
             style={styles.iconBtn}
             onPress={() => onViewDetails(restaurant)}
           >
-            <Eye size={18} color={Colors.info} />
+            <Eye size={15} color={Colors.info} />
+            <Text style={styles.viewDetailsText} numberOfLines={1}>View</Text>
           </TouchableOpacity>
 
           {verificationStatus === 'pending' && (
@@ -125,13 +128,6 @@ export const RestaurantCard: React.FC<RestaurantCardProps> = ({
               </TouchableOpacity>
             </>
           )}
-
-          <TouchableOpacity
-            style={styles.iconBtn}
-            onPress={() => onDelete(restaurant)}
-          >
-            <Trash2 size={18} color={Colors.danger} />
-          </TouchableOpacity>
         </View>
       </View>
     </View>
@@ -223,30 +219,43 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   actionsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+    flexDirection: 'column',
+    alignItems: 'flex-end',
+    gap: 6,
   },
   iconBtn: {
-    padding: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
     backgroundColor: Colors.cardSurface,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: Colors.cardBorder,
+    minWidth: 90,
   },
   actionBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
     borderRadius: 8,
+    minWidth: 90,
   },
   approveBtn: {
     backgroundColor: Colors.primary,
   },
   approveBtnText: {
     color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 12,
+  },
+  viewDetailsText: {
+    color: Colors.text,
     fontWeight: '700',
     fontSize: 12,
   },

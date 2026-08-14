@@ -38,9 +38,9 @@ export default function DashboardScreen() {
     setRefreshing(true);
     try {
       const [restRes, orderRes, userRes] = await Promise.all([
-        restaurantService.getRestaurants(),
-        orderService.getAllOrders(),
-        userService.getAllUsers(),
+        restaurantService.getRestaurants({ limit: 1000 }),
+        orderService.getAllOrders({ limit: 1000 }),
+        userService.getAllUsers({ limit: 1000 }),
       ]);
 
       if (restRes.success && restRes.data) {
@@ -50,7 +50,7 @@ export default function DashboardScreen() {
         setOrders(orderRes.data);
       }
       if (userRes.success && userRes.data) {
-        setTotalUsersCount(userRes.data.length);
+        setTotalUsersCount(userRes.totalUsers || userRes.data.length);
       }
     } catch (e) {
       console.error('Failed loading dashboard data:', e);
@@ -66,7 +66,12 @@ export default function DashboardScreen() {
   // Compute stats
   const pendingApprovals = restaurants.filter((r) => r.verificationStatus === 'pending').length;
   const activeRestaurants = restaurants.filter((r) => r.isActive).length;
-  const totalRevenue = orders.reduce((sum, o) => sum + (o.pricing?.total || 0), 0);
+  const totalRevenue = orders
+    .filter((o) => o.status === 'delivered')
+    .reduce((sum, o) => {
+      const amt = o.pricing?.totalAmount ?? o.pricing?.total ?? o.totalAmount ?? o.totalPrice ?? 0;
+      return sum + amt;
+    }, 0);
   const activeOrdersCount = orders.filter(
     (o) => o.status !== 'delivered' && o.status !== 'cancelled'
   ).length;
@@ -155,7 +160,7 @@ export default function DashboardScreen() {
           <StatCard
             title="All Orders"
             value={orders.length}
-            subtitle={`${activeOrdersCount} live / active`}
+            subtitle={`${orders.filter((o) => o.status === 'placed').length} placed orders`}
             icon={<ShoppingBag size={18} color={Colors.info} />}
             accentColor={Colors.info}
             onPress={() => router.push('/(tabs)/orders')}
@@ -186,7 +191,7 @@ export default function DashboardScreen() {
           <View style={styles.sectionHeaderRow}>
             <Text style={styles.sectionHeader}>Recent Orders</Text>
             <TouchableOpacity onPress={() => router.push('/(tabs)/orders')}>
-              <Text style={styles.seeAllText}>See All ({orders.length})</Text>
+              <Text style={styles.seeAllText}>See All </Text>
             </TouchableOpacity>
           </View>
 

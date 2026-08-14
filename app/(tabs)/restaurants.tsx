@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -9,47 +9,87 @@ import {
   ActivityIndicator,
   Alert,
 } from 'react-native';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { Header } from '../../components/Header';
 import { FilterChip } from '../../components/FilterChip';
 import { RestaurantCard } from '../../components/RestaurantCard';
-import { RestaurantDetailModal } from '../../components/RestaurantDetailModal';
+import { ConfirmModal } from '../../components/ConfirmModal';
 import { Colors } from '../../constants/colors';
 import { restaurantService } from '../../services/restaurant.service';
+import { useToast } from '../../context/ToastContext';
 import { Restaurant, VerificationStatus } from '../../types';
 import { Search, Store } from 'lucide-react-native';
 
 export default function RestaurantsScreen() {
+  const router = useRouter();
+  const { showToast } = useToast();
   const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedFilter, setSelectedFilter] = useState<string>('all');
 
-  // Selected restaurant for verification/detail modal
-  const [selectedRestaurant, setSelectedRestaurant] = useState<Restaurant | null>(null);
-  const [modalVisible, setModalVisible] = useState(false);
+  // Confirm Deactivate Switch States
+  const [deactivateModalVisible, setDeactivateModalVisible] = useState(false);
+  const [selectedRestaurantToDeactivate, setSelectedRestaurantToDeactivate] = useState<Restaurant | null>(null);
 
-  const fetchRestaurants = async () => {
+  // Pagination states
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [loadingMore, setLoadingMore] = useState(false);
+
+  const fetchRestaurants = async (pageNum = 1, isRefresh = false) => {
     try {
-      const res = await restaurantService.getRestaurants();
+      if (pageNum === 1) {
+        if (!isRefresh) setLoading(true);
+      } else {
+        setLoadingMore(true);
+      }
+
+      // Backend supports filtering by status (pending, approved, rejected)
+      const statusParam = ['pending', 'approved', 'rejected'].includes(selectedFilter)
+        ? selectedFilter
+        : undefined;
+
+      const res = await restaurantService.getRestaurants({
+        page: pageNum,
+        limit: 10,
+        status: statusParam,
+      });
+
       if (res.success && res.data) {
-        setRestaurants(res.data);
+        if (pageNum === 1) {
+          setRestaurants(res.data);
+        } else {
+          setRestaurants((prev) => [...prev, ...res.data!]);
+        }
+        setPage(pageNum);
+        setTotalPages(res.totalPages || 1);
       }
     } catch (e) {
       console.error('Failed fetching restaurants:', e);
     } finally {
       setLoading(false);
       setRefreshing(false);
+      setLoadingMore(false);
     }
   };
 
-  useEffect(() => {
-    fetchRestaurants();
-  }, []);
+  useFocusEffect(
+    useCallback(() => {
+      fetchRestaurants(1, true);
+    }, [selectedFilter])
+  );
 
   const onRefresh = () => {
     setRefreshing(true);
-    fetchRestaurants();
+    fetchRestaurants(1, true);
+  };
+
+  const handleLoadMore = () => {
+    if (!loadingMore && page < totalPages) {
+      fetchRestaurants(page + 1);
+    }
   };
 
   // Status Filter options
@@ -84,18 +124,15 @@ export default function RestaurantsScreen() {
 
   const filteredRestaurants = useMemo(() => {
     return restaurants.filter((item) => {
-      // Filter by category tab
-      if (selectedFilter === 'pending' && item.verificationStatus !== 'pending') return false;
-      if (selectedFilter === 'approved' && item.verificationStatus !== 'approved') return false;
-      if (selectedFilter === 'rejected' && item.verificationStatus !== 'rejected') return false;
+      // Local filters for active/inactive since backend getRestaurantsForAdmin does not support active/inactive filter parameter directly.
       if (selectedFilter === 'active' && !item.isActive) return false;
       if (selectedFilter === 'inactive' && item.isActive) return false;
 
-      // Filter by search query
+      // Filter by search query (on currently loaded list)
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
         const nameMatch = item.restaurantName?.toLowerCase().includes(q);
-        const ownerMatch = item.ownerName?.toLowerCase().includes(q);
+        const ownerMatch = (item.ownerFullName ?? item.ownerName)?.toLowerCase().includes(q);
         const emailMatch = item.email?.toLowerCase().includes(q);
         const phoneMatch = item.phoneNumber?.toLowerCase().includes(q);
         return nameMatch || ownerMatch || emailMatch || phoneMatch;
@@ -113,48 +150,50 @@ export default function RestaurantsScreen() {
   ) => {
     const res = await restaurantService.verifyRestaurant(restaurant._id, newStatus, remarks);
     if (res.success) {
-      Alert.alert(
-        'Status Updated',
-        `Restaurant '${restaurant.restaurantName}' verification set to: ${newStatus.toUpperCase()}`
-      );
-      setModalVisible(false);
-      fetchRestaurants();
+      showToast({
+        title: 'Status Updated',
+        message: `Restaurant '${restaurant.restaurantName}' verification set to: ${newStatus.toUpperCase()}`,
+        type: 'success',
+      });
+      fetchRestaurants(1, true);
     } else {
-      Alert.alert('Error', res.message || 'Failed to update verification status.');
+      showToast({ title: 'Error', message: res.message || 'Failed to update verification status.', type: 'error' });
     }
   };
 
   const handleToggleActive = async (restaurant: Restaurant, currentActive: boolean) => {
-    const res = await restaurantService.toggleActiveStatus(restaurant._id, currentActive);
-    if (res.success) {
-      setRestaurants((prev) =>
-        prev.map((r) => (r._id === restaurant._id ? { ...r, isActive: currentActive } : r))
-      );
+    // If we are deactivating (currentActive is false), show confirmation modal
+    if (!currentActive) {
+      setSelectedRestaurantToDeactivate(restaurant);
+      setDeactivateModalVisible(true);
     } else {
-      Alert.alert('Error', res.message || 'Failed to toggle active status.');
+      // Activating directly
+      await performToggleActive(restaurant, true);
     }
   };
 
-  const handleDeleteRestaurant = (restaurant: Restaurant) => {
-    Alert.alert(
-      'Confirm Permanent Delete',
-      `Are you sure you want to delete '${restaurant.restaurantName}'? This will also remove all products, orders, and connected data!`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            const res = await restaurantService.deleteRestaurant(restaurant._id);
-            if (res.success) {
-              setRestaurants((prev) => prev.filter((r) => r._id !== restaurant._id));
-              Alert.alert('Deleted', 'Restaurant deleted successfully.');
-            } else {
-              Alert.alert('Error', res.message || 'Failed to delete restaurant.');
-            }
-          },
-        },
-      ]
+  const performToggleActive = async (restaurant: Restaurant, nextActive: boolean) => {
+    const res = await restaurantService.toggleActiveStatus(restaurant._id, nextActive);
+    if (res.success) {
+      setRestaurants((prev) =>
+        prev.map((r) => (r._id === restaurant._id ? { ...r, isActive: nextActive } : r))
+      );
+      showToast({
+        title: 'Active Status Changed',
+        message: `Restaurant '${restaurant.restaurantName}' is now ${nextActive ? 'active' : 'inactive'}.`,
+        type: 'success',
+      });
+    } else {
+      showToast({ title: 'Error', message: res.message || 'Failed to toggle active status.', type: 'error' });
+    }
+  };
+
+  const renderFooter = () => {
+    if (!loadingMore) return null;
+    return (
+      <View style={styles.footerLoader}>
+        <ActivityIndicator size="small" color={Colors.primary} />
+      </View>
     );
   };
 
@@ -220,30 +259,39 @@ export default function RestaurantsScreen() {
               tintColor={Colors.primary}
             />
           }
+          onEndReached={handleLoadMore}
+          onEndReachedThreshold={0.5}
+          ListFooterComponent={renderFooter}
           renderItem={({ item }) => (
             <RestaurantCard
               restaurant={item}
               onViewDetails={(r) => {
-                setSelectedRestaurant(r);
-                setModalVisible(true);
+                router.push({ pathname: '/restaurant-details', params: { restaurantId: r._id } });
               }}
               onVerifyStatusChange={(r, status) => handleVerifyStatusChange(r, status)}
               onToggleActive={(r, active) => handleToggleActive(r, active)}
-              onDelete={(r) => handleDeleteRestaurant(r)}
             />
           )}
         />
       )}
 
-      {/* Restaurant Detail & Verification Modal */}
-      <RestaurantDetailModal
-        visible={modalVisible}
-        restaurant={selectedRestaurant}
-        onClose={() => setModalVisible(false)}
-        onUpdateVerification={async (status, remarks) => {
-          if (selectedRestaurant) {
-            await handleVerifyStatusChange(selectedRestaurant, status, remarks);
+      {/* Confirm Deactivate Modal */}
+      <ConfirmModal
+        visible={deactivateModalVisible}
+        title="Deactivate Restaurant"
+        message={`Are you sure you want to deactivate '${selectedRestaurantToDeactivate?.restaurantName || 'this restaurant'}'? Customers will not be able to view their menu or place orders.`}
+        confirmText="Deactivate"
+        isDestructive={true}
+        onConfirm={async () => {
+          if (selectedRestaurantToDeactivate) {
+            await performToggleActive(selectedRestaurantToDeactivate, false);
           }
+          setDeactivateModalVisible(false);
+          setSelectedRestaurantToDeactivate(null);
+        }}
+        onClose={() => {
+          setDeactivateModalVisible(false);
+          setSelectedRestaurantToDeactivate(null);
         }}
       />
     </View>
@@ -305,5 +353,9 @@ const styles = StyleSheet.create({
     fontSize: 13,
     textAlign: 'center',
     marginTop: 4,
+  },
+  footerLoader: {
+    paddingVertical: 16,
+    alignItems: 'center',
   },
 });

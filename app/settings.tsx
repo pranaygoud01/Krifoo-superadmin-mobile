@@ -6,13 +6,14 @@ import {
   ScrollView,
   TextInput,
   TouchableOpacity,
-  Alert,
   ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Header } from '../components/Header';
-import { Colors } from '../constants/colors';
+import { ConfirmModal } from '../components/ConfirmModal';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
+import { Colors } from '../constants/colors';
 import { getApiBaseUrl, setApiBaseUrl } from '../services/api';
 import { settingsService } from '../services/settings.service';
 import { Category, DeliveryChargeTier } from '../types';
@@ -34,12 +35,18 @@ import {
 
 export default function SettingsScreen() {
   const { user, logout } = useAuth();
+  const { showToast } = useToast();
   const router = useRouter();
 
   const [apiUrl, setApiUrl] = useState('');
   const [categories, setCategories] = useState<Category[]>([]);
   const [deliveryCharges, setDeliveryCharges] = useState<DeliveryChargeTier[]>([]);
   const [loading, setLoading] = useState(false);
+
+  // Confirm Modal States
+  const [deleteTierModalVisible, setDeleteTierModalVisible] = useState(false);
+  const [selectedTierToDelete, setSelectedTierToDelete] = useState<{ id: string; distance: number } | null>(null);
+  const [logoutModalVisible, setLogoutModalVisible] = useState(false);
 
   // Toggle states
   const [showCategories, setShowCategories] = useState(false);
@@ -84,7 +91,7 @@ export default function SettingsScreen() {
   const handleSaveApiUrl = async () => {
     if (!apiUrl.trim()) return;
     await setApiBaseUrl(apiUrl.trim());
-    Alert.alert('Saved', 'API Base URL updated successfully.');
+    showToast({ title: 'Saved', message: 'API Base URL updated successfully.', type: 'success' });
   };
 
   // --- Delivery Charge Actions ---
@@ -99,11 +106,11 @@ export default function SettingsScreen() {
     const fee = parseFloat(editCharge);
 
     if (isNaN(dist) || dist <= 0) {
-      Alert.alert('Invalid Input', 'Max distance must be a valid positive number.');
+      showToast({ title: 'Invalid Input', message: 'Max distance must be a valid positive number.', type: 'warning' });
       return;
     }
     if (isNaN(fee) || fee < 0) {
-      Alert.alert('Invalid Input', 'Delivery charge must be a valid positive number.');
+      showToast({ title: 'Invalid Input', message: 'Delivery charge must be a valid positive number.', type: 'warning' });
       return;
     }
 
@@ -115,14 +122,14 @@ export default function SettingsScreen() {
       });
 
       if (res.success) {
-        Alert.alert('Success', 'Delivery charge tier updated.');
+        showToast({ title: 'Success', message: 'Delivery charge tier updated.', type: 'success' });
         setEditingTierId(null);
         loadGlobalConfig();
       } else {
-        Alert.alert('Error', res.message || 'Failed to update delivery charge.');
+        showToast({ title: 'Error', message: res.message || 'Failed to update delivery charge.', type: 'error' });
       }
     } catch (e) {
-      Alert.alert('Error', 'An error occurred while updating delivery charge tier.');
+      showToast({ title: 'Error', message: 'An error occurred while updating delivery charge tier.', type: 'error' });
     } finally {
       setSubmittingTier(false);
     }
@@ -133,11 +140,11 @@ export default function SettingsScreen() {
     const fee = parseFloat(newCharge);
 
     if (isNaN(dist) || dist <= 0) {
-      Alert.alert('Invalid Input', 'Max distance must be a valid positive number.');
+      showToast({ title: 'Invalid Input', message: 'Max distance must be a valid positive number.', type: 'warning' });
       return;
     }
     if (isNaN(fee) || fee < 0) {
-      Alert.alert('Invalid Input', 'Delivery charge must be a valid positive number.');
+      showToast({ title: 'Invalid Input', message: 'Delivery charge must be a valid positive number.', type: 'warning' });
       return;
     }
 
@@ -145,63 +152,53 @@ export default function SettingsScreen() {
     try {
       const res = await settingsService.createDeliveryCharge(dist, fee);
       if (res.success) {
-        Alert.alert('Success', 'New delivery charge tier added.');
+        showToast({ title: 'Success', message: 'New delivery charge tier added.', type: 'success' });
         setIsAddingTier(false);
         setNewMaxDistance('');
         setNewCharge('');
         loadGlobalConfig();
       } else {
-        Alert.alert('Error', res.message || 'Failed to create delivery charge tier.');
+        showToast({ title: 'Error', message: res.message || 'Failed to create delivery charge tier.', type: 'error' });
       }
     } catch (e) {
-      Alert.alert('Error', 'An error occurred while creating delivery charge tier.');
+      showToast({ title: 'Error', message: 'An error occurred while creating delivery charge tier.', type: 'error' });
     } finally {
       setSubmittingTier(false);
     }
   };
 
-  const handleDeleteTier = async (tierId: string, maxDistance: number) => {
-    Alert.alert(
-      'Delete Tier',
-      `Are you sure you want to delete the ${maxDistance} miles delivery charge tier?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            setSubmittingTier(true);
-            try {
-              const res = await settingsService.deleteDeliveryCharge(tierId);
-              if (res.success) {
-                Alert.alert('Deleted', 'Delivery charge tier deleted.');
-                loadGlobalConfig();
-              } else {
-                Alert.alert('Error', res.message || 'Failed to delete tier.');
-              }
-            } catch (e) {
-              Alert.alert('Error', 'Failed to delete delivery charge tier.');
-            } finally {
-              setSubmittingTier(false);
-            }
-          },
-        },
-      ]
-    );
+  const handleDeleteTier = (tierId: string, maxDistance: number) => {
+    setSelectedTierToDelete({ id: tierId, distance: maxDistance });
+    setDeleteTierModalVisible(true);
   };
 
-  const handleLogout = async () => {
-    Alert.alert('Logout', 'Are you sure you want to log out?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Logout',
-        style: 'destructive',
-        onPress: async () => {
-          await logout();
-          router.replace('/login');
-        },
-      },
-    ]);
+  const handleDeleteTierConfirm = async () => {
+    if (!selectedTierToDelete) return;
+    const { id: tierId } = selectedTierToDelete;
+    setSubmittingTier(true);
+    try {
+      const res = await settingsService.deleteDeliveryCharge(tierId);
+      if (res.success) {
+        showToast({ title: 'Deleted', message: 'Delivery charge tier deleted.', type: 'success' });
+        loadGlobalConfig();
+      } else {
+        showToast({ title: 'Error', message: res.message || 'Failed to delete tier.', type: 'error' });
+      }
+    } catch (e) {
+      showToast({ title: 'Error', message: 'Failed to delete delivery charge tier.', type: 'error' });
+    } finally {
+      setSubmittingTier(false);
+      setSelectedTierToDelete(null);
+    }
+  };
+
+  const handleLogout = () => {
+    setLogoutModalVisible(true);
+  };
+
+  const handleLogoutConfirm = async () => {
+    await logout();
+    router.replace('/login');
   };
 
   return (
@@ -476,6 +473,31 @@ export default function SettingsScreen() {
           <Text style={styles.logoutBtnText}>Log Out of Admin</Text>
         </TouchableOpacity>
       </ScrollView>
+
+      {/* Delete Tier Confirm Modal */}
+      <ConfirmModal
+        visible={deleteTierModalVisible}
+        title="Delete Tier"
+        message={`Are you sure you want to delete the ${selectedTierToDelete?.distance || ''} miles delivery charge tier?`}
+        confirmText="Delete"
+        isDestructive={true}
+        onConfirm={handleDeleteTierConfirm}
+        onClose={() => {
+          setDeleteTierModalVisible(false);
+          setSelectedTierToDelete(null);
+        }}
+      />
+
+      {/* Logout Confirm Modal */}
+      <ConfirmModal
+        visible={logoutModalVisible}
+        title="Logout"
+        message="Are you sure you want to log out?"
+        confirmText="Logout"
+        isDestructive={true}
+        onConfirm={handleLogoutConfirm}
+        onClose={() => setLogoutModalVisible(false)}
+      />
     </View>
   );
 }

@@ -14,39 +14,87 @@ import {
 import { Header } from '../../components/Header';
 import { FilterChip } from '../../components/FilterChip';
 import { StatusBadge } from '../../components/StatusBadge';
+import { UserDetailModal } from '../../components/UserDetailModal';
+import { ConfirmModal } from '../../components/ConfirmModal';
 import { Colors } from '../../constants/colors';
 import { userService } from '../../services/user.service';
+import { useToast } from '../../context/ToastContext';
 import { UserAccount } from '../../types';
 import { Search, Users, User, Bike, Trash2, Mail, Phone } from 'lucide-react-native';
 
 export default function UsersScreen() {
+  const { showToast } = useToast();
   const [users, setUsers] = useState<UserAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedRole, setSelectedRole] = useState<string>('all');
 
-  const fetchUsers = async () => {
+  // Detail Modal States
+  const [selectedUser, setSelectedUser] = useState<UserAccount | null>(null);
+  const [detailModalVisible, setDetailModalVisible] = useState(false);
+
+  // User Deletion States
+  const [deleteUserModalVisible, setDeleteUserModalVisible] = useState(false);
+  const [selectedUserToDelete, setSelectedUserToDelete] = useState<UserAccount | null>(null);
+
+  // Pagination states
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [loadingMore, setLoadingMore] = useState(false);
+
+  const fetchUsers = async (pageNum = 1, isRefresh = false) => {
     try {
-      const res = await userService.getAllUsers();
+      if (pageNum === 1) {
+        if (!isRefresh) setLoading(true);
+      } else {
+        setLoadingMore(true);
+      }
+
+      // Backend supports: userType, search, page, limit
+      const res = await userService.getAllUsers({
+        userType: selectedRole !== 'all' ? selectedRole : undefined,
+        search: searchQuery.trim() || undefined,
+        page: pageNum,
+        limit: 15,
+      });
+
       if (res.success && res.data) {
-        setUsers(res.data);
+        if (pageNum === 1) {
+          setUsers(res.data);
+        } else {
+          setUsers((prev) => [...prev, ...res.data!]);
+        }
+        setPage(pageNum);
+        setTotalPages(res.totalPages || 1);
       }
     } catch (e) {
       console.error('Failed fetching users:', e);
     } finally {
       setLoading(false);
       setRefreshing(false);
+      setLoadingMore(false);
     }
   };
 
+  // Debounced effect for search/filter fetches
   useEffect(() => {
-    fetchUsers();
-  }, []);
+    const delayDebounce = setTimeout(() => {
+      fetchUsers(1);
+    }, 400);
+
+    return () => clearTimeout(delayDebounce);
+  }, [selectedRole, searchQuery]);
 
   const onRefresh = () => {
     setRefreshing(true);
-    fetchUsers();
+    fetchUsers(1, true);
+  };
+
+  const handleLoadMore = () => {
+    if (!loadingMore && page < totalPages) {
+      fetchUsers(page + 1);
+    }
   };
 
   const filterOptions = [
@@ -63,55 +111,48 @@ export default function UsersScreen() {
     },
   ];
 
-  const filteredUsers = useMemo(() => {
-    return users.filter((u) => {
-      if (selectedRole !== 'all' && u.userType !== selectedRole) {
-        return false;
-      }
-
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase();
-        const nameMatch = u.fullName?.toLowerCase().includes(q);
-        const emailMatch = u.email?.toLowerCase().includes(q);
-        const phoneMatch = u.phoneNumber?.toLowerCase().includes(q);
-        return nameMatch || emailMatch || phoneMatch;
-      }
-
-      return true;
-    });
-  }, [users, selectedRole, searchQuery]);
-
   const handleToggleActive = async (user: UserAccount, currentActive: boolean) => {
     const res = await userService.toggleUserActive(user._id, currentActive);
     if (res.success) {
       setUsers((prev) =>
         prev.map((u) => (u._id === user._id ? { ...u, isActive: currentActive } : u))
       );
+      setSelectedUser((prev) => (prev && prev._id === user._id ? { ...prev, isActive: currentActive } : prev));
+      showToast({
+        title: 'Status Updated',
+        message: `Account status set to ${currentActive ? 'active' : 'inactive'}.`,
+        type: 'success',
+      });
     } else {
-      Alert.alert('Error', res.message || 'Failed to update user status.');
+      showToast({ title: 'Error', message: res.message || 'Failed to update user status.', type: 'error' });
     }
   };
 
   const handleDeleteUser = (user: UserAccount) => {
-    Alert.alert(
-      'Confirm Delete',
-      `Permanently delete user '${user.fullName}' (${user.email})?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            const res = await userService.deleteUser(user._id);
-            if (res.success) {
-              setUsers((prev) => prev.filter((u) => u._id !== user._id));
-              Alert.alert('Deleted', 'User removed successfully.');
-            } else {
-              Alert.alert('Error', res.message || 'Failed to delete user.');
-            }
-          },
-        },
-      ]
+    setSelectedUserToDelete(user);
+    setDeleteUserModalVisible(true);
+  };
+
+  const handleDeleteUserConfirm = async () => {
+    if (!selectedUserToDelete) return;
+    const { _id: userId } = selectedUserToDelete;
+    const res = await userService.deleteUser(userId);
+    if (res.success) {
+      setUsers((prev) => prev.filter((u) => u._id !== userId));
+      showToast({ title: 'Deleted', message: 'User removed successfully.', type: 'success' });
+    } else {
+      showToast({ title: 'Error', message: res.message || 'Failed to delete user.', type: 'error' });
+    }
+    setDeleteUserModalVisible(false);
+    setSelectedUserToDelete(null);
+  };
+
+  const renderFooter = () => {
+    if (!loadingMore) return null;
+    return (
+      <View style={styles.footerLoader}>
+        <ActivityIndicator size="small" color={Colors.primary} />
+      </View>
     );
   };
 
@@ -121,19 +162,19 @@ export default function UsersScreen() {
         title="Krifoo Admin"
       />
 
-      {/* Search Input */}
+      {/* Search Container */}
       <View style={styles.searchContainer}>
         <Search size={18} color={Colors.textSubtle} style={styles.searchIcon} />
         <TextInput
           style={styles.searchInput}
-          placeholder="Search users by name, email, or phone..."
+          placeholder="Search by name, email, or phone..."
           placeholderTextColor={Colors.textSubtle}
           value={searchQuery}
           onChangeText={setSearchQuery}
         />
       </View>
 
-      {/* Role Filter Chips */}
+      {/* Filter Row */}
       <View style={styles.filterRow}>
         <FlatList
           horizontal={true}
@@ -151,21 +192,23 @@ export default function UsersScreen() {
         />
       </View>
 
-      {/* Users List */}
+      {/* User Cards List */}
       {loading ? (
         <View style={styles.centerBox}>
           <ActivityIndicator size="large" color={Colors.primary} />
-          <Text style={styles.loadingText}>Fetching platform users...</Text>
+          <Text style={styles.loadingText}>Fetching registered users...</Text>
         </View>
-      ) : filteredUsers.length === 0 ? (
+      ) : users.length === 0 ? (
         <View style={styles.centerBox}>
           <Users size={48} color={Colors.cardBorder} />
           <Text style={styles.emptyTitle}>No Users Found</Text>
-          <Text style={styles.emptySub}>No users match the search filter.</Text>
+          <Text style={styles.emptySub}>
+            No users match the selected role or search query.
+          </Text>
         </View>
       ) : (
         <FlatList
-          data={filteredUsers}
+          data={users}
           keyExtractor={(item) => item._id}
           contentContainerStyle={styles.listContent}
           refreshControl={
@@ -175,8 +218,18 @@ export default function UsersScreen() {
               tintColor={Colors.primary}
             />
           }
+          onEndReached={handleLoadMore}
+          onEndReachedThreshold={0.5}
+          ListFooterComponent={renderFooter}
           renderItem={({ item }) => (
-            <View style={styles.userCard}>
+            <TouchableOpacity
+              style={styles.userCard}
+              onPress={() => {
+                setSelectedUser(item);
+                setDetailModalVisible(true);
+              }}
+              activeOpacity={0.7}
+            >
               <View style={styles.userHeader}>
                 <View style={styles.avatarCircle}>
                   {item.userType === 'delivery_partner' ? (
@@ -219,31 +272,36 @@ export default function UsersScreen() {
                   </Text>
                 ) : null}
               </View>
-
-              <View style={styles.divider} />
-
-              <View style={styles.cardFooter}>
-                <View style={styles.switchRow}>
-                  <Text style={styles.switchLabel}>Active Account:</Text>
-                  <Switch
-                    value={item.isActive}
-                    onValueChange={(val) => handleToggleActive(item, val)}
-                    trackColor={{ false: '#334155', true: '#10B981' }}
-                    thumbColor={item.isActive ? '#FFFFFF' : '#94A3B8'}
-                  />
-                </View>
-
-                <TouchableOpacity
-                  style={styles.deleteBtn}
-                  onPress={() => handleDeleteUser(item)}
-                >
-                  <Trash2 size={16} color={Colors.danger} />
-                </TouchableOpacity>
-              </View>
-            </View>
+            </TouchableOpacity>
           )}
         />
       )}
+
+      {/* User details overlay sheet */}
+      <UserDetailModal
+        visible={detailModalVisible}
+        user={selectedUser}
+        onClose={() => {
+          setDetailModalVisible(false);
+          setSelectedUser(null);
+        }}
+        onToggleActive={handleToggleActive}
+        onDelete={handleDeleteUser}
+      />
+
+      {/* Delete User Account Confirm Modal */}
+      <ConfirmModal
+        visible={deleteUserModalVisible}
+        title="Delete User Account"
+        message={`Are you sure you want to permanently delete user '${selectedUserToDelete?.fullName || ''}' (${selectedUserToDelete?.email || ''})? This will remove all their account access and credentials.`}
+        confirmText="Delete"
+        isDestructive={true}
+        onConfirm={handleDeleteUserConfirm}
+        onClose={() => {
+          setDeleteUserModalVisible(false);
+          setSelectedUserToDelete(null);
+        }}
+      />
     </View>
   );
 }
@@ -320,7 +378,7 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundcolor: '#FFFFFF',
+    backgroundColor: '#FFFFFF',
     borderColor: Colors.cardBorder,
     borderWidth: 1,
     justifyContent: 'center',
@@ -380,9 +438,13 @@ const styles = StyleSheet.create({
   },
   deleteBtn: {
     padding: 8,
-    backgroundcolor: '#FFFFFF',
+    backgroundColor: '#FFFFFF',
     borderRadius: 8,
     borderWidth: 1,
     borderColor: Colors.cardBorder,
+  },
+  footerLoader: {
+    paddingVertical: 16,
+    alignItems: 'center',
   },
 });

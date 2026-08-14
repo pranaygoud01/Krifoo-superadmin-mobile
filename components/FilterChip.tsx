@@ -21,7 +21,7 @@ export const FilterChip: React.FC<FilterChipProps> = ({ label, count, isSelected
     >
       <Text style={[styles.label, isSelected && styles.labelSelected]}>
         {label}
-        {count !== undefined ? ` (${count})` : ''}
+        {/* {count !== undefined ? ` (${count})` : ''} */}
       </Text>
     </TouchableOpacity>
   );

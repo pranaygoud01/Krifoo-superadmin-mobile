@@ -58,7 +58,7 @@ export const orderService = {
     status: string
   ): Promise<{ success: boolean; message?: string; data?: Order }> {
     return apiRequest(`/api/admin/orders/${orderId}/status`, {
-      method: 'PATCH',
+      method: 'PUT',
       body: { status },
     });
   },

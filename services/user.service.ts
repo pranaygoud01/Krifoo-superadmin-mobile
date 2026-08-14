@@ -2,13 +2,24 @@ import { apiRequest } from './api';
 import { UserAccount, Category, DeliveryChargeTier } from '../types';
 
 export const userService = {
-  async getAllUsers(
-    userType?: string,
-    search?: string
-  ): Promise<{ success: boolean; data?: UserAccount[]; message?: string }> {
+  async getAllUsers(filters?: {
+    userType?: string;
+    search?: string;
+    page?: number;
+    limit?: number;
+  }): Promise<{
+    success: boolean;
+    data?: UserAccount[];
+    totalPages?: number;
+    currentPage?: number;
+    totalUsers?: number;
+    message?: string;
+  }> {
     const params = new URLSearchParams();
-    if (userType && userType !== 'all') params.append('userType', userType);
-    if (search) params.append('search', search);
+    if (filters?.userType && filters.userType !== 'all') params.append('userType', filters.userType);
+    if (filters?.search) params.append('search', filters.search);
+    if (filters?.page) params.append('page', String(filters.page));
+    if (filters?.limit) params.append('limit', String(filters.limit));
 
     const queryString = params.toString() ? `?${params.toString()}` : '';
     const res = await apiRequest(`/api/admin/users${queryString}`, {

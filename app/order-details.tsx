@@ -6,7 +6,8 @@ import {
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
-  Alert,
+  Platform,
+  Linking,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Header } from '../components/Header';
@@ -14,6 +15,7 @@ import { StatusBadge } from '../components/StatusBadge';
 import { AssignDeliveryModal } from '../components/AssignDeliveryModal';
 import { Colors } from '../constants/colors';
 import { orderService } from '../services/order.service';
+import { useToast } from '../context/ToastContext';
 import { Order } from '../types';
 import {
   Store,
@@ -23,6 +25,7 @@ import {
   CreditCard,
   Edit2,
   Check,
+  Navigation,
 } from 'lucide-react-native';
 
 const STATUS_OPTIONS = [
@@ -38,6 +41,7 @@ export default function OrderDetailsScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const orderId = params.orderId as string;
+  const { showToast } = useToast();
 
   const [order, setOrder] = useState<Order | null>(null);
   const [loading, setLoading] = useState(true);
@@ -54,11 +58,11 @@ export default function OrderDetailsScreen() {
         const found = res.data.find((o) => o._id === orderId) || res.data[0];
         setOrder(found);
       } else {
-        Alert.alert('Error', 'Order not found.');
+        showToast({ title: 'Error', message: 'Order not found.', type: 'error' });
       }
     } catch (e) {
       console.error('Failed fetching order details:', e);
-      Alert.alert('Error', 'Could not load order details.');
+      showToast({ title: 'Error', message: 'Could not load order details.', type: 'error' });
     } finally {
       setLoading(false);
     }
@@ -77,13 +81,17 @@ export default function OrderDetailsScreen() {
     try {
       const res = await orderService.updateOrderStatus(order._id, newStatus);
       if (res.success) {
-        Alert.alert('Success', `Order status updated to '${newStatus}'.`);
-        setOrder({ ...order, status: newStatus as any });
+        showToast({ title: 'Success', message: `Order status updated to '${newStatus}'.`, type: 'success' });
+        const updatedOrder = { ...order, status: newStatus as any };
+        if (newStatus === 'delivered' && order.paymentType === 'cash') {
+          updatedOrder.paymentStatus = 'paid';
+        }
+        setOrder(updatedOrder);
       } else {
-        Alert.alert('Error', res.message || 'Failed to update order status.');
+        showToast({ title: 'Error', message: res.message || 'Failed to update order status.', type: 'error' });
       }
     } catch (e) {
-      Alert.alert('Error', 'Failed to update order status.');
+      showToast({ title: 'Error', message: 'Failed to update order status.', type: 'error' });
     } finally {
       setUpdatingStatus(false);
       setEditingStatus(false);
@@ -94,10 +102,38 @@ export default function OrderDetailsScreen() {
     if (!order) return;
     const res = await orderService.assignDeliveryPartner(order._id, deliveryPartnerId);
     if (res.success) {
-      Alert.alert('Success', 'Delivery partner successfully assigned.');
+      showToast({ title: 'Success', message: 'Delivery partner successfully assigned.', type: 'success' });
       fetchOrderDetail();
     } else {
-      Alert.alert('Error', res.message || 'Failed to assign delivery partner.');
+      showToast({ title: 'Error', message: res.message || 'Failed to assign delivery partner.', type: 'error' });
+    }
+  };
+
+  const handleOpenInMaps = () => {
+    if (!order) return;
+    let url = '';
+    const coords = order.deliveryAddress?.coordinates?.coordinates;
+
+    if (coords && coords.length === 2) {
+      const longitude = coords[0];
+      const latitude = coords[1];
+      url = Platform.select({
+        ios: `maps://?q=${latitude},${longitude}`,
+        android: `geo:0,0?q=${latitude},${longitude}`,
+        default: `https://www.google.com/maps/search/?api=1&query=${latitude},${longitude}`,
+      });
+    } else {
+      url = Platform.select({
+        ios: `maps://?q=${encodeURIComponent(addressText)}`,
+        android: `geo:0,0?q=${encodeURIComponent(addressText)}`,
+        default: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addressText)}`,
+      });
+    }
+
+    if (url) {
+      Linking.openURL(url).catch(() => {
+        showToast({ title: 'Error', message: 'Could not open maps application.', type: 'error' });
+      });
     }
   };
 
@@ -246,8 +282,18 @@ export default function OrderDetailsScreen() {
           <View style={styles.divider} />
 
           <View style={styles.addressRow}>
-            <MapPin size={16} color={Colors.textSubtle} />
-            <Text style={styles.addressText}>{addressText}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 10 }}>
+              <MapPin size={16} color={Colors.textSubtle} style={{ marginRight: 8 }} />
+              <Text style={styles.addressText} numberOfLines={2}>{addressText}</Text>
+            </View>
+            <TouchableOpacity
+              style={styles.navigateBtn}
+              onPress={handleOpenInMaps}
+              activeOpacity={0.7}
+            >
+              <Navigation size={12} color="#FFFFFF" />
+              <Text style={styles.navigateBtnText}>Navigate</Text>
+            </TouchableOpacity>
           </View>
 
           {order.notes ? (
@@ -525,13 +571,27 @@ const styles = StyleSheet.create({
   },
   addressRow: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 8,
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
   addressText: {
     color: Colors.text,
     fontSize: 13,
     flex: 1,
+  },
+  navigateBtn: {
+    backgroundColor: Colors.primary,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  navigateBtnText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '700',
   },
   notesBox: {
     backgroundColor: Colors.background,
