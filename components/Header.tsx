@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Alert, Image } from 'react-native';
 import { useRouter, useSegments } from 'expo-router';
 import { ArrowLeft, Bell, Settings } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -96,14 +96,20 @@ export const Header: React.FC<HeaderProps> = ({
             </TouchableOpacity>
           )}
           <View style={styles.titleContainer}>
-            <Text style={styles.title} numberOfLines={1}>
-              {title}
-            </Text>
-            {/* {subtitle ? (
-              <Text style={styles.subtitle} numberOfLines={1}>
-                {subtitle}
+            {title === 'Krifoo Admin' ? (
+              <View style={styles.logoTitleContainer}>
+                <Image
+                  source={require('../assets/logo.png')}
+                  style={styles.headerLogo}
+                  resizeMode="contain"
+                />
+                <Text style={styles.titleAdminText}>SUPERADMIN</Text>
+              </View>
+            ) : (
+              <Text style={styles.title} numberOfLines={1}>
+                {title}
               </Text>
-            ) : null} */}
+            )}
           </View>
         </View>
 
@@ -185,6 +191,21 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: '800',
     letterSpacing: -0.5,
+  },
+  logoTitleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  headerLogo: {
+    width: 28,
+    height: 28,
+  },
+  titleAdminText: {
+    color: Colors.text,
+    fontSize: 16,
+    fontWeight: '800',
+    letterSpacing: 1.2,
   },
   subtitle: {
     color: Colors.textMuted,

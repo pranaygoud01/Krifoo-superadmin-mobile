@@ -35,6 +35,13 @@ export const orderService = {
   },
 
   /**
+   * GET /api/admin/orders/:orderId
+   */
+  async getOrderById(orderId: string): Promise<{ success: boolean; data?: Order; message?: string }> {
+    return apiRequest(`/api/admin/orders/${orderId}`);
+  },
+
+  /**
    * PATCH /api/admin/orders/:orderId/assign-delivery
    * Body: { deliveryPartnerId }
    */

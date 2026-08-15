@@ -16,6 +16,7 @@ import { OrderDetailModal } from '../../components/OrderDetailModal';
 import { AssignDeliveryModal } from '../../components/AssignDeliveryModal';
 import { Colors } from '../../constants/colors';
 import { orderService } from '../../services/order.service';
+import { OrderListSkeleton } from '../../components/Skeleton';
 import { useToast } from '../../context/ToastContext';
 import { Order } from '../../types';
 import { Search, ShoppingBag } from 'lucide-react-native';
@@ -221,10 +222,7 @@ export default function OrdersScreen() {
 
       {/* Order Cards List */}
       {loading ? (
-        <View style={styles.centerBox}>
-          <ActivityIndicator size="large" color={Colors.primary} />
-          <Text style={styles.loadingText}>Fetching cross-restaurant orders...</Text>
-        </View>
+        <OrderListSkeleton />
       ) : filteredOrders.length === 0 ? (
         <View style={styles.centerBox}>
           <ShoppingBag size={48} color={Colors.cardBorder} />
@@ -252,7 +250,8 @@ export default function OrdersScreen() {
             <OrderCard
               order={item}
               onPress={(o) => {
-                router.push({ pathname: '/order-details', params: { orderId: o._id } });
+                setSelectedOrder(o);
+                setDetailModalVisible(true);
               }}
               onAssignDelivery={(o) => {
                 setSelectedOrder(o);

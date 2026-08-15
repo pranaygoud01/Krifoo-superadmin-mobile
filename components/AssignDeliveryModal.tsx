@@ -34,8 +34,13 @@ export const AssignDeliveryModal: React.FC<AssignDeliveryModalProps> = ({
   useEffect(() => {
     if (visible) {
       loadDeliveryPartners();
-      if (order && typeof order.deliveryPartnerId === 'object') {
-        setSelectedPartnerId(order.deliveryPartnerId._id);
+      const partner = order.assignedDeliveryPartnerId || (order as any).deliveryPartnerId;
+      if (order && partner) {
+        if (typeof partner === 'object') {
+          setSelectedPartnerId(partner._id);
+        } else {
+          setSelectedPartnerId(partner);
+        }
       } else {
         setSelectedPartnerId(null);
       }

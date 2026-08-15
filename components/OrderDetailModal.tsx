@@ -1,9 +1,10 @@
 import React from 'react';
-import { Modal, View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import { Modal, View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { Order } from '../types';
 import { Colors } from '../constants/colors';
 import { StatusBadge } from './StatusBadge';
 import { X, Store, User, MapPin, Bike, CreditCard } from 'lucide-react-native';
+import { orderService } from '../services/order.service';
 
 interface OrderDetailModalProps {
   visible: boolean;
@@ -15,13 +16,42 @@ interface OrderDetailModalProps {
 
 export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
   visible,
-  order,
+  order: propOrder,
   onClose,
   onAssignDelivery,
   onUpdateStatus,
 }) => {
   const [editingStatus, setEditingStatus] = React.useState(false);
   const [loadingStatus, setLoadingStatus] = React.useState(false);
+  const [fetchedOrder, setFetchedOrder] = React.useState<Order | null>(null);
+  const [loading, setLoading] = React.useState(false);
+
+  React.useEffect(() => {
+    if (visible && propOrder?._id) {
+      const fetchDetail = async () => {
+        setLoading(true);
+        try {
+          const res = await orderService.getOrderById(propOrder._id);
+          if (res.success && res.data) {
+            setFetchedOrder(res.data);
+          } else {
+            setFetchedOrder(propOrder);
+          }
+        } catch (e) {
+          console.error('Failed fetching order details in modal:', e);
+          setFetchedOrder(propOrder);
+        } finally {
+          setLoading(false);
+        }
+      };
+      fetchDetail();
+    } else if (!visible) {
+      setFetchedOrder(null);
+      setEditingStatus(false);
+    }
+  }, [visible, propOrder?._id]);
+
+  const order = fetchedOrder || propOrder;
 
   if (!order) return null;
 
@@ -42,6 +72,7 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
     setLoadingStatus(true);
     try {
       await onUpdateStatus(order._id, newStatus);
+      onClose();
     } finally {
       setLoadingStatus(false);
       setEditingStatus(false);
@@ -84,7 +115,15 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
             </TouchableOpacity>
           </View>
 
-          <ScrollView style={styles.scrollBody} showsVerticalScrollIndicator={false}>
+          {loading ? (
+            <View style={{ padding: 60, justifyContent: 'center', alignItems: 'center' }}>
+              <ActivityIndicator size="large" color={Colors.primary} />
+              <Text style={{ color: Colors.textMuted, marginTop: 12, fontWeight: '600' }}>
+                Loading order details...
+              </Text>
+            </View>
+          ) : (
+            <ScrollView style={styles.scrollBody} showsVerticalScrollIndicator={false}>
             {/* Status Header */}
             <View style={styles.statusBox}>
               <View style={{ flex: 1 }}>
@@ -194,8 +233,8 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
                           Add-ons: {item.customization.addOns.join(', ')}
                         </Text>
                       ) : null}
-                    </View>
-                    <Text style={styles.itemPrice}>₹{itemTotal.toFixed(2)}</Text>
+                     </View>
+                    <Text style={styles.itemPrice}>€{itemTotal.toFixed(2)}</Text>
                   </View>
                 );
               })}
@@ -206,14 +245,14 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
               <View style={styles.priceRow}>
                 <Text style={styles.priceLabel}>Subtotal:</Text>
                 <Text style={styles.priceVal}>
-                  ₹{(order.pricing?.subtotal || 0).toFixed(2)}
+                  €{(order.pricing?.subtotal || 0).toFixed(2)}
                 </Text>
               </View>
 
               <View style={styles.priceRow}>
                 <Text style={styles.priceLabel}>Delivery Fee:</Text>
                 <Text style={styles.priceVal}>
-                  ₹{(order.pricing?.deliveryFee || order.deliveryFee || 0).toFixed(2)}
+                  €{(order.pricing?.deliveryFee || order.deliveryFee || 0).toFixed(2)}
                 </Text>
               </View>
 
@@ -221,7 +260,7 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
                 <View style={styles.priceRow}>
                   <Text style={styles.priceLabel}>Tax & Charges:</Text>
                   <Text style={styles.priceVal}>
-                    ₹{(order.pricing?.tax || order.taxAmount || 0).toFixed(2)}
+                    €{(order.pricing?.tax || order.taxAmount || 0).toFixed(2)}
                   </Text>
                 </View>
               ) : null}
@@ -230,7 +269,7 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
                 <View style={styles.priceRow}>
                   <Text style={styles.priceLabel}>Discount:</Text>
                   <Text style={[styles.priceVal, { color: Colors.success }]}>
-                    -₹{(order.pricing?.discount || order.pricing?.discountAmount || 0).toFixed(2)}
+                    -€{(order.pricing?.discount || order.pricing?.discountAmount || 0).toFixed(2)}
                   </Text>
                 </View>
               ) : null}
@@ -238,7 +277,7 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
               <View style={[styles.priceRow, styles.totalPriceRow]}>
                 <Text style={styles.totalLabel}>Total Payable:</Text>
                 <Text style={styles.totalVal}>
-                  ₹{(
+                  €{(
                     order.pricing?.totalAmount ??
                     order.pricing?.total ??
                     order.totalAmount ??
@@ -281,6 +320,7 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
               )}
             </View>
           </ScrollView>
+          )}
 
           {/* Footer Action */}
           {order.status !== 'delivered' && order.status !== 'cancelled' && (

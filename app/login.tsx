@@ -11,52 +11,65 @@ import {
   KeyboardAvoidingView,
   Platform,
   StatusBar,
+  Image,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { Colors } from '../constants/colors';
 import { getApiBaseUrl, setApiBaseUrl } from '../services/api';
-import { ShieldCheck, Server, Lock, Mail, Eye, EyeOff } from 'lucide-react-native';
+import { Server, Lock, Mail, Eye, EyeOff } from 'lucide-react-native';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [errorMsg, setErrorMsg] = useState('');
   const [emailFocused, setEmailFocused] = useState(false);
   const [passwordFocused, setPasswordFocused] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
 
+  // Custom API Base URL Config States
   const [showConfigModal, setShowConfigModal] = useState(false);
   const [apiUrlInput, setApiUrlInput] = useState('');
 
   const { login } = useAuth();
-  const { showToast } = useToast();
   const router = useRouter();
+  const { showToast } = useToast();
 
   useEffect(() => {
-    getApiBaseUrl().then(setApiUrlInput);
+    async function loadUrl() {
+      const url = await getApiBaseUrl();
+      setApiUrlInput(url);
+    }
+    loadUrl();
   }, []);
 
   const handleLogin = async () => {
-    if (!email || !password) {
-      setErrorMsg('Please enter your admin email and password.');
+    if (!email.trim() || !password.trim()) {
+      setErrorMsg('Please enter both email and password.');
       return;
     }
-    setErrorMsg('');
+
     setLoading(true);
-    const res = await login(email.trim().toLowerCase(), password);
-    setLoading(false);
-    if (res.success) {
-      router.replace('/(tabs)');
-    } else {
-      setErrorMsg(res.message || 'Invalid super admin credentials.');
+    setErrorMsg('');
+    try {
+      const res = await login(email.trim().toLowerCase(), password.trim());
+      if (res.success) {
+        showToast({ title: 'Welcome', message: 'Logged in successfully.', type: 'success' });
+        router.replace('/(tabs)');
+      } else {
+        setErrorMsg(res.message || 'Login failed. Invalid credentials.');
+      }
+    } catch (e) {
+      setErrorMsg('An unexpected error occurred.');
+    } finally {
+      setLoading(false);
     }
   };
 
   const handleSaveApiUrl = async () => {
-    if (!apiUrlInput) return;
+    if (!apiUrlInput.trim()) return;
     await setApiBaseUrl(apiUrlInput.trim());
     setShowConfigModal(false);
     showToast({ title: 'Saved', message: `Backend URL updated to:\n${apiUrlInput.trim()}`, type: 'success' });
@@ -73,7 +86,11 @@ export default function LoginScreen() {
         {/* Logo */}
         <View style={styles.headerBox}>
           <View style={styles.logoCircle}>
-            <ShieldCheck size={34} color={Colors.primary} strokeWidth={2} />
+            <Image
+              source={require('../assets/logo.png')}
+              style={{ width: 68, height: 68 }}
+              resizeMode="cover"
+            />
           </View>
           <Text style={styles.title}>Krifoo Admin</Text>
           <Text style={styles.subtitle}>Super Admin Management Portal</Text>
@@ -195,10 +212,6 @@ const styles = StyleSheet.create({
   logoCircle: {
     width: 72,
     height: 72,
-    borderRadius: 36,
-    backgroundColor: Colors.primaryLight,
-    borderWidth: 2,
-    borderColor: Colors.primary,
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 14,

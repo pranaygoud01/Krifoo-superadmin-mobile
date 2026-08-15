@@ -19,6 +19,7 @@ import { restaurantService } from '../../services/restaurant.service';
 import { useToast } from '../../context/ToastContext';
 import { Restaurant, VerificationStatus } from '../../types';
 import { Search, Store } from 'lucide-react-native';
+import { RestaurantListSkeleton } from '../../components/Skeleton';
 
 export default function RestaurantsScreen() {
   const router = useRouter();
@@ -235,10 +236,7 @@ export default function RestaurantsScreen() {
 
       {/* Restaurants List */}
       {loading ? (
-        <View style={styles.centerBox}>
-          <ActivityIndicator size="large" color={Colors.primary} />
-          <Text style={styles.loadingText}>Loading registered restaurants...</Text>
-        </View>
+        <RestaurantListSkeleton />
       ) : filteredRestaurants.length === 0 ? (
         <View style={styles.centerBox}>
           <Store size={48} color={Colors.cardBorder} />

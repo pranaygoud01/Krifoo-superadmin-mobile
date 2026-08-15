@@ -21,6 +21,7 @@ import { userService } from '../../services/user.service';
 import { useToast } from '../../context/ToastContext';
 import { UserAccount } from '../../types';
 import { Search, Users, User, Bike, Trash2, Mail, Phone } from 'lucide-react-native';
+import { UserListSkeleton } from '../../components/Skeleton';
 
 export default function UsersScreen() {
   const { showToast } = useToast();
@@ -194,10 +195,7 @@ export default function UsersScreen() {
 
       {/* User Cards List */}
       {loading ? (
-        <View style={styles.centerBox}>
-          <ActivityIndicator size="large" color={Colors.primary} />
-          <Text style={styles.loadingText}>Fetching registered users...</Text>
-        </View>
+        <UserListSkeleton />
       ) : users.length === 0 ? (
         <View style={styles.centerBox}>
           <Users size={48} color={Colors.cardBorder} />

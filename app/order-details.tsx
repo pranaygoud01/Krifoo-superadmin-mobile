@@ -53,13 +53,23 @@ export default function OrderDetailsScreen() {
     if (!orderId) return;
     try {
       setLoading(true);
-      const res = await orderService.getAllOrders({ search: orderId });
-      if (res.success && res.data && res.data.length > 0) {
-        const found = res.data.find((o) => o._id === orderId) || res.data[0];
-        setOrder(found);
-      } else {
-        showToast({ title: 'Error', message: 'Order not found.', type: 'error' });
+      const res = await orderService.getOrderById(orderId);
+      if (res.success && res.data) {
+        setOrder(res.data);
+        return;
       }
+
+      // Fallback: search in recent orders if the single order endpoint is not deployed yet
+      const fallbackRes = await orderService.getAllOrders({ limit: 100 });
+      if (fallbackRes.success && fallbackRes.data) {
+        const found = fallbackRes.data.find((o) => o._id === orderId);
+        if (found) {
+          setOrder(found);
+          return;
+        }
+      }
+
+      showToast({ title: 'Error', message: 'Order not found.', type: 'error' });
     } catch (e) {
       console.error('Failed fetching order details:', e);
       showToast({ title: 'Error', message: 'Could not load order details.', type: 'error' });
