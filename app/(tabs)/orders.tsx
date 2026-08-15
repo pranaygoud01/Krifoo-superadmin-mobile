@@ -164,7 +164,7 @@ export default function OrdersScreen() {
         showToast({ title: 'Success', message: `Order status updated to '${newStatus}'.`, type: 'success' });
         // Update local state
         if (selectedOrder && selectedOrder._id === orderId) {
-          setSelectedOrder({ ...selectedOrder, status: newStatus });
+          setSelectedOrder({ ...selectedOrder, status: newStatus as any });
         }
         fetchOrders(1, true);
       } else {

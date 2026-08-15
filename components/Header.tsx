@@ -6,6 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Colors } from '../constants/colors';
 import { orderService } from '../services/order.service';
 import { restaurantService } from '../services/restaurant.service';
+import { useAuth } from '../context/AuthContext';
 
 interface HeaderProps {
   title: string;
@@ -22,6 +23,8 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   const router = useRouter();
   const segments = useSegments();
+  const { user } = useAuth();
+  const isSuperAdmin = user?.userType === 'super_admin';
   const [unreadCount, setUnreadCount] = React.useState<number>(0);
 
   // Fetch pending applications and active orders to compute live badge count
@@ -79,7 +82,11 @@ export const Header: React.FC<HeaderProps> = ({
   };
 
   const handleSettingsPress = () => {
-    router.push('/settings');
+    if (isSuperAdmin) {
+      router.push('/settings');
+    } else {
+      router.push('/restaurant-settings');
+    }
   };
 
   return (
@@ -103,7 +110,7 @@ export const Header: React.FC<HeaderProps> = ({
                   style={styles.headerLogo}
                   resizeMode="contain"
                 />
-                <Text style={styles.titleAdminText}>SUPERADMIN</Text>
+                 <Text style={styles.titleAdminText}>{isSuperAdmin ? 'SUPERADMIN' : 'ADMIN'}</Text>
               </View>
             ) : (
               <Text style={styles.title} numberOfLines={1}>

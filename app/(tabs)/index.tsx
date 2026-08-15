@@ -24,33 +24,69 @@ import {
   AlertTriangle,
   ArrowRight,
   TrendingUp,
+  Utensils,
+  Calendar,
+  Truck,
+  Megaphone,
+  Settings,
 } from 'lucide-react-native';
+import { useAuth } from '../../context/AuthContext';
 
 export default function DashboardScreen() {
   const router = useRouter();
+  const { user } = useAuth();
+  const isSuperAdmin = user?.userType === 'super_admin';
+
   const [refreshing, setRefreshing] = useState(false);
 
   const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [totalUsersCount, setTotalUsersCount] = useState(0);
 
+  const [ownerStats, setOwnerStats] = useState({
+    totalOrders: 0,
+    totalDelivered: 0,
+    totalCancelled: 0,
+    totalIncome: 0,
+  });
+
   const loadDashboardData = async () => {
     setRefreshing(true);
     try {
-      const [restRes, orderRes, userRes] = await Promise.all([
-        restaurantService.getRestaurants({ limit: 1000 }),
-        orderService.getAllOrders({ limit: 1000 }),
-        userService.getAllUsers({ limit: 1000 }),
-      ]);
+      if (isSuperAdmin) {
+        const [restRes, orderRes, userRes] = await Promise.all([
+          restaurantService.getRestaurants({ limit: 1000 }),
+          orderService.getAllOrders({ limit: 1000 }),
+          userService.getAllUsers({ limit: 1000 }),
+        ]);
 
-      if (restRes.success && restRes.data) {
-        setRestaurants(restRes.data);
-      }
-      if (orderRes.success && orderRes.data) {
-        setOrders(orderRes.data);
-      }
-      if (userRes.success && userRes.data) {
-        setTotalUsersCount(userRes.totalUsers || userRes.data.length);
+        if (restRes.success && restRes.data) {
+          setRestaurants(restRes.data);
+        }
+        if (orderRes.success && orderRes.data) {
+          setOrders(orderRes.data);
+        }
+        if (userRes.success && userRes.data) {
+          setTotalUsersCount(userRes.totalUsers || userRes.data.length);
+        }
+      } else {
+        const [statsRes, orderRes] = await Promise.all([
+          orderService.getRestaurantStats(),
+          orderService.getAllOrders({ limit: 10 }),
+        ]);
+
+        if (statsRes.success && statsRes.data) {
+          const overall = statsRes.data.overall || {};
+          setOwnerStats({
+            totalOrders: overall.totalOrders || 0,
+            totalDelivered: overall.totalDelivered || 0,
+            totalCancelled: overall.totalCancelled || 0,
+            totalIncome: overall.totalIncome || 0,
+          });
+        }
+        if (orderRes.success && orderRes.data) {
+          setOrders(orderRes.data);
+        }
       }
     } catch (e) {
       console.error('Failed loading dashboard data:', e);
@@ -61,7 +97,7 @@ export default function DashboardScreen() {
 
   useEffect(() => {
     loadDashboardData();
-  }, []);
+  }, [isSuperAdmin]);
 
   // Compute stats
   const pendingApprovals = restaurants.filter((r) => r.verificationStatus === 'pending').length;
@@ -95,7 +131,7 @@ export default function DashboardScreen() {
         }
       >
         {/* Pending Approvals Warning Banner */}
-        {pendingApprovals > 0 ? (
+        {isSuperAdmin && pendingApprovals > 0 ? (
           <TouchableOpacity
             style={styles.warningBanner}
             onPress={() => router.push('/(tabs)/restaurants')}
@@ -113,67 +149,189 @@ export default function DashboardScreen() {
           </TouchableOpacity>
         ) : null}
 
-        {/* Quick Shortcut Buttons */}
-        {/* ss<Text style={styles.sectionHeader}>Quick Actions</Text> */}
-        <View style={styles.shortcutRow}>
-          <TouchableOpacity
-            style={styles.shortcutCard}
-            onPress={() => router.push('/(tabs)/restaurants')}
-          >
-            <Store size={22} color={Colors.primary} />
-            <Text style={styles.shortcutTitle}>Manage Restaurants</Text>
-            {/* <Text style={styles.shortcutSub}>Approvals, verification & active status</Text> */}
-          </TouchableOpacity>
+        {/* Quick Shortcut Buttons (Super Admin Only) */}
+        {isSuperAdmin && (
+          <View style={styles.shortcutRow}>
+            <TouchableOpacity
+              style={styles.shortcutCard}
+              onPress={() => router.push('/(tabs)/restaurants')}
+            >
+              <Store size={22} color={Colors.primary} />
+              <Text style={styles.shortcutTitle}>Manage Restaurants</Text>
+            </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.shortcutCard}
-            onPress={() => router.push('/(tabs)/orders')}
-          >
-            <ShoppingBag size={22} color={Colors.info} />
-            <Text style={styles.shortcutTitle}>Manage Orders </Text>
-            {/* <Text style={styles.shortcutSub}>Cross-restaurant order feed & dispatch</Text> */}
-          </TouchableOpacity>
-        </View>
+            <TouchableOpacity
+              style={styles.shortcutCard}
+              onPress={() => router.push('/(tabs)/orders')}
+            >
+              <ShoppingBag size={22} color={Colors.info} />
+              <Text style={styles.shortcutTitle}>Manage Orders</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Business Control Center Grid (Restaurant Owner Only) */}
+        {!isSuperAdmin && (
+          <View style={styles.controlCenterSection}>
+            <Text style={styles.sectionHeader}>Business Control Center</Text>
+            
+            <View style={styles.gridContainer}>
+              <TouchableOpacity
+                style={styles.gridCard}
+                onPress={() => router.push('/bookings')}
+              >
+                <View style={[styles.iconContainer, { backgroundColor: '#FEF2F2' }]}>
+                  <Calendar size={20} color="#EF4444" />
+                </View>
+                <Text style={styles.gridTitle}>Reservations</Text>
+                <Text style={styles.gridSub}>Bookings feed</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.gridCard}
+                onPress={() => router.push('/tables')}
+              >
+                <View style={[styles.iconContainer, { backgroundColor: '#ECFDF5' }]}>
+                  <Users size={20} color="#10B981" />
+                </View>
+                <Text style={styles.gridTitle}>Dining Tables</Text>
+                <Text style={styles.gridSub}>Configure tables</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.gridContainer}>
+              <TouchableOpacity
+                style={styles.gridCard}
+                onPress={() => router.push('/fleet')}
+              >
+                <View style={[styles.iconContainer, { backgroundColor: '#F0F9FF' }]}>
+                  <Truck size={20} color="#0284C7" />
+                </View>
+                <Text style={styles.gridTitle}>My Fleet</Text>
+                <Text style={styles.gridSub}>Connect riders</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.gridCard}
+                onPress={() => router.push('/marketing')}
+              >
+                <View style={[styles.iconContainer, { backgroundColor: '#F5F3FF' }]}>
+                  <Megaphone size={20} color="#7C3AED" />
+                </View>
+                <Text style={styles.gridTitle}>Campaigns</Text>
+                <Text style={styles.gridSub}>Promo coupons</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.gridContainer}>
+              <TouchableOpacity
+                style={styles.gridCard}
+                onPress={() => router.push('/(tabs)/menu')}
+              >
+                <View style={[styles.iconContainer, { backgroundColor: '#FFFBEB' }]}>
+                  <Utensils size={20} color="#D97706" />
+                </View>
+                <Text style={styles.gridTitle}>Menu Manager</Text>
+                <Text style={styles.gridSub}>Prices & categories</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.gridCard}
+                onPress={() => router.push('/restaurant-settings')}
+              >
+                <View style={[styles.iconContainer, { backgroundColor: Colors.primaryLight }]}>
+                  <Settings size={20} color={Colors.primary} />
+                </View>
+                <Text style={styles.gridTitle}>Store Config</Text>
+                <Text style={styles.gridSub}>Timings & settings</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
 
         {/* KPI Grid */}
         <Text style={styles.sectionHeader}>Key Metrics</Text>
-        <View style={styles.kpiGrid}>
-          <StatCard
-            title="Total Restaurants"
-            value={restaurants.length}
-            subtitle={`${activeRestaurants} active`}
-            icon={<Store size={18} color={Colors.primary} />}
-            accentColor={Colors.primary}
-            onPress={() => router.push('/(tabs)/restaurants')}
-          />
-          <StatCard
-            title="Pending Review"
-            value={pendingApprovals}
-            subtitle="Needs action"
-            icon={<Clock size={18} color={Colors.warning} />}
-            accentColor={Colors.warning}
-            onPress={() => router.push('/(tabs)/restaurants')}
-          />
-        </View>
+        {isSuperAdmin ? (
+          <>
+            <View style={styles.kpiGrid}>
+              <StatCard
+                title="Total Restaurants"
+                value={restaurants.length}
+                subtitle={`${activeRestaurants} active`}
+                icon={<Store size={18} color={Colors.primary} />}
+                accentColor={Colors.primary}
+                onPress={() => router.push('/(tabs)/restaurants')}
+              />
+              <StatCard
+                title="Pending Review"
+                value={pendingApprovals}
+                subtitle="Needs action"
+                icon={<Clock size={18} color={Colors.warning} />}
+                accentColor={Colors.warning}
+                onPress={() => router.push('/(tabs)/restaurants')}
+              />
+            </View>
 
-        <View style={styles.kpiGrid}>
-          <StatCard
-            title="All Orders"
-            value={orders.length}
-            subtitle={`${orders.filter((o) => o.status === 'placed').length} placed orders`}
-            icon={<ShoppingBag size={18} color={Colors.info} />}
-            accentColor={Colors.info}
-            onPress={() => router.push('/(tabs)/orders')}
-          />
-          <StatCard
-            title="Total Volume"
-            value={`€${totalRevenue.toFixed(0)}`}
-            subtitle="Platform Gross Sales"
-            icon={<TrendingUp size={18} color="#C084FC" />}
-            accentColor="#C084FC"
-            onPress={() => router.push('/(tabs)/orders')}
-          />
-        </View>
+            <View style={styles.kpiGrid}>
+              <StatCard
+                title="All Orders"
+                value={orders.length}
+                subtitle={`${orders.filter((o) => o.status === 'placed').length} placed orders`}
+                icon={<ShoppingBag size={18} color={Colors.info} />}
+                accentColor={Colors.info}
+                onPress={() => router.push('/(tabs)/orders')}
+              />
+              <StatCard
+                title="Total Volume"
+                value={`€${totalRevenue.toFixed(0)}`}
+                subtitle="Platform Gross Sales"
+                icon={<TrendingUp size={18} color="#C084FC" />}
+                accentColor="#C084FC"
+                onPress={() => router.push('/(tabs)/orders')}
+              />
+            </View>
+          </>
+        ) : (
+          <>
+            <View style={styles.kpiGrid}>
+              <StatCard
+                title="Restaurant Orders"
+                value={ownerStats.totalOrders}
+                subtitle="All-time orders"
+                icon={<ShoppingBag size={18} color={Colors.info} />}
+                accentColor={Colors.info}
+                onPress={() => router.push('/(tabs)/orders')}
+              />
+              <StatCard
+                title="Total Earnings"
+                value={`€${ownerStats.totalIncome.toFixed(0)}`}
+                subtitle="Restaurant Sales"
+                icon={<TrendingUp size={18} color="#C084FC" />}
+                accentColor="#C084FC"
+                onPress={() => router.push('/(tabs)/orders')}
+              />
+            </View>
+
+            <View style={styles.kpiGrid}>
+              <StatCard
+                title="Completed Deliveries"
+                value={ownerStats.totalDelivered}
+                subtitle="Successfully served"
+                icon={<Store size={18} color={Colors.success} />}
+                accentColor={Colors.success}
+                onPress={() => router.push('/(tabs)/orders')}
+              />
+              <StatCard
+                title="Cancelled Orders"
+                value={ownerStats.totalCancelled}
+                subtitle="Unfulfilled orders"
+                icon={<AlertTriangle size={18} color={Colors.danger} />}
+                accentColor={Colors.danger}
+                onPress={() => router.push('/(tabs)/orders')}
+              />
+            </View>
+          </>
+        )}
 
         {/* <View style={styles.singleKpiRow}>
           <StatCard
@@ -423,5 +581,43 @@ const styles = StyleSheet.create({
     color: Colors.textSubtle,
     fontSize: 12,
     marginTop: 4,
+  },
+  // Control center styling
+  controlCenterSection: {
+    marginBottom: 24,
+  },
+  gridContainer: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 12,
+  },
+  gridCard: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: Colors.cardBorder,
+    padding: 14,
+    alignItems: 'flex-start',
+  },
+  iconContainer: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 10,
+  },
+  gridTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: Colors.text,
+    letterSpacing: -0.1,
+  },
+  gridSub: {
+    fontSize: 10.5,
+    color: Colors.textSubtle,
+    fontWeight: '600',
+    marginTop: 2,
   },
 });

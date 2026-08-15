@@ -143,14 +143,16 @@ export default function RestaurantDetailsScreen() {
   }
 
   // Address Parsing
-  const addr = restaurant.address;
-  const showFullLocation = typeof addr === 'object';
-  const displayAddress = showFullLocation
-    ? addr?.formattedAddress ||
-      [addr?.shopNo, addr?.floor, addr?.street, addr?.area, addr?.city, addr?.pincode]
+  const addr = typeof restaurant.address === 'object' && restaurant.address !== null ? restaurant.address : null;
+  const showFullLocation = addr !== null;
+  const displayAddress = addr
+    ? addr.formattedAddress ||
+      [addr.shopNo, addr.floor, addr.street, addr.area, addr.city, addr.pincode]
         .filter(Boolean)
         .join(', ')
-    : restaurant.address || 'N/A';
+    : typeof restaurant.address === 'string'
+    ? restaurant.address
+    : 'N/A';
 
   return (
     <View style={styles.container}>

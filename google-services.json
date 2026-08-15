@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "161487433576",
+    "project_id": "krifoo-admin",
+    "storage_bucket": "krifoo-admin.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:161487433576:android:006d0a0ec5e2ff5644b0dd",
+        "android_client_info": {
+          "package_name": "com.krifoo.admin"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAH0_dlPiOEtqkf9Opw8FKNjP3vUi3hq6o"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -41,8 +41,8 @@ export const Skeleton: React.FC<SkeletonProps> = ({
       style={[
         styles.skeleton,
         {
-          width,
-          height,
+          width: width as any,
+          height: height as any,
           borderRadius,
           opacity: pulseAnim,
         },

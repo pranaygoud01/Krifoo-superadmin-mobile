@@ -449,7 +449,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   notesBox: {
-    backgroundcolor: '#FFFFFF',
+    backgroundColor: '#FFFFFF',
     padding: 8,
     borderRadius: 6,
     marginTop: 10,
@@ -470,7 +470,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
   },
   itemQtyBadge: {
-    backgroundcolor: '#FFFFFF',
+    backgroundColor: '#FFFFFF',
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 6,
@@ -528,7 +528,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   driverInfoBox: {
-    backgroundcolor: '#FFFFFF',
+    backgroundColor: '#FFFFFF',
     padding: 10,
     borderRadius: 8,
   },

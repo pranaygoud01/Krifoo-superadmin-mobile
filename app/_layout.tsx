@@ -76,11 +76,18 @@ export default function RootLayout() {
         >
           <Stack.Screen name="index" />
           <Stack.Screen name="login" />
+          <Stack.Screen name="register" options={{ animation: 'slide_from_right' }} />
           <Stack.Screen name="(tabs)" />
           <Stack.Screen name="settings" options={{ animation: 'slide_from_right' }} />
           <Stack.Screen name="order-details" options={{ animation: 'slide_from_right' }} />
           <Stack.Screen name="restaurant-details" options={{ animation: 'slide_from_right' }} />
           <Stack.Screen name="notifications" options={{ animation: 'slide_from_right' }} />
+          <Stack.Screen name="tables" options={{ animation: 'slide_from_right' }} />
+          <Stack.Screen name="bookings" options={{ animation: 'slide_from_right' }} />
+          <Stack.Screen name="marketing" options={{ animation: 'slide_from_right' }} />
+          <Stack.Screen name="fleet" options={{ animation: 'slide_from_right' }} />
+          <Stack.Screen name="restaurant-settings" options={{ animation: 'slide_from_right' }} />
+          <Stack.Screen name="add-edit-menu" options={{ animation: 'slide_from_right' }} />
         </Stack>
       </ToastProvider>
     </AuthProvider>

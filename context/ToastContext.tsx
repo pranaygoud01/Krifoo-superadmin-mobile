@@ -36,7 +36,7 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [message, setMessage] = useState('');
   const [type, setType] = useState<ToastType>('info');
   const [title, setTitle] = useState('');
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const timeoutRef = useRef<any>(null);
   const insets = useSafeAreaInsets();
 
   const slideAnim = useRef(new Animated.Value(-200)).current;

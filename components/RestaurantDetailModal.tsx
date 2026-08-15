@@ -316,7 +316,7 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
   },
   remarksInput: {
-    backgroundcolor: '#FFFFFF',
+    backgroundColor: '#FFFFFF',
     color: Colors.text,
     borderColor: Colors.cardBorder,
     borderWidth: 1,
@@ -328,7 +328,7 @@ const styles = StyleSheet.create({
   existingRemarksBox: {
     marginTop: 10,
     padding: 8,
-    backgroundcolor: '#FFFFFF',
+    backgroundColor: '#FFFFFF',
     borderRadius: 6,
   },
   existingRemarksTitle: {

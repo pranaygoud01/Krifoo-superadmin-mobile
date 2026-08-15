@@ -18,13 +18,15 @@ export const RestaurantCard: React.FC<RestaurantCardProps> = ({
   onVerifyStatusChange,
   onToggleActive,
 }) => {
-  const addr = restaurant.address;
-  const addressText = typeof addr === 'object'
-    ? addr?.formattedAddress ||
-    [addr?.shopNo, addr?.floor, addr?.street, addr?.area, addr?.city, addr?.pincode]
-      .filter(Boolean)
-      .join(', ')
-    : restaurant.address || 'Address not specified';
+  const addr = typeof restaurant.address === 'object' && restaurant.address !== null ? restaurant.address : null;
+  const addressText = addr
+    ? addr.formattedAddress ||
+      [addr.shopNo, addr.floor, addr.street, addr.area, addr.city, addr.pincode]
+        .filter(Boolean)
+        .join(', ')
+    : typeof restaurant.address === 'string'
+    ? restaurant.address
+    : 'Address not specified';
 
   // Backend aggregation nests verificationStatus inside documents
   const verificationStatus: string =

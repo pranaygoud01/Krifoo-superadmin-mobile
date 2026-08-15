@@ -123,6 +123,7 @@ export interface Order {
     addressLine1?: string;
     city?: string;
     landmark?: string;
+    formattedAddress?: string;
     coordinates?: any;
   };
   notes?: string;
@@ -175,4 +176,22 @@ export interface DashboardStats {
   activeOrders: number;
   totalRevenue: number;
   totalUsers: number;
+}
+
+export interface MenuItem {
+  _id: string;
+  restaurantId: string;
+  name?: string;
+  itemName?: string;
+  description?: string;
+  price?: number;
+  basePrice?: number;
+  category?: string;
+  categories?: { _id: string; categoryName: string }[];
+  isAvailable: boolean;
+  displayImage?: string;
+  displayImageUrl?: string;
+  tags?: string[];
+  createdAt?: string;
+  updatedAt?: string;
 }

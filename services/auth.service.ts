@@ -20,33 +20,55 @@ export const authService = {
    * as a fallback when the cookie is absent — so Bearer token works fine.
    */
   async adminLogin(email: string, password: string) {
-    const res = await apiRequest('/api/auth/admin/login', {
+    // 1. Try Super Admin Login
+    let res = await apiRequest('/api/auth/admin/login', {
       method: 'POST',
       body: { email, password },
     });
 
     if (res.success && res.data) {
-      const adminData: SuperAdminUser = res.data;
+      const adminData = {
+        ...res.data,
+        userType: 'super_admin' as const,
+      };
 
-      // The backend sends the JWT as a cookie (token_admin).
-      // React Native doesn't auto-store cookies, so we need to
-      // get the token from either res.token, res.accessToken, or res.data.token.
-      // If none are present, store a placeholder so the user object is persisted
-      // and re-auth can be prompted gracefully.
       const token: string | undefined =
-        res.token || res.accessToken || adminData.token || res.data?.token;
+        res.token || res.accessToken || res.data.token || res.data?.token;
 
       if (token) {
         await AsyncStorage.setItem(STORAGE_KEYS.ADMIN_TOKEN, token);
       }
-
       await AsyncStorage.setItem(STORAGE_KEYS.ADMIN_USER, JSON.stringify(adminData));
+      return { success: true, data: adminData };
     }
 
-    return res;
+    // 2. Fallback to Restaurant Owner (Admin) Login
+    const ownerRes = await apiRequest('/api/auth/owner/login', {
+      method: 'POST',
+      body: { email, password },
+    });
+
+    if (ownerRes.owner) {
+      const ownerData = {
+        ...ownerRes.owner,
+        id: ownerRes.owner._id,
+        userType: 'owner' as const,
+      };
+
+      const token: string | undefined =
+        ownerRes.token || ownerRes.accessToken || ownerRes.owner.token || ownerRes.data?.token;
+
+      if (token) {
+        await AsyncStorage.setItem(STORAGE_KEYS.ADMIN_TOKEN, token);
+      }
+      await AsyncStorage.setItem(STORAGE_KEYS.ADMIN_USER, JSON.stringify(ownerData));
+      return { success: true, data: ownerData };
+    }
+
+    return ownerRes.message ? { ...ownerRes, success: false } : res;
   },
 
-  async getCurrentAdmin(): Promise<SuperAdminUser | null> {
+  async getCurrentAdmin(): Promise<any | null> {
     try {
       const userStr = await AsyncStorage.getItem(STORAGE_KEYS.ADMIN_USER);
       if (!userStr) return null;
@@ -56,12 +78,18 @@ export const authService = {
     }
   },
 
+  async registerOwner(formData: FormData): Promise<{ success: boolean; message?: string }> {
+    return apiRequest('/api/owner-registrations/register', {
+      method: 'POST',
+      body: formData,
+    });
+  },
+
   async logout() {
-    // Also call the server logout endpoint to clear the cookie
     try {
       await apiRequest('/api/auth/logout', { method: 'POST' });
     } catch {
-      // ignore, we clear locally anyway
+      // ignore
     }
     await AsyncStorage.removeItem(STORAGE_KEYS.ADMIN_TOKEN);
     await AsyncStorage.removeItem(STORAGE_KEYS.ADMIN_USER);

@@ -34,7 +34,7 @@ export const AssignDeliveryModal: React.FC<AssignDeliveryModalProps> = ({
   useEffect(() => {
     if (visible) {
       loadDeliveryPartners();
-      const partner = order.assignedDeliveryPartnerId || (order as any).deliveryPartnerId;
+      const partner = order ? (order.assignedDeliveryPartnerId || (order as any).deliveryPartnerId) : null;
       if (order && partner) {
         if (typeof partner === 'object') {
           setSelectedPartnerId(partner._id);
@@ -49,7 +49,7 @@ export const AssignDeliveryModal: React.FC<AssignDeliveryModalProps> = ({
 
   const loadDeliveryPartners = async () => {
     setLoading(true);
-    const res = await userService.getAllUsers('delivery_partner');
+    const res = await userService.getAllUsers({ userType: 'delivery_partner' });
     if (res.success && res.data) {
       setPartners(res.data);
     }

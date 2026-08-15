@@ -54,12 +54,17 @@ export async function apiRequest<T = any>(
   const path = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
   const url = `${baseUrl}${path}`;
 
+  const isFormData = options.body instanceof FormData;
+
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
     Accept: 'application/json',
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...options.headers,
   };
+
+  if (!isFormData) {
+    headers['Content-Type'] = 'application/json';
+  }
 
   const fetchOptions: RequestInit = {
     method: options.method || 'GET',
@@ -67,7 +72,7 @@ export async function apiRequest<T = any>(
   };
 
   if (options.body && options.method !== 'GET') {
-    fetchOptions.body = JSON.stringify(options.body);
+    fetchOptions.body = isFormData ? (options.body as any) : JSON.stringify(options.body);
   }
 
   try {

@@ -152,13 +152,22 @@ export default function LoginScreen() {
               ? <ActivityIndicator color="#fff" />
               : <Text style={styles.loginBtnText}>Sign In to Admin Portal</Text>}
           </TouchableOpacity>
+
+          {/* New Store Registration */}
+          <TouchableOpacity
+            style={styles.registerBtn}
+            onPress={() => router.push('/register')}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.registerBtnText}>New Business? Register Store</Text>
+          </TouchableOpacity>
         </View>
 
         {/* Configure Backend URL */}
-        {/* <TouchableOpacity style={styles.configBtn} onPress={() => setShowConfigModal(true)}>
+        <TouchableOpacity style={styles.configBtn} onPress={() => setShowConfigModal(true)}>
           <Server size={13} color={Colors.textSubtle} />
           <Text style={styles.configBtnText}>Configure Backend URL</Text>
-        </TouchableOpacity> */}
+        </TouchableOpacity>
       </View>
 
       {/* API URL Config Modal */}
@@ -363,6 +372,17 @@ const styles = StyleSheet.create({
   },
   saveBtnText: {
     color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  registerBtn: {
+    marginTop: 16,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  registerBtnText: {
+    color: Colors.primary,
     fontWeight: '700',
     fontSize: 14,
   },

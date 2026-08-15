@@ -63,9 +63,13 @@ export default function SettingsScreen() {
   const [submittingTier, setSubmittingTier] = useState(false);
 
   useEffect(() => {
+    if (user && user.userType !== 'super_admin') {
+      router.replace('/restaurant-settings');
+      return;
+    }
     getApiBaseUrl().then(setApiUrl);
     loadGlobalConfig();
-  }, []);
+  }, [user]);
 
   const loadGlobalConfig = async () => {
     setLoading(true);

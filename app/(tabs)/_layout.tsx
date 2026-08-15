@@ -1,14 +1,26 @@
 import React from 'react';
 import { Tabs } from 'expo-router';
 import { Colors } from '../../constants/colors';
-import { Home, Store, Receipt, Users } from 'lucide-react-native';
+import { Home, Store, Receipt, Users, Menu as MenuIcon } from 'lucide-react-native';
 import { StatusBar } from 'expo-status-bar';
 import { TouchableOpacity, StyleSheet, View, Text, Platform } from 'react-native';
+import { useAuth } from '../../context/AuthContext';
 
 function AdminTabBar({ state, descriptors, navigation }: any) {
+  const { user } = useAuth();
+  const isSuperAdmin = user?.userType === 'super_admin';
+
   return (
     <View style={styles.tabBar}>
       {state.routes.map((route: any) => {
+        // Dynamically hide tabs based on user role
+        if (isSuperAdmin && route.name === 'menu') {
+          return null;
+        }
+        if (!isSuperAdmin && (route.name === 'restaurants' || route.name === 'users')) {
+          return null;
+        }
+
         const isFocused = state.routes.indexOf(route) === state.index;
         const { options } = descriptors[route.key];
 
@@ -39,6 +51,8 @@ function AdminTabBar({ state, descriptors, navigation }: any) {
               return <Receipt size={size} color={color} strokeWidth={isFocused ? 2.2 : 1.8} />;
             case 'users':
               return <Users size={size} color={color} strokeWidth={isFocused ? 2.2 : 1.8} />;
+            case 'menu':
+              return <MenuIcon size={size} color={color} strokeWidth={isFocused ? 2.2 : 1.8} />;
             default:
               return null;
           }
@@ -95,6 +109,12 @@ export default function TabLayout() {
           name="users"
           options={{
             title: 'Users',
+          }}
+        />
+        <Tabs.Screen
+          name="menu"
+          options={{
+            title: 'Menu',
           }}
         />
       </Tabs>

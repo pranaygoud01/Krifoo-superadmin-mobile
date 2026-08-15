@@ -15,14 +15,18 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.krifoo.admin"
+      "bundleIdentifier": "com.krifoo.admin",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/logo.png",
         "backgroundColor": "#0F172A"
       },
-      "package": "com.krifoo.admin"
+      "package": "com.krifoo.admin",
+      "googleServicesFile": "./google-services.json"
     },
     "web": {
       "bundler": "metro",
