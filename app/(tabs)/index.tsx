@@ -6,6 +6,7 @@ import {
   ScrollView,
   RefreshControl,
   TouchableOpacity,
+  DeviceEventEmitter,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Header } from '../../components/Header';
@@ -97,6 +98,20 @@ export default function DashboardScreen() {
 
   useEffect(() => {
     loadDashboardData();
+
+    // Listen for WebSocket updates from the backend
+    const sub = DeviceEventEmitter.addListener('websocket_message', (data) => {
+      console.log('[Dashboard] WebSocket notification received:', data);
+      if (
+        data.type === 'RESTAURANT_ORDER_UPDATE' ||
+        data.type === 'SUPERADMIN_ORDER_UPDATE'
+      ) {
+        console.log('[Dashboard] Reloading metrics due to WebSocket event');
+        loadDashboardData();
+      }
+    });
+
+    return () => sub.remove();
   }, [isSuperAdmin]);
 
   // Compute stats

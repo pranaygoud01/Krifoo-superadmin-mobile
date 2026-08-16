@@ -7,6 +7,7 @@ import {
   TextInput,
   RefreshControl,
   ActivityIndicator,
+  DeviceEventEmitter,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Header } from '../../components/Header';
@@ -77,6 +78,20 @@ export default function OrdersScreen() {
 
   useEffect(() => {
     fetchOrders(1);
+
+    // Listen for WebSocket updates from the backend
+    const sub = DeviceEventEmitter.addListener('websocket_message', (data) => {
+      console.log('[Orders] WebSocket notification received:', data);
+      if (
+        data.type === 'RESTAURANT_ORDER_UPDATE' ||
+        data.type === 'SUPERADMIN_ORDER_UPDATE'
+      ) {
+        console.log('[Orders] Reloading orders feed due to WebSocket event');
+        fetchOrders(1, true);
+      }
+    });
+
+    return () => sub.remove();
   }, [selectedFilter]);
 
   const onRefresh = () => {

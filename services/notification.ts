@@ -90,12 +90,8 @@ export async function setupPushNotifications(): Promise<void> {
   try {
     const token = await registerForPushNotificationsAsync();
     if (token) {
-      const storedToken = await AsyncStorage.getItem('registered_push_token');
-      if (storedToken !== token) {
-        await registerPushTokenWithBackend(token);
-      } else {
-        console.log('[Push] Token already registered and matches.');
-      }
+      console.log('[Push] Registering token with backend:', token);
+      await registerPushTokenWithBackend(token);
     }
   } catch (err) {
     console.error('[Push] setupPushNotifications failed:', err);

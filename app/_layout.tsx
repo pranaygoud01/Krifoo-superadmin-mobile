@@ -16,6 +16,8 @@ import {
 import * as SplashScreen from 'expo-splash-screen';
 import { Text, StyleSheet } from 'react-native';
 
+import { SocketProvider } from '../context/SocketContext';
+
 // Keep the splash screen visible while we fetch resources
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -66,29 +68,31 @@ export default function RootLayout() {
   return (
     <AuthProvider>
       <ToastProvider>
-        <StatusBar style="dark" backgroundColor={Colors.background} />
-        <Stack
-          screenOptions={{
-            headerShown: false,
-            contentStyle: { backgroundColor: Colors.background },
-            animation: 'fade',
-          }}
-        >
-          <Stack.Screen name="index" />
-          <Stack.Screen name="login" />
-          <Stack.Screen name="register" options={{ animation: 'slide_from_right' }} />
-          <Stack.Screen name="(tabs)" />
-          <Stack.Screen name="settings" options={{ animation: 'slide_from_right' }} />
-          <Stack.Screen name="order-details" options={{ animation: 'slide_from_right' }} />
-          <Stack.Screen name="restaurant-details" options={{ animation: 'slide_from_right' }} />
-          <Stack.Screen name="notifications" options={{ animation: 'slide_from_right' }} />
-          <Stack.Screen name="tables" options={{ animation: 'slide_from_right' }} />
-          <Stack.Screen name="bookings" options={{ animation: 'slide_from_right' }} />
-          <Stack.Screen name="marketing" options={{ animation: 'slide_from_right' }} />
-          <Stack.Screen name="fleet" options={{ animation: 'slide_from_right' }} />
-          <Stack.Screen name="restaurant-settings" options={{ animation: 'slide_from_right' }} />
-          <Stack.Screen name="add-edit-menu" options={{ animation: 'slide_from_right' }} />
-        </Stack>
+        <SocketProvider>
+          <StatusBar style="dark" backgroundColor={Colors.background} />
+          <Stack
+            screenOptions={{
+              headerShown: false,
+              contentStyle: { backgroundColor: Colors.background },
+              animation: 'fade',
+            }}
+          >
+            <Stack.Screen name="index" />
+            <Stack.Screen name="login" />
+            <Stack.Screen name="register" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="(tabs)" />
+            <Stack.Screen name="settings" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="order-details" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="restaurant-details" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="notifications" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="tables" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="bookings" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="marketing" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="fleet" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="restaurant-settings" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="add-edit-menu" options={{ animation: 'slide_from_right' }} />
+          </Stack>
+        </SocketProvider>
       </ToastProvider>
     </AuthProvider>
   );

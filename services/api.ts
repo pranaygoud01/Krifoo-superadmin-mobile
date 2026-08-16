@@ -54,10 +54,13 @@ export async function apiRequest<T = any>(
   const path = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
   const url = `${baseUrl}${path}`;
 
+  console.log(`[API Request] ${options.method || 'GET'} ${path} - Token: ${token ? 'present' : 'absent'}`);
+
   const isFormData = options.body instanceof FormData;
 
   const headers: Record<string, string> = {
     Accept: 'application/json',
+    'Bypass-Tunnel-Reminder': 'true',
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...options.headers,
   };
