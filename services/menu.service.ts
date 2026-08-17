@@ -3,7 +3,13 @@ import { MenuItem, Category } from '../types';
 
 export const menuService = {
   async getRestaurantMenu(restaurantId: string): Promise<{ success: boolean; data?: MenuItem[]; message?: string }> {
-    return apiRequest(`/api/menu-items/restaurant/${restaurantId}`, {
+    return apiRequest(`/api/menu-items/restaurant/${restaurantId}?limit=1000`, {
+      method: 'GET',
+    });
+  },
+
+  async getAllMenuItems(): Promise<{ success: boolean; data?: MenuItem[]; message?: string }> {
+    return apiRequest('/api/menu-items/all?limit=1000', {
       method: 'GET',
     });
   },

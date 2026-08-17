@@ -60,11 +60,12 @@ export default function UsersScreen() {
         limit: 15,
       });
 
-      if (res.success && res.data) {
+      const userList = res.data || res.users;
+      if (res.success && userList) {
         if (pageNum === 1) {
-          setUsers(res.data);
+          setUsers(userList);
         } else {
-          setUsers((prev) => [...prev, ...res.data!]);
+          setUsers((prev) => [...prev, ...userList]);
         }
         setPage(pageNum);
         setTotalPages(res.totalPages || 1);
@@ -335,7 +336,7 @@ const styles = StyleSheet.create({
   },
   listContent: {
     paddingHorizontal: 16,
-    paddingBottom: 20,
+    paddingBottom: 110,
   },
   centerBox: {
     flex: 1,

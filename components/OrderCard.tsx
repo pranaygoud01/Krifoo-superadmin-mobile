@@ -123,8 +123,8 @@ export const OrderCard: React.FC<OrderCardProps> = ({ order, onPress, onAssignDe
 const styles = StyleSheet.create({
   card: {
     backgroundColor: Colors.card,
-    borderRadius: 14,
-    borderColor: Colors.cardBorder,
+    borderRadius: 16,
+    borderColor: '#EEEEEE',
     borderWidth: 1,
     padding: 14,
     marginBottom: 12,

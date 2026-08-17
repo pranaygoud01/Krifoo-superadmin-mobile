@@ -58,11 +58,12 @@ export default function OrdersScreen() {
         status: statusParam,
       });
 
-      if (res.success && res.data) {
+      const orderList = res.data || res.orders;
+      if (res.success && orderList) {
         if (pageNum === 1) {
-          setOrders(res.data);
+          setOrders(orderList);
         } else {
-          setOrders((prev) => [...prev, ...res.data!]);
+          setOrders((prev) => [...prev, ...orderList]);
         }
         setPage(pageNum);
         setTotalPages(res.totalPages || 1);
@@ -331,7 +332,7 @@ const styles = StyleSheet.create({
   },
   listContent: {
     paddingHorizontal: 16,
-    paddingBottom: 20,
+    paddingBottom: 110,
   },
   centerBox: {
     flex: 1,

@@ -27,7 +27,7 @@ export default function AddEditMenuScreen() {
   const { id } = useLocalSearchParams();
   const isEditMode = !!id;
   const { user } = useAuth();
-  const restaurantId = user?.restaurantId || user?._id || '';
+  const restaurantId = (typeof user?.restaurantId === 'object' ? user?.restaurantId?._id : user?.restaurantId) || user?._id || '';
 
   const [activeTab, setActiveTab] = useState<'basic' | 'pricing' | 'custom'>('basic');
   const [loading, setLoading] = useState(false);

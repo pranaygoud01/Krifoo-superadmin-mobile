@@ -217,26 +217,49 @@ export default function OrderDetailsScreen() {
 
       <ScrollView style={styles.scrollBody} showsVerticalScrollIndicator={false}>
         {/* Current Status Box */}
-        <View style={styles.statusBox}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.statusBoxLabel}>Current Order Status</Text>
-            <Text style={styles.statusBoxDate}>
-              {order.createdAt ? new Date(order.createdAt).toLocaleString() : ''}
-            </Text>
-          </View>
-          <View style={{ alignItems: 'flex-end', gap: 6 }}>
-            <StatusBadge status={order.status} type="order" />
+        {order.status === 'placed' ? (
+          <View style={styles.acceptActionsRow}>
             <TouchableOpacity
-              style={styles.editStatusBtn}
-              onPress={() => setEditingStatus(!editingStatus)}
+              style={styles.acceptButton}
+              onPress={() => handleUpdateStatus('preparing')}
+              disabled={updatingStatus}
             >
-              <Edit2 size={12} color={Colors.primary} />
-              <Text style={styles.editStatusBtnText}>
-                {editingStatus ? 'Cancel' : 'Edit Status'}
-              </Text>
+              {updatingStatus ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <Text style={styles.acceptButtonText}>Accept Order</Text>
+              )}
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.rejectButton}
+              onPress={() => handleUpdateStatus('cancelled')}
+              disabled={updatingStatus}
+            >
+              <Text style={styles.rejectButtonText}>Reject</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        ) : (
+          <View style={styles.statusBox}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.statusBoxLabel}>Current Order Status</Text>
+              <Text style={styles.statusBoxDate}>
+                {order.createdAt ? new Date(order.createdAt).toLocaleString() : ''}
+              </Text>
+            </View>
+            <View style={{ alignItems: 'flex-end', gap: 6 }}>
+              <StatusBadge status={order.status} type="order" />
+              <TouchableOpacity
+                style={styles.editStatusBtn}
+                onPress={() => setEditingStatus(!editingStatus)}
+              >
+                <Edit2 size={12} color={Colors.primary} />
+                <Text style={styles.editStatusBtnText}>
+                  {editingStatus ? 'Cancel' : 'Edit Status'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
 
         {/* Editing Status Selector */}
         {editingStatus && (
@@ -706,5 +729,38 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '800',
     fontSize: 14,
+  },
+  acceptActionsRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 20,
+  },
+  acceptButton: {
+    flex: 2,
+    backgroundColor: '#16A34A', // success green
+    height: 48,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  acceptButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  rejectButton: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#EF4444',
+    height: 48,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  rejectButtonText: {
+    color: '#EF4444',
+    fontSize: 14,
+    fontWeight: '700',
   },
 });

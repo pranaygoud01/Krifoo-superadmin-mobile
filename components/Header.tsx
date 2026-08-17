@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Alert, Image } from 'react-native';
 import { useRouter, useSegments } from 'expo-router';
-import { ArrowLeft, Bell, Settings } from 'lucide-react-native';
+import { ArrowLeft, Bell, Settings, User } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Colors } from '../constants/colors';
 import { orderService } from '../services/order.service';
@@ -26,6 +26,20 @@ export const Header: React.FC<HeaderProps> = ({
   const { user } = useAuth();
   const isSuperAdmin = user?.userType === 'super_admin';
   const [unreadCount, setUnreadCount] = React.useState<number>(0);
+
+  const getRestaurantName = () => {
+    if (user?.restaurantName) return user.restaurantName;
+    if (typeof user?.restaurantId === 'object' && user?.restaurantId?.restaurantName) {
+      return user.restaurantId.restaurantName;
+    }
+    return undefined;
+  };
+
+  const getOwnerName = () => {
+    if (user?.ownerFullName) return user.ownerFullName;
+    if (user?.fullName) return user.fullName;
+    return undefined;
+  };
 
   // Fetch pending applications and active orders to compute live badge count
   React.useEffect(() => {
@@ -104,13 +118,24 @@ export const Header: React.FC<HeaderProps> = ({
           )}
           <View style={styles.titleContainer}>
             {title === 'Krifoo Admin' ? (
-              <View style={styles.logoTitleContainer}>
+              <View style={styles.profileSection}>
                 <Image
                   source={require('../assets/logo.png')}
                   style={styles.headerLogo}
                   resizeMode="contain"
                 />
-                 <Text style={styles.titleAdminText}>{isSuperAdmin ? 'SUPERADMIN' : 'ADMIN'}</Text>
+                <View style={styles.greetingTextContainer}>
+                  <Text style={styles.greetingText}>
+                    {isSuperAdmin
+                      ? `Hello, ${user?.fullName?.split(' ')[0] || 'Admin'} 👋`
+                      : (getRestaurantName() || 'Restaurant Partner')}
+                  </Text>
+                  <Text style={styles.greetingRole}>
+                    {isSuperAdmin
+                      ? 'Admin'
+                      : (getOwnerName() || 'Restaurant Partner')}
+                  </Text>
+                </View>
               </View>
             ) : (
               <Text style={styles.title} numberOfLines={1}>
@@ -132,7 +157,7 @@ export const Header: React.FC<HeaderProps> = ({
                   activeOpacity={0.7}
                 >
                   <View>
-                    <Bell size={24} color={Colors.text} strokeWidth={1.8} />
+                    <Bell size={20} color={Colors.text} strokeWidth={1.8} />
                     {unreadCount > 0 && (
                       <View style={styles.badgeContainer}>
                         <Text style={styles.badgeText}>
@@ -147,7 +172,7 @@ export const Header: React.FC<HeaderProps> = ({
                   onPress={handleSettingsPress}
                   activeOpacity={0.7}
                 >
-                  <Settings size={24} color={Colors.text} strokeWidth={1.8} />
+                  <Settings size={20} color={Colors.text} strokeWidth={1.8} />
                 </TouchableOpacity>
               </View>
             )
@@ -161,8 +186,7 @@ export const Header: React.FC<HeaderProps> = ({
 const styles = StyleSheet.create({
   safeArea: {
     backgroundColor: Colors.background,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.cardBorder,
+    // softer light outline
   },
   header: {
     paddingHorizontal: 16,
@@ -180,9 +204,9 @@ const styles = StyleSheet.create({
     marginRight: 12,
   },
   backButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: Colors.cardSurface,
     justifyContent: 'center',
     alignItems: 'center',
@@ -199,25 +223,29 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: -0.5,
   },
-  logoTitleContainer: {
+  profileSection: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 12,
   },
   headerLogo: {
-    width: 28,
-    height: 28,
+    width: 36,
+    height: 36,
   },
-  titleAdminText: {
+  greetingTextContainer: {
+    justifyContent: 'center',
+  },
+  greetingText: {
     color: Colors.text,
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '800',
-    letterSpacing: 1.2,
+    letterSpacing: -0.3,
   },
-  subtitle: {
+  greetingRole: {
     color: Colors.textMuted,
     fontSize: 11,
-    marginTop: 1,
+    fontWeight: '600',
+    marginTop: 2,
   },
   rightContainer: {
     flexDirection: 'row',
@@ -226,17 +254,22 @@ const styles = StyleSheet.create({
   defaultActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 16,
+    gap: 12,
   },
   actionIconButton: {
-    padding: 4,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: Colors.cardSurface,
+    borderWidth: 1,
+    borderColor: Colors.cardBorder,
     justifyContent: 'center',
     alignItems: 'center',
   },
   badgeContainer: {
     position: 'absolute',
-    top: -4,
-    right: -6,
+    top: -3,
+    right: -3,
     backgroundColor: '#EF4444',
     borderRadius: 9,
     minWidth: 18,
@@ -245,7 +278,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 1.5,
-    borderColor: Colors.background,
+    borderColor: Colors.cardSurface,
   },
   badgeText: {
     color: '#FFFFFF',

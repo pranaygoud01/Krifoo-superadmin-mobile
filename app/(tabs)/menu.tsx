@@ -10,11 +10,13 @@ import {
   ScrollView,
   Image,
   TextInput,
+  RefreshControl,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useAuth } from '../../context/AuthContext';
 import { Colors } from '../../constants/colors';
 import { Header } from '../../components/Header';
+import { FilterChip } from '../../components/FilterChip';
 import { menuService } from '../../services/menu.service';
 import { MenuItem, Category } from '../../types';
 import { Plus, Edit2, Trash2, Tag, Utensils, Search } from 'lucide-react-native';
@@ -22,28 +24,38 @@ import { Plus, Edit2, Trash2, Tag, Utensils, Search } from 'lucide-react-native'
 export default function MenuScreen() {
   const router = useRouter();
   const { user } = useAuth();
-  const restaurantId = user?.restaurantId || user?._id || '';
+  const isSuperAdmin = user?.userType === 'super_admin';
+  const restaurantId = (typeof user?.restaurantId === 'object' ? user?.restaurantId?._id : user?.restaurantId) || user?._id || '';
 
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await loadMenuData();
+    setRefreshing(false);
+  };
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState('all');
 
   const loadMenuData = async () => {
-    if (!restaurantId) return;
+    if (!isSuperAdmin && !restaurantId) return;
     setLoading(true);
     try {
       const [menuRes, catRes] = await Promise.all([
-        menuService.getRestaurantMenu(restaurantId),
+        isSuperAdmin ? menuService.getAllMenuItems() : menuService.getRestaurantMenu(restaurantId),
         menuService.getAllCategories(),
       ]);
 
-      if (menuRes.success && menuRes.data) {
-        setMenuItems(menuRes.data);
+      const itemsList = menuRes.data || menuRes.menuItems || (menuRes as any).items;
+      if (menuRes.success && itemsList) {
+        setMenuItems(itemsList);
       }
-      if (catRes.success && catRes.data) {
-        setCategories(catRes.data);
+      const catList = catRes.data || catRes.categories || (catRes as any).items;
+      if (catRes.success && catList) {
+        setCategories(catList);
       }
     } catch (e) {
       console.error('Failed to load menu data:', e);
@@ -124,40 +136,18 @@ export default function MenuScreen() {
           style={styles.categoryScroll}
           contentContainerStyle={styles.categoryScrollContent}
         >
-          <TouchableOpacity
-            style={[
-              styles.filterChip,
-              selectedCategoryFilter === 'all' && styles.filterChipActive,
-            ]}
+          <FilterChip
+            label="All Items"
+            isSelected={selectedCategoryFilter === 'all'}
             onPress={() => setSelectedCategoryFilter('all')}
-          >
-            <Text
-              style={[
-                styles.filterChipLabel,
-                selectedCategoryFilter === 'all' && styles.filterChipLabelActive,
-              ]}
-            >
-              All Items
-            </Text>
-          </TouchableOpacity>
+          />
           {categories.map((cat) => (
-            <TouchableOpacity
+            <FilterChip
               key={cat._id}
-              style={[
-                styles.filterChip,
-                selectedCategoryFilter === cat.categoryName && styles.filterChipActive,
-              ]}
+              label={cat.categoryName}
+              isSelected={selectedCategoryFilter === cat.categoryName}
               onPress={() => setSelectedCategoryFilter(cat.categoryName)}
-            >
-              <Text
-                style={[
-                  styles.filterChipLabel,
-                  selectedCategoryFilter === cat.categoryName && styles.filterChipLabelActive,
-                ]}
-              >
-                {cat.categoryName}
-              </Text>
-            </TouchableOpacity>
+            />
           ))}
         </ScrollView>
       </View>
@@ -181,6 +171,13 @@ export default function MenuScreen() {
           data={filteredItems}
           keyExtractor={(item) => item._id}
           contentContainerStyle={styles.listContent}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={Colors.primary}
+            />
+          }
           renderItem={({ item }) => {
             const itemName = item.itemName || item.name || '';
             const itemPrice = item.basePrice ?? item.price ?? 0;
@@ -238,20 +235,22 @@ export default function MenuScreen() {
 
                 <View style={styles.itemFooter}>
                   <Text style={styles.itemPrice}>€{Number(itemPrice).toFixed(2)}</Text>
-                  <View style={styles.actions}>
-                    <TouchableOpacity
-                      style={styles.actionBtnEdit}
-                      onPress={() => openEditPage(item)}
-                    >
-                      <Edit2 size={14} color={Colors.text} />
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.actionBtnDelete}
-                      onPress={() => handleDeleteItem(item._id)}
-                    >
-                      <Trash2 size={14} color={Colors.danger} />
-                    </TouchableOpacity>
-                  </View>
+                  {!isSuperAdmin && (
+                    <View style={styles.actions}>
+                      <TouchableOpacity
+                        style={styles.actionBtnEdit}
+                        onPress={() => openEditPage(item)}
+                      >
+                        <Edit2 size={14} color={Colors.text} />
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.actionBtnDelete}
+                        onPress={() => handleDeleteItem(item._id)}
+                      >
+                        <Trash2 size={14} color={Colors.danger} />
+                      </TouchableOpacity>
+                    </View>
+                  )}
                 </View>
               </View>
             );
@@ -260,9 +259,11 @@ export default function MenuScreen() {
       )}
 
       {/* Floating Add FAB */}
-      <TouchableOpacity style={styles.fab} onPress={openAddPage} activeOpacity={0.85}>
-        <Plus size={24} color="#FFFFFF" />
-      </TouchableOpacity>
+      {!isSuperAdmin && (
+        <TouchableOpacity style={styles.fab} onPress={openAddPage} activeOpacity={0.85}>
+          <Plus size={24} color="#FFFFFF" />
+        </TouchableOpacity>
+      )}
 
 
     </View>
@@ -351,13 +352,13 @@ const styles = StyleSheet.create({
   },
   listContent: {
     padding: 16,
-    paddingBottom: 80,
+    paddingBottom: 110,
   },
   itemCard: {
     backgroundColor: Colors.card,
-    borderRadius: 14,
-    borderWidth: 1.5,
-    borderColor: Colors.cardBorder,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#EEEEEE',
     padding: 14,
     marginBottom: 12,
   },
@@ -461,7 +462,7 @@ const styles = StyleSheet.create({
   },
   fab: {
     position: 'absolute',
-    bottom: 20,
+    bottom: 95,
     right: 20,
     backgroundColor: Colors.primary,
     width: 56,

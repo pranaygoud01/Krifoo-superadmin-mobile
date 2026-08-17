@@ -3,8 +3,79 @@ import { Tabs } from 'expo-router';
 import { Colors } from '../../constants/colors';
 import { Home, Store, Receipt, Users, Menu as MenuIcon } from 'lucide-react-native';
 import { StatusBar } from 'expo-status-bar';
-import { TouchableOpacity, StyleSheet, View, Text, Platform } from 'react-native';
+import { TouchableOpacity, StyleSheet, View, Text, Platform, LayoutAnimation, UIManager, Animated } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { useAuth } from '../../context/AuthContext';
+
+if (Platform.OS === 'android') {
+  if (UIManager.setLayoutAnimationEnabledExperimental) {
+    UIManager.setLayoutAnimationEnabledExperimental(true);
+  }
+}
+
+interface TabButtonProps {
+  route: any;
+  isFocused: boolean;
+  label: string;
+  onPress: () => void;
+  renderIcon: () => React.ReactNode;
+}
+
+const TabButton: React.FC<TabButtonProps> = ({
+  route,
+  isFocused,
+  label,
+  onPress,
+  renderIcon,
+}) => {
+  const animation = React.useRef(new Animated.Value(isFocused ? 1 : 0)).current;
+
+  React.useEffect(() => {
+    Animated.spring(animation, {
+      toValue: isFocused ? 1 : 0,
+      useNativeDriver: true,
+      tension: 120,
+      friction: 14,
+    }).start();
+  }, [isFocused]);
+
+  const scale = animation.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.85, 1],
+  });
+
+  const opacity = animation.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, 1],
+  });
+
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      activeOpacity={0.8}
+      style={[
+        styles.tabItem,
+        isFocused ? styles.tabItemActive : styles.tabItemInactive,
+      ]}
+    >
+      <Animated.View
+        style={[
+          styles.pillBackground,
+          {
+            opacity,
+            transform: [{ scale }],
+          },
+        ]}
+      />
+      <View style={styles.tabContent}>
+        {renderIcon()}
+        {isFocused && (
+          <Text style={styles.tabLabel}>{label}</Text>
+        )}
+      </View>
+    </TouchableOpacity>
+  );
+};
 
 function AdminTabBar({ state, descriptors, navigation }: any) {
   const { user } = useAuth();
@@ -34,6 +105,12 @@ function AdminTabBar({ state, descriptors, navigation }: any) {
           });
 
           if (!isFocused && !event.defaultPrevented) {
+            try {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            } catch (e) {
+              // Silently handle if haptics not supported in env
+            }
+            LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
             navigation.navigate(route.name, route.params);
           }
         };
@@ -59,18 +136,14 @@ function AdminTabBar({ state, descriptors, navigation }: any) {
         };
 
         return (
-          <TouchableOpacity
+          <TabButton
             key={route.key}
+            route={route}
+            isFocused={isFocused}
+            label={label}
             onPress={onPress}
-            activeOpacity={0.85}
-            style={[
-              styles.tabItem,
-              isFocused && styles.tabItemActive
-            ]}
-          >
-            {renderIcon()}
-            <Text style={[styles.tabLabel, { color }]}>{label}</Text>
-          </TouchableOpacity>
+            renderIcon={renderIcon}
+          />
         );
       })}
     </View>
@@ -124,30 +197,52 @@ export default function TabLayout() {
 
 const styles = StyleSheet.create({
   tabBar: {
-    height: Platform.OS === 'ios' ? 88 : 72,
+    position: 'absolute',
+    bottom: Platform.OS === 'ios' ? 28 : 20,
+    left: 20,
+    right: 20,
+    height: 56,
     flexDirection: 'row',
-    backgroundColor: '#FFFFFF',
-    borderTopWidth: 1,
-    borderTopColor: '#EEEEEE',
+    backgroundColor: 'rgba(255, 255, 255, 0.96)',
+    borderRadius: 28,
     alignItems: 'center',
-    justifyContent: 'space-around',
-    paddingHorizontal: 12,
-    paddingBottom: Platform.OS === 'ios' ? 16 : 0,
+    paddingHorizontal: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(241, 245, 249, 0.95)',
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    elevation: 8,
   },
   tabItem: {
-    flex: 1,
-    height: 56,
-    borderRadius: 16,
+    height: 48,
+    borderRadius: 24,
     alignItems: 'center',
     justifyContent: 'center',
-    marginHorizontal: 6,
-    gap: 3,
+  },
+  tabItemInactive: {
+    flex: 1,
+    backgroundColor: 'transparent',
   },
   tabItemActive: {
-    // backgroundColor: '#FF5C39', // Vibrant orange container matching reference UI exactly
+    flex: 1.6, // active tab expands to fill remaining space beautifully
+    marginHorizontal: 2,
+  },
+  pillBackground: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#FFF0EC', // soft brand orange background matching colors.ts
+    borderRadius: 24,
+  },
+  tabContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
   },
   tabLabel: {
-    fontSize: 10,
-    fontWeight: '700',
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#FF5C39',
   },
 });

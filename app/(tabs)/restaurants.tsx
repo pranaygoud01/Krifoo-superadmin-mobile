@@ -58,11 +58,12 @@ export default function RestaurantsScreen() {
         status: statusParam,
       });
 
-      if (res.success && res.data) {
+      const restList = res.data || res.restaurants;
+      if (res.success && restList) {
         if (pageNum === 1) {
-          setRestaurants(res.data);
+          setRestaurants(restList);
         } else {
-          setRestaurants((prev) => [...prev, ...res.data!]);
+          setRestaurants((prev) => [...prev, ...restList]);
         }
         setPage(pageNum);
         setTotalPages(res.totalPages || 1);
@@ -327,7 +328,7 @@ const styles = StyleSheet.create({
   },
   listContent: {
     paddingHorizontal: 16,
-    paddingBottom: 20,
+    paddingBottom: 110,
   },
   centerBox: {
     flex: 1,

@@ -38,11 +38,10 @@ export const StatCard: React.FC<StatCardProps> = ({
 const styles = StyleSheet.create({
   card: {
     backgroundColor: Colors.card,
-    borderRadius: 12,
+    borderRadius: 16,
     padding: 16,
     borderWidth: 1,
-    borderColor: Colors.cardBorder,
-    borderLeftWidth: 1,
+    borderColor: '#EEEEEE',
     marginBottom: 12,
     flex: 1,
     minWidth: 150,
@@ -56,21 +55,23 @@ const styles = StyleSheet.create({
   title: {
     color: Colors.textMuted,
     fontSize: 11,
-    fontWeight: '600',
+    fontWeight: '700',
     textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    letterSpacing: 0.6,
   },
   iconContainer: {
     padding: 6,
     borderRadius: 8,
   },
   value: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: '800',
-    marginBottom: 2,
+    marginBottom: 4,
+    letterSpacing: -0.5,
   },
   subtitle: {
     color: Colors.textSubtle,
     fontSize: 12,
+    fontWeight: '500',
   },
 });

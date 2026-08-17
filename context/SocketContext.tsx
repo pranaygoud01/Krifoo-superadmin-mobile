@@ -17,13 +17,30 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     let active = true;
     let ws: WebSocket | null = null;
     let reconnectTimeout: any = null;
+    let pingInterval: any = null;
 
     async function connect() {
       if (!user) return;
       
       // Prevent multiple connections
-      if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) {
-        return;
+      if (ws) {
+        if (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN) {
+          return;
+        }
+        // Clean up previous closed/closing socket event handlers
+        ws.onopen = null;
+        ws.onmessage = null;
+        ws.onclose = null;
+        ws.onerror = null;
+        try {
+          ws.close();
+        } catch (e) {}
+        ws = null;
+      }
+
+      if (reconnectTimeout) {
+        clearTimeout(reconnectTimeout);
+        reconnectTimeout = null;
       }
 
       try {
@@ -34,37 +51,53 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         // Replace http/https with ws/wss
         const wsUrl = baseUrl.replace(/^http/, 'ws') + `?token=${token}`;
 
-        console.log('[Socket] Connecting to', wsUrl);
+        console.log('[Socket] Connecting...');
         ws = new WebSocket(wsUrl);
         socketRef.current = ws;
 
         ws.onopen = () => {
           console.log('[Socket] Connected successfully');
+          // Start keep-alive ping heartbeat every 30 seconds
+          if (pingInterval) clearInterval(pingInterval);
+          pingInterval = setInterval(() => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+              try {
+                ws.send(JSON.stringify({ type: 'ping' }));
+              } catch (e) {
+                console.log('[Socket] Heartbeat send failed:', e.message);
+              }
+            }
+          }, 30000);
         };
 
         ws.onmessage = (event) => {
           try {
             const data = JSON.parse(event.data);
-            console.log('[Socket] Received message:', data);
+            console.log('[Socket] Received message type:', data.type);
             DeviceEventEmitter.emit('websocket_message', data);
           } catch (e) {
-            console.warn('[Socket] Failed to parse message:', e);
+            console.log('[Socket] Failed to parse message:', e.message);
           }
         };
 
         ws.onclose = (e) => {
-          console.log('[Socket] Disconnected:', e.code, e.reason);
+          console.log('[Socket] Disconnected:', e.code, e.reason || 'No reason provided');
+          if (pingInterval) {
+            clearInterval(pingInterval);
+            pingInterval = null;
+          }
           if (active && user) {
             if (reconnectTimeout) clearTimeout(reconnectTimeout);
             reconnectTimeout = setTimeout(connect, 5000); // Reconnect in 5 seconds
           }
         };
 
-        ws.onerror = (err) => {
-          console.error('[Socket] Error:', err);
+        ws.onerror = (err: any) => {
+          // Log cleanly to prevent Metro from printing huge stack traces for websocket errors
+          console.log('[Socket] Connection closed abnormally/error event received');
         };
       } catch (e) {
-        console.error('[Socket] Connection setup failed:', e);
+        console.log('[Socket] Connection setup failed:', e.message);
       }
     }
 
@@ -81,10 +114,19 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     return () => {
       active = false;
       if (ws) {
-        ws.close();
+        ws.onopen = null;
+        ws.onmessage = null;
+        ws.onclose = null;
+        ws.onerror = null;
+        try {
+          ws.close();
+        } catch (e) {}
       }
       if (reconnectTimeout) {
         clearTimeout(reconnectTimeout);
+      }
+      if (pingInterval) {
+        clearInterval(pingInterval);
       }
       appStateSub.remove();
     };
