@@ -498,30 +498,47 @@ export default function RegisterScreen() {
                 onChangeText={(val) => handleChange('bankAddress', val)}
               />
             </View>
-
             {/* GDPR Checkboxes */}
             <View style={styles.gdprContainer}>
-              <TouchableOpacity
-                style={styles.checkboxRow}
-                onPress={() => handleChange('termsAccepted', !formData.termsAccepted)}
-                activeOpacity={0.8}
-              >
-                <View style={[styles.checkbox, formData.termsAccepted && styles.checkboxChecked]}>
+              <View style={styles.checkboxRow}>
+                <TouchableOpacity
+                  style={[styles.checkbox, formData.termsAccepted && styles.checkboxChecked]}
+                  onPress={() => handleChange('termsAccepted', !formData.termsAccepted)}
+                  activeOpacity={0.8}
+                >
                   {formData.termsAccepted && <Check size={12} color="#FFFFFF" />}
-                </View>
-                <Text style={styles.checkboxText}>I accept the Terms of Service.</Text>
-              </TouchableOpacity>
+                </TouchableOpacity>
+                <Text style={styles.checkboxText}>
+                  I accept the{' '}
+                  <Text
+                    style={styles.checkboxLink}
+                    onPress={() => router.push('/terms-conditions')}
+                  >
+                    Terms of Service
+                  </Text>
+                  .
+                </Text>
+              </View>
 
-              <TouchableOpacity
-                style={styles.checkboxRow}
-                onPress={() => handleChange('privacyAccepted', !formData.privacyAccepted)}
-                activeOpacity={0.8}
-              >
-                <View style={[styles.checkbox, formData.privacyAccepted && styles.checkboxChecked]}>
+              <View style={styles.checkboxRow}>
+                <TouchableOpacity
+                  style={[styles.checkbox, formData.privacyAccepted && styles.checkboxChecked]}
+                  onPress={() => handleChange('privacyAccepted', !formData.privacyAccepted)}
+                  activeOpacity={0.8}
+                >
                   {formData.privacyAccepted && <Check size={12} color="#FFFFFF" />}
-                </View>
-                <Text style={styles.checkboxText}>I accept the Privacy Policy.</Text>
-              </TouchableOpacity>
+                </TouchableOpacity>
+                <Text style={styles.checkboxText}>
+                  I accept the{' '}
+                  <Text
+                    style={styles.checkboxLink}
+                    onPress={() => router.push('/privacy-policy')}
+                  >
+                    Privacy Policy
+                  </Text>
+                  .
+                </Text>
+              </View>
             </View>
           </View>
         );
@@ -799,5 +816,10 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '800',
     color: '#FFFFFF',
+  },
+  checkboxLink: {
+    color: Colors.primary,
+    fontWeight: '700',
+    textDecorationLine: 'underline',
   },
 });

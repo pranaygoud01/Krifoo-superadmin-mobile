@@ -373,6 +373,34 @@ export default function RestaurantSettingsScreen() {
             </View>
           </View>
 
+          {/* Legal & Policies Section */}
+          <View style={styles.sectionCard}>
+            <Text style={styles.sectionHeader}>Legal & Policies</Text>
+            <Text style={styles.sectionSub}>Review Krifoo Admin partner terms and data guidelines</Text>
+
+            <TouchableOpacity
+              style={styles.timingRow}
+              onPress={() => router.push('/terms-conditions')}
+              activeOpacity={0.7}
+            >
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: Colors.text }}>Terms & Conditions</Text>
+                <Text style={{ fontSize: 11, color: Colors.textMuted, marginTop: 2 }}>Read our terms of service</Text>
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.timingRow, { borderBottomWidth: 0 }]}
+              onPress={() => router.push('/privacy-policy')}
+              activeOpacity={0.7}
+            >
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: Colors.text }}>Privacy Policy</Text>
+                <Text style={{ fontSize: 11, color: Colors.textMuted, marginTop: 2 }}>Read our data privacy policy</Text>
+              </View>
+            </TouchableOpacity>
+          </View>
+
           {/* Save Configurations Button */}
           <TouchableOpacity
             style={[styles.saveBtn, saving && { opacity: 0.7 }]}

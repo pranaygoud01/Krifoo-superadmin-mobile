@@ -169,6 +169,27 @@ export default function LoginScreen() {
               >
                 <Text style={styles.registerBtnText}>New Business? Register Store</Text>
               </TouchableOpacity>
+
+              {/* Disclaimer */}
+              <View style={styles.disclaimerContainer}>
+                <Text style={styles.disclaimerText}>
+                  By logging in, you agree to our{' '}
+                  <Text
+                    style={styles.disclaimerLink}
+                    onPress={() => router.push('/terms-conditions')}
+                  >
+                    Terms & Conditions
+                  </Text>{' '}
+                  and{' '}
+                  <Text
+                    style={styles.disclaimerLink}
+                    onPress={() => router.push('/privacy-policy')}
+                  >
+                    Privacy Policy
+                  </Text>
+                  .
+                </Text>
+              </View>
             </View>
           </View>
         </View>
@@ -333,5 +354,22 @@ const styles = StyleSheet.create({
     color: '#4B5563',
     fontWeight: '700',
     fontSize: 14,
+  },
+  disclaimerContainer: {
+    marginTop: 20,
+    alignItems: 'center',
+    paddingHorizontal: 10,
+  },
+  disclaimerText: {
+    fontSize: 11,
+    color: Colors.textSubtle,
+    textAlign: 'center',
+    lineHeight: 18,
+    fontWeight: '500',
+  },
+  disclaimerLink: {
+    color: Colors.primary,
+    fontWeight: '700',
+    textDecorationLine: 'underline',
   },
 });

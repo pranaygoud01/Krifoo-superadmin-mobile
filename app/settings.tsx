@@ -471,6 +471,37 @@ export default function SettingsScreen() {
           )}
         </View>
 
+        {/* Legal & Policies Card */}
+        <View style={styles.card}>
+          <View style={styles.cardHeader}>
+            <ShieldCheck size={20} color={Colors.primary} />
+            <Text style={styles.cardTitle}>Legal & Policies</Text>
+          </View>
+          <Text style={styles.cardSubtitle}>Review Krifoo Admin operator terms and guidelines</Text>
+
+          <TouchableOpacity
+            style={styles.configItem}
+            onPress={() => router.push('/terms-conditions')}
+            activeOpacity={0.7}
+          >
+            <View>
+              <Text style={styles.configItemTitle}>Terms & Conditions</Text>
+              <Text style={styles.configItemSub}>Read our terms of service</Text>
+            </View>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.configItem, { borderBottomWidth: 0 }]}
+            onPress={() => router.push('/privacy-policy')}
+            activeOpacity={0.7}
+          >
+            <View>
+              <Text style={styles.configItemTitle}>Privacy Policy</Text>
+              <Text style={styles.configItemSub}>Read our data privacy policy</Text>
+            </View>
+          </TouchableOpacity>
+        </View>
+
         {/* Logout Button */}
         <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
           <LogOut size={18} color="#FFFFFF" />

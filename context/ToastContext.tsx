@@ -39,7 +39,7 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const timeoutRef = useRef<any>(null);
   const insets = useSafeAreaInsets();
 
-  const slideAnim = useRef(new Animated.Value(-200)).current;
+  const slideAnim = useRef(new Animated.Value(150)).current;
   const opacityAnim = useRef(new Animated.Value(0)).current;
 
   const showToast = ({ message, type = 'info', title: customTitle, duration = 3000 }: ToastOptions) => {
@@ -50,21 +50,21 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     setMessage(message);
     setType(type);
-    setTitle(customTitle || type.toUpperCase());
+    setTitle(customTitle || '');
     setVisible(true);
 
-    const safeTop = insets.top > 0 ? insets.top + 8 : (Platform.OS === 'ios' ? 48 : 16);
+    const safeBottom = insets.bottom > 0 ? insets.bottom + 72 : 80;
 
-    // Animation: Slide Down & Fade In
+    // Animation: Slide Up & Fade In
     Animated.parallel([
       Animated.timing(slideAnim, {
-        toValue: safeTop,
-        duration: 350,
+        toValue: -safeBottom,
+        duration: 300,
         useNativeDriver: true,
       }),
       Animated.timing(opacityAnim, {
         toValue: 1,
-        duration: 250,
+        duration: 200,
         useNativeDriver: true,
       }),
     ]).start();
@@ -76,16 +76,16 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const hideToast = () => {
-    // Animation: Slide Up & Fade Out
+    // Animation: Slide Down & Fade Out
     Animated.parallel([
       Animated.timing(slideAnim, {
-        toValue: -200,
-        duration: 300,
+        toValue: 150,
+        duration: 250,
         useNativeDriver: true,
       }),
       Animated.timing(opacityAnim, {
         toValue: 0,
-        duration: 200,
+        duration: 150,
         useNativeDriver: true,
       }),
     ]).start(() => {
@@ -104,39 +104,26 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const getIcon = () => {
     switch (type) {
       case 'success':
-        return <CheckCircle size={20} color={Colors.success} />;
+        return <CheckCircle size={16} color="#16A34A" />;
       case 'error':
-        return <XCircle size={20} color={Colors.danger} />;
+        return <XCircle size={16} color="#DC2626" />;
       case 'warning':
-        return <AlertTriangle size={20} color={Colors.warning} />;
+        return <AlertTriangle size={16} color="#D97706" />;
       default:
-        return <Info size={20} color={Colors.info} />;
+        return <Info size={16} color="#2563EB" />;
     }
   };
 
-  const getBorderColor = () => {
+  const getStatusColor = () => {
     switch (type) {
       case 'success':
-        return Colors.success;
+        return '#16A34A';
       case 'error':
-        return Colors.danger;
+        return '#DC2626';
       case 'warning':
-        return Colors.warning;
+        return '#D97706';
       default:
-        return Colors.info;
-    }
-  };
-
-  const getBgColor = () => {
-    switch (type) {
-      case 'success':
-        return '#F0FDF4';
-      case 'error':
-        return '#FEF2F2';
-      case 'warning':
-        return '#FFFBEB';
-      default:
-        return '#EFF6FF';
+        return '#2563EB';
     }
   };
 
@@ -150,19 +137,23 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             {
               transform: [{ translateY: slideAnim }],
               opacity: opacityAnim,
-              backgroundColor: getBgColor(),
-              borderColor: getBorderColor(),
             },
           ]}
         >
           <View style={styles.toastContent}>
             <View style={styles.iconContainer}>{getIcon()}</View>
             <View style={styles.textContainer}>
-              <Text style={[styles.titleText, { color: getBorderColor() }]}>{title}</Text>
-              <Text style={styles.messageText}>{message}</Text>
+              <Text style={styles.messageText}>
+                {title ? (
+                  <Text style={[styles.titleText, { color: getStatusColor() }]}>
+                    {title}:{' '}
+                  </Text>
+                ) : null}
+                {message}
+              </Text>
             </View>
-            <TouchableOpacity onPress={hideToast} style={styles.closeButton}>
-              <X size={16} color={Colors.textMuted} />
+            <TouchableOpacity onPress={hideToast} style={styles.closeButton} hitSlop={10}>
+              <X size={14} color="#94A3B8" />
             </TouchableOpacity>
           </View>
         </Animated.View>
@@ -173,52 +164,53 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
 export const useToast = () => useContext(ToastContext);
 
-const { width } = Dimensions.get('window');
-
 const styles = StyleSheet.create({
   toastContainer: {
     position: 'absolute',
-    top: 0,
-    left: 16,
-    right: 16,
+    bottom: 0, // Bottom-aligned
+    alignSelf: 'center',
+    width: '92%',
+    maxWidth: 480,
     zIndex: 9999,
-    borderRadius: 12,
-    borderWidth: 1.5,
-    paddingVertical: 12,
+    borderRadius: 30, // Minimal Capsule Pill
+    borderWidth: 1,
+    borderColor: '#EEEEEE', // Minimal clean border
+    backgroundColor: '#FFFFFF', // Solid white background
+    paddingVertical: 10,
     paddingHorizontal: 16,
-    shadowColor: '#11181C',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.12,
-    shadowRadius: 12,
-    elevation: 6,
+    // Soft elegant drop shadow
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    elevation: 5,
   },
   toastContent: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
   },
   iconContainer: {
-    marginRight: 12,
+    marginRight: 10,
     alignItems: 'center',
     justifyContent: 'center',
   },
   textContainer: {
     flex: 1,
+    marginRight: 8,
   },
   titleText: {
     fontSize: 13,
     fontWeight: '800',
-    letterSpacing: 0.5,
-    marginBottom: 2,
-    textTransform: 'uppercase',
   },
   messageText: {
-    color: Colors.text,
-    fontSize: 14,
-    fontWeight: '500',
+    color: '#334155', // Slate 700 text color for excellent readability
+    fontSize: 13,
+    fontWeight: '600',
     lineHeight: 18,
   },
   closeButton: {
-    marginLeft: 8,
-    padding: 4,
+    marginLeft: 6,
+    padding: 2,
   },
 });

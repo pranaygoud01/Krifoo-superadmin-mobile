@@ -82,6 +82,8 @@ export default function RootLayout() {
             <Stack.Screen name="register" options={{ animation: 'slide_from_right' }} />
             <Stack.Screen name="(tabs)" />
             <Stack.Screen name="settings" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="privacy-policy" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="terms-conditions" options={{ animation: 'slide_from_right' }} />
             <Stack.Screen name="order-details" options={{ animation: 'slide_from_right' }} />
             <Stack.Screen name="restaurant-details" options={{ animation: 'slide_from_right' }} />
             <Stack.Screen name="notifications" options={{ animation: 'slide_from_right' }} />
