@@ -60,7 +60,7 @@ export default function PrivacyPolicyScreen() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>6. Contact Us</Text>
           <Text style={styles.paragraph}>
-            If you have questions about this Privacy Policy or wishes to request deletion of your store operator account, please contact us at support@krifoo.com.
+            If you have questions about this Privacy Policy or wishes to request deletion of your store operator account, please contact us at admin@krifoo.co.uk.
           </Text>
         </View>
       </ScrollView>
