@@ -45,18 +45,21 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
       try {
         const token = await getAuthToken();
-        if (!token) return;
+        if (!token) {
+          console.log('[Socket] Cannot connect: No auth token found.');
+          return;
+        }
 
         const baseUrl = await getApiBaseUrl();
         // Replace http/https with ws/wss
         const wsUrl = baseUrl.replace(/^http/, 'ws') + `?token=${token}`;
 
-        console.log('[Socket] Connecting...');
+        console.log('[Socket] Connecting to url:', wsUrl);
         ws = new WebSocket(wsUrl);
         socketRef.current = ws;
 
         ws.onopen = () => {
-          console.log('[Socket] Connected successfully');
+          console.log('[Socket] Connected successfully to:', baseUrl);
           // Start keep-alive ping heartbeat every 30 seconds
           if (pingInterval) clearInterval(pingInterval);
           pingInterval = setInterval(() => {
@@ -73,7 +76,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         ws.onmessage = (event) => {
           try {
             const data = JSON.parse(event.data);
-            console.log('[Socket] Received message type:', data.type);
+            console.log('[Socket] Received message type:', data.type, data);
             DeviceEventEmitter.emit('websocket_message', data);
           } catch (e) {
             console.log('[Socket] Failed to parse message:', e.message);
@@ -81,7 +84,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         };
 
         ws.onclose = (e) => {
-          console.log('[Socket] Disconnected:', e.code, e.reason || 'No reason provided');
+          console.log('[Socket] Disconnected. Code:', e.code, '| Reason:', e.reason || 'None', '| Clean:', e.wasClean);
           if (pingInterval) {
             clearInterval(pingInterval);
             pingInterval = null;
@@ -93,8 +96,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         };
 
         ws.onerror = (err: any) => {
-          // Log cleanly to prevent Metro from printing huge stack traces for websocket errors
-          console.log('[Socket] Connection closed abnormally/error event received');
+          console.log('[Socket] Connection error event received:', err.message || err);
         };
       } catch (e) {
         console.log('[Socket] Connection setup failed:', e.message);
