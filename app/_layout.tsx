@@ -17,8 +17,10 @@ import * as SplashScreen from 'expo-splash-screen';
 import { Text, StyleSheet } from 'react-native';
 
 import { SocketProvider } from '../context/SocketContext';
+import { initAppOrientation } from '../services/orientation.service';
 
-// Keep the splash screen visible while we fetch resources
+// Initialize screen orientation preference
+initAppOrientation().catch(() => {});
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
 // Global override to apply Inter-Tight font and automatically map weight styles

@@ -21,6 +21,7 @@ import { OrderListSkeleton } from '../../components/Skeleton';
 import { useToast } from '../../context/ToastContext';
 import { Order } from '../../types';
 import { Search, ShoppingBag } from 'lucide-react-native';
+import { printThermalReceipt, isAutoPrintEnabled } from '../../services/thermal-print.service';
 
 export default function OrdersScreen() {
   const router = useRouter();
@@ -179,10 +180,34 @@ export default function OrdersScreen() {
       if (res.success) {
         showToast({ title: 'Success', message: `Order status updated to '${newStatus}'.`, type: 'success' });
         // Update local state
+        let updatedOrder = selectedOrder;
         if (selectedOrder && selectedOrder._id === orderId) {
-          setSelectedOrder({ ...selectedOrder, status: newStatus as any });
+          updatedOrder = { ...selectedOrder, status: newStatus as any };
+          setSelectedOrder(updatedOrder);
         }
         fetchOrders(1, true);
+
+        // Auto-print thermal receipt after accepting order ('preparing')
+        if (newStatus === 'preparing') {
+          const autoPrint = await isAutoPrintEnabled();
+          if (autoPrint) {
+            try {
+              let orderToPrint = updatedOrder;
+              if (!orderToPrint?.orderedItems?.length) {
+                const fullOrderRes = await orderService.getOrderById(orderId);
+                if (fullOrderRes.success && fullOrderRes.data) {
+                  orderToPrint = fullOrderRes.data;
+                }
+              }
+              if (orderToPrint) {
+                console.log('[Orders] Order accepted. Auto-printing receipt for:', orderToPrint.orderNumber || orderId);
+                await printThermalReceipt(orderToPrint, true);
+              }
+            } catch (printErr) {
+              console.error('[Orders] Failed auto-printing on accept:', printErr);
+            }
+          }
+        }
       } else {
         showToast({ title: 'Error', message: res.message || 'Failed to update order status.', type: 'error' });
       }

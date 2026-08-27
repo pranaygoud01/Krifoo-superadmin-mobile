@@ -1,9 +1,15 @@
 import * as Device from 'expo-device';
 import { Platform } from 'react-native';
+import Constants from 'expo-constants';
 import { apiRequest } from './api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { playOrderBuzzSound } from './sound.service';
+import { printThermalReceipt, isAutoPrintEnabled } from './thermal-print.service';
+import { orderService } from './order.service';
 
 let Notifications: any = null;
+let notificationListener: any = null;
+
 try {
   Notifications = require('expo-notifications');
   if (Notifications && Notifications.setNotificationHandler) {
@@ -17,6 +23,54 @@ try {
         shouldSetBadge: true,
       }),
     });
+
+    // Listen for incoming notifications in foreground to trigger 5-sec buzz sound and auto-print
+    if (Notifications.addNotificationReceivedListener && !notificationListener) {
+      notificationListener = Notifications.addNotificationReceivedListener((notification: any) => {
+        const title = notification?.request?.content?.title || '';
+        const body = notification?.request?.content?.body || '';
+        const data = notification?.request?.content?.data || {};
+
+        const status = data.status || data.order?.status || '';
+        const isNonNewStatus = ['preparing', 'ready_for_pickup', 'out_for_delivery', 'delivered', 'cancelled'].includes(status);
+
+        const isNewOrderNotification =
+          !isNonNewStatus &&
+          (
+            data.type === 'NEW_ORDER' ||
+            data.type === 'ORDER_CREATED' ||
+            data.type === 'ORDER_PLACED' ||
+            (data.isNew === true && status === 'placed') ||
+            title.toLowerCase().includes('new order') ||
+            body.toLowerCase().includes('new order')
+          );
+
+        if (isNewOrderNotification) {
+          console.log('[Notification] Incoming new order notification received! Triggering 5-sec buzz sound...');
+          playOrderBuzzSound(5000).catch(console.error);
+
+          // Auto-print thermal receipt if enabled
+          isAutoPrintEnabled().then(async (autoPrint) => {
+            if (!autoPrint) return;
+            const orderObj = data.order || data.data || (data.orderedItems ? data : null);
+            const orderId = data.orderId || data.id || orderObj?._id;
+
+            if (orderObj && (orderObj.orderedItems?.length || orderObj.items?.length)) {
+              await printThermalReceipt(orderObj);
+            } else if (orderId) {
+              try {
+                const res = await orderService.getOrderById(orderId);
+                if (res.success && res.data) {
+                  await printThermalReceipt(res.data);
+                }
+              } catch (err) {
+                console.error('[Notification] Failed to fetch order for auto-print:', err);
+              }
+            }
+          }).catch(console.error);
+        }
+      });
+    }
   }
 } catch (error) {
   console.warn('[Push] expo-notifications native module not available. Push notifications will be disabled.');
@@ -33,10 +87,25 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
   if (Platform.OS === 'android') {
     try {
       await Notifications.setNotificationChannelAsync('default', {
-        name: 'default',
+        name: 'Default Alerts',
         importance: Notifications.AndroidImportance.MAX,
-        vibrationPattern: [0, 250, 250, 250],
+        sound: 'order_buzz.wav',
+        vibrationPattern: [0, 600, 150, 600, 150, 600, 150, 600, 150, 600, 150, 600],
         lightColor: '#FF5C39',
+        enableVibrate: true,
+        enableLights: true,
+      });
+
+      await Notifications.setNotificationChannelAsync('orders', {
+        name: 'Order Alerts',
+        importance: Notifications.AndroidImportance.MAX,
+        sound: 'order_buzz.wav',
+        vibrationPattern: [0, 600, 150, 600, 150, 600, 150, 600, 150, 600, 150, 600],
+        lightColor: '#FF5C39',
+        enableVibrate: true,
+        enableLights: true,
+        bypassDnd: true,
+        lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
       });
     } catch (err) {
       console.warn('[Push] Could not set notification channel:', err);
@@ -56,7 +125,14 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
         return null;
       }
 
-      const tokenData = await Notifications.getExpoPushTokenAsync();
+      const projectId =
+        Constants?.expoConfig?.extra?.eas?.projectId ??
+        Constants?.easConfig?.projectId ??
+        '8e0c6426-9675-4b81-a428-1642374aa42b';
+
+      const tokenData = await Notifications.getExpoPushTokenAsync({
+        projectId,
+      });
       token = tokenData.data;
       console.log('[Push] Device Push Token captured:', token);
     } catch (error) {

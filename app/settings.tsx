@@ -7,6 +7,7 @@ import {
   TextInput,
   TouchableOpacity,
   ActivityIndicator,
+  Switch,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Header } from '../components/Header';
@@ -31,7 +32,25 @@ import {
   Trash2,
   X,
   Check,
+  Bell,
+  Volume2,
+  VolumeX,
+  Printer,
+  Smartphone,
+  Monitor,
+  RotateCw,
 } from 'lucide-react-native';
+import { playOrderBuzzSound, stopOrderBuzzSound } from '../services/sound.service';
+import {
+  printSampleThermalReceipt,
+  isAutoPrintEnabled,
+  setAutoPrintEnabled,
+} from '../services/thermal-print.service';
+import {
+  getSavedOrientation,
+  applyOrientation,
+  AppOrientation,
+} from '../services/orientation.service';
 
 export default function SettingsScreen() {
   const { user, logout } = useAuth();
@@ -61,6 +80,85 @@ export default function SettingsScreen() {
   const [newMaxDistance, setNewMaxDistance] = useState('');
   const [newCharge, setNewCharge] = useState('');
   const [submittingTier, setSubmittingTier] = useState(false);
+  const [isTestingSound, setIsTestingSound] = useState(false);
+  const [autoPrintEnabled, setAutoPrintState] = useState(true);
+  const [isTestingPrint, setIsTestingPrint] = useState(false);
+  const [appOrientation, setAppOrientation] = useState<AppOrientation>('portrait');
+  const [isChangingOrientation, setIsChangingOrientation] = useState(false);
+
+  useEffect(() => {
+    isAutoPrintEnabled().then(setAutoPrintState);
+    getSavedOrientation().then(setAppOrientation);
+  }, []);
+
+  const handleSetOrientation = async (mode: AppOrientation) => {
+    if (isChangingOrientation) return;
+    setIsChangingOrientation(true);
+    try {
+      setAppOrientation(mode);
+      const success = await applyOrientation(mode);
+      if (success) {
+        showToast({
+          title: 'Display Mode Changed',
+          message:
+            mode === 'landscape'
+              ? 'Rotated into Landscape mode (POS setup)'
+              : mode === 'portrait'
+              ? 'Rotated into Portrait mode'
+              : 'Auto-rotate sensor enabled',
+          type: 'success',
+        });
+      } else {
+        showToast({ title: 'Error', message: 'Failed to rotate screen.', type: 'error' });
+      }
+    } catch {
+      showToast({ title: 'Error', message: 'Failed to apply orientation.', type: 'error' });
+    } finally {
+      setIsChangingOrientation(false);
+    }
+  };
+
+  const handleToggleAutoPrint = async (val: boolean) => {
+    setAutoPrintState(val);
+    await setAutoPrintEnabled(val);
+    showToast({
+      title: val ? 'Auto-Print Enabled' : 'Auto-Print Disabled',
+      message: val ? 'New orders will automatically print on thermal paper.' : 'Auto-printing for new orders disabled.',
+      type: 'info',
+    });
+  };
+
+  const handleTestPrint = async () => {
+    setIsTestingPrint(true);
+    try {
+      showToast({ title: 'Testing Printer', message: 'Generating sample thermal receipt...', type: 'info' });
+      const success = await printSampleThermalReceipt();
+      if (success) {
+        showToast({ title: 'Print Success', message: 'Sample receipt sent to printer.', type: 'success' });
+      } else {
+        showToast({ title: 'Print Cancelled', message: 'Print job cancelled or printer unavailable.', type: 'warning' });
+      }
+    } catch (e) {
+      showToast({ title: 'Print Error', message: 'Failed to test print receipt.', type: 'error' });
+    } finally {
+      setIsTestingPrint(false);
+    }
+  };
+
+  const handleTestOrderBuzz = async () => {
+    if (isTestingSound) {
+      await stopOrderBuzzSound();
+      setIsTestingSound(false);
+      showToast({ title: 'Alert Stopped', message: 'Order buzz alert test stopped.', type: 'info' });
+    } else {
+      setIsTestingSound(true);
+      showToast({ title: 'Playing Alert', message: '5-second order buzz sound and vibration started...', type: 'info' });
+      await playOrderBuzzSound(5000);
+      setTimeout(() => {
+        setIsTestingSound(false);
+      }, 5000);
+    }
+  };
 
   useEffect(() => {
     if (user && user.userType !== 'super_admin') {
@@ -471,6 +569,180 @@ export default function SettingsScreen() {
           )}
         </View>
 
+        {/* Sound & Notifications Card */}
+        <View style={styles.card}>
+          <View style={styles.cardHeader}>
+            <Bell size={20} color={Colors.primary} />
+            <Text style={styles.cardTitle}>Order Sound & Buzz Alerts</Text>
+          </View>
+          <Text style={styles.cardSubtitle}>
+            When a new order is received, the app will play a loud 5-second buzzer sound and vibrate the device.
+          </Text>
+
+          <View style={[styles.configItem, { borderBottomWidth: 0, paddingVertical: 8 }]}>
+            <View style={{ flex: 1, marginRight: 12 }}>
+              <Text style={styles.configItemTitle}>5-Second Buzz Alert</Text>
+              <Text style={styles.configItemSub}>Active on all incoming WebSocket & Push orders</Text>
+            </View>
+            <TouchableOpacity
+              style={[
+                styles.soundTestBtn,
+                isTestingSound && styles.soundTestBtnActive,
+              ]}
+              onPress={handleTestOrderBuzz}
+              activeOpacity={0.8}
+            >
+              {isTestingSound ? (
+                <>
+                  <VolumeX size={16} color="#FFFFFF" />
+                  <Text style={styles.soundTestBtnText}>Stop Alert</Text>
+                </>
+              ) : (
+                <>
+                  <Volume2 size={16} color="#FFFFFF" />
+                  <Text style={styles.soundTestBtnText}>Test 5s Buzz</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Thermal Printer & Auto-Print Card */}
+        <View style={styles.card}>
+          <View style={styles.cardHeader}>
+            <Printer size={20} color={Colors.primary} />
+            <Text style={styles.cardTitle}> POS Thermal Printer</Text>
+          </View>
+          <Text style={styles.cardSubtitle}>
+            Auto-prints formatted receipts matching standard restaurant POS printers whenever a new order arrives.
+          </Text>
+
+          {/* Auto Print Toggle */}
+          <View style={[styles.configItem, { paddingVertical: 10 }]}>
+            <View style={{ flex: 1, marginRight: 12 }}>
+              <Text style={styles.configItemTitle}>Auto-Print New Orders</Text>
+              <Text style={styles.configItemSub}>Automatically triggers print job on order placement</Text>
+            </View>
+            <Switch
+              value={autoPrintEnabled}
+              onValueChange={handleToggleAutoPrint}
+              trackColor={{ true: Colors.primary, false: Colors.cardBorder }}
+              thumbColor="#FFFFFF"
+            />
+          </View>
+
+          {/* Test Print Button */}
+          <View style={[styles.configItem, { borderBottomWidth: 0, paddingVertical: 10 }]}>
+            <View style={{ flex: 1, marginRight: 12 }}>
+              <Text style={styles.configItemTitle}>Test Thermal Print</Text>
+              <Text style={styles.configItemSub}>Print a sample POS receipt</Text>
+            </View>
+            <TouchableOpacity
+              style={[
+                styles.soundTestBtn,
+                { backgroundColor: '#1E293B' },
+              ]}
+              onPress={handleTestPrint}
+              disabled={isTestingPrint}
+              activeOpacity={0.8}
+            >
+              {isTestingPrint ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <>
+                  <Printer size={16} color="#FFFFFF" />
+                  <Text style={styles.soundTestBtnText}>Test Print</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Screen Orientation & POS Display Card */}
+        <View style={styles.card}>
+          <View style={styles.cardHeader}>
+            <Monitor size={20} color={Colors.primary} />
+            <Text style={styles.cardTitle}>Screen Orientation & Display</Text>
+          </View>
+          <Text style={styles.cardSubtitle}>
+            Rotate the app into Landscape mode for Sunmi V3 MIX desktop POS setups or switch back to Portrait.
+          </Text>
+
+          <View style={styles.orientationButtonsRow}>
+            {/* Portrait Button */}
+            <TouchableOpacity
+              style={[
+                styles.orientationBtn,
+                appOrientation === 'portrait' && styles.orientationBtnActive,
+              ]}
+              onPress={() => handleSetOrientation('portrait')}
+              disabled={isChangingOrientation}
+              activeOpacity={0.8}
+            >
+              <Smartphone
+                size={18}
+                color={appOrientation === 'portrait' ? '#FFFFFF' : Colors.textMuted}
+              />
+              <Text
+                style={[
+                  styles.orientationBtnText,
+                  appOrientation === 'portrait' && styles.orientationBtnTextActive,
+                ]}
+              >
+                Portrait
+              </Text>
+            </TouchableOpacity>
+
+            {/* Landscape Button */}
+            <TouchableOpacity
+              style={[
+                styles.orientationBtn,
+                appOrientation === 'landscape' && styles.orientationBtnActive,
+              ]}
+              onPress={() => handleSetOrientation('landscape')}
+              disabled={isChangingOrientation}
+              activeOpacity={0.8}
+            >
+              <Monitor
+                size={18}
+                color={appOrientation === 'landscape' ? '#FFFFFF' : Colors.textMuted}
+              />
+              <Text
+                style={[
+                  styles.orientationBtnText,
+                  appOrientation === 'landscape' && styles.orientationBtnTextActive,
+                ]}
+              >
+                Landscape
+              </Text>
+            </TouchableOpacity>
+
+            {/* Auto Rotate Button */}
+            <TouchableOpacity
+              style={[
+                styles.orientationBtn,
+                appOrientation === 'auto' && styles.orientationBtnActive,
+              ]}
+              onPress={() => handleSetOrientation('auto')}
+              disabled={isChangingOrientation}
+              activeOpacity={0.8}
+            >
+              <RotateCw
+                size={18}
+                color={appOrientation === 'auto' ? '#FFFFFF' : Colors.textMuted}
+              />
+              <Text
+                style={[
+                  styles.orientationBtnText,
+                  appOrientation === 'auto' && styles.orientationBtnTextActive,
+                ]}
+              >
+                Auto-Rotate
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
         {/* Legal & Policies Card */}
         <View style={styles.card}>
           <View style={styles.cardHeader}>
@@ -825,6 +1097,59 @@ const styles = StyleSheet.create({
   confirmSaveText: {
     color: '#FFFFFF',
     fontSize: 12,
+    fontWeight: '700',
+  },
+  soundTestBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: Colors.primary,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 8,
+  },
+  soundTestBtnActive: {
+    backgroundColor: Colors.danger,
+  },
+  soundTestBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  orientationButtonsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 12,
+  },
+  orientationBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1.5,
+    borderColor: Colors.cardBorder,
+  },
+  orientationBtnActive: {
+    backgroundColor: Colors.primary,
+    borderColor: Colors.primary,
+    shadowColor: Colors.primary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  orientationBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: Colors.textMuted,
+  },
+  orientationBtnTextActive: {
+    color: '#FFFFFF',
     fontWeight: '700',
   },
 });

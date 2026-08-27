@@ -2,8 +2,9 @@
   "expo": {
     "name": "Krifoo Admin",
     "slug": "krifoo-admin",
+    "owner": "krifoos-app",
     "version": "1.0.5",
-    "orientation": "portrait",
+    "orientation": "default",
     "icon": "./assets/logo.png",
     "scheme": "krifooadmin",
     "userInterfaceStyle": "dark",
@@ -40,7 +41,11 @@
         "expo-notifications",
         {
           "icon": "./assets/logo.png",
-          "color": "#FF5C39"
+          "color": "#FF5C39",
+          "sounds": [
+            "./assets/sounds/order_buzz.wav"
+          ],
+          "defaultChannel": "orders"
         }
       ]
     ],
@@ -50,7 +55,7 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "4a2a4326-7884-4e94-910b-183d85ac3e7d"
+        "projectId": "8e0c6426-9675-4b81-a428-1642374aa42b"
       }
     }
   }

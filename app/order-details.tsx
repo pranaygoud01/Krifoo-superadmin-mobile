@@ -26,7 +26,9 @@ import {
   Edit2,
   Check,
   Navigation,
+  Printer,
 } from 'lucide-react-native';
+import { printThermalReceipt, isAutoPrintEnabled } from '../services/thermal-print.service';
 
 const STATUS_OPTIONS = [
   { label: 'Placed', value: 'placed' },
@@ -48,6 +50,25 @@ export default function OrderDetailsScreen() {
   const [editingStatus, setEditingStatus] = useState(false);
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [assignModalVisible, setAssignModalVisible] = useState(false);
+  const [printing, setPrinting] = useState(false);
+
+  const handlePrintReceipt = async () => {
+    if (!order) return;
+    setPrinting(true);
+    try {
+      showToast({ title: 'Printing', message: 'Sending receipt to thermal printer...', type: 'info' });
+      const success = await printThermalReceipt(order, true);
+      if (success) {
+        showToast({ title: 'Success', message: 'Receipt printed successfully.', type: 'success' });
+      } else {
+        showToast({ title: 'Print Cancelled', message: 'Receipt print cancelled or printer unavailable.', type: 'warning' });
+      }
+    } catch (e) {
+      showToast({ title: 'Print Error', message: 'Failed to print receipt.', type: 'error' });
+    } finally {
+      setPrinting(false);
+    }
+  };
 
   const fetchOrderDetail = async () => {
     if (!orderId) return;
@@ -97,6 +118,15 @@ export default function OrderDetailsScreen() {
           updatedOrder.paymentStatus = 'paid';
         }
         setOrder(updatedOrder);
+
+        // Auto-print thermal receipt after accepting order ('preparing')
+        if (newStatus === 'preparing') {
+          const autoPrint = await isAutoPrintEnabled();
+          if (autoPrint) {
+            console.log('[OrderDetails] Order accepted. Auto-printing receipt...');
+            await printThermalReceipt(updatedOrder);
+          }
+        }
       } else {
         showToast({ title: 'Error', message: res.message || 'Failed to update order status.', type: 'error' });
       }
@@ -260,6 +290,24 @@ export default function OrderDetailsScreen() {
             </View>
           </View>
         )}
+
+        {/* Thermal Print Action Card */}
+        <TouchableOpacity
+          style={styles.printCardBtn}
+          onPress={handlePrintReceipt}
+          disabled={printing}
+          activeOpacity={0.8}
+        >
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Printer size={18} color="#FFFFFF" />
+            <Text style={styles.printCardBtnText}>
+              {printing ? 'Printing Receipt...' : 'Print Receipt'}
+            </Text>
+          </View>
+          <View style={styles.thermalBadge}>
+            <Text style={styles.thermalBadgeText}> POS</Text>
+          </View>
+        </TouchableOpacity>
 
         {/* Editing Status Selector */}
         {editingStatus && (
@@ -762,5 +810,36 @@ const styles = StyleSheet.create({
     color: '#EF4444',
     fontSize: 14,
     fontWeight: '700',
+  },
+  printCardBtn: {
+    backgroundColor: '#1E293B',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  printCardBtnText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  thermalBadge: {
+    backgroundColor: '#334155',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  thermalBadgeText: {
+    color: '#94A3B8',
+    fontSize: 11,
+    fontWeight: '800',
   },
 });

@@ -16,9 +16,15 @@ import { useRouter } from 'expo-router';
 import { Header } from '../components/Header';
 import { Colors } from '../constants/colors';
 import { restaurantOwnerService } from '../services/restaurant-owner.service';
-import { Save, Clock, Shield, HelpCircle, AlertCircle, ExternalLink, CreditCard, Check, LogOut } from 'lucide-react-native';
+import { Save, Clock, Shield, HelpCircle, AlertCircle, ExternalLink, CreditCard, Check, LogOut, Bell, Volume2, VolumeX, Printer } from 'lucide-react-native';
 import { useAuth } from '../context/AuthContext';
 import { ConfirmModal } from '../components/ConfirmModal';
+import { playOrderBuzzSound, stopOrderBuzzSound } from '../services/sound.service';
+import {
+  printSampleThermalReceipt,
+  isAutoPrintEnabled,
+  setAutoPrintEnabled,
+} from '../services/thermal-print.service';
 
 interface Timing {
   day: string;
@@ -33,6 +39,42 @@ export default function RestaurantSettingsScreen() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [logoutModalVisible, setLogoutModalVisible] = useState(false);
+  const [isTestingSound, setIsTestingSound] = useState(false);
+  const [autoPrintEnabled, setAutoPrintState] = useState(true);
+  const [isTestingPrint, setIsTestingPrint] = useState(false);
+
+  useEffect(() => {
+    isAutoPrintEnabled().then(setAutoPrintState);
+  }, []);
+
+  const handleToggleAutoPrint = async (val: boolean) => {
+    setAutoPrintState(val);
+    await setAutoPrintEnabled(val);
+  };
+
+  const handleTestPrint = async () => {
+    setIsTestingPrint(true);
+    try {
+      await printSampleThermalReceipt();
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsTestingPrint(false);
+    }
+  };
+
+  const handleTestOrderBuzz = async () => {
+    if (isTestingSound) {
+      await stopOrderBuzzSound();
+      setIsTestingSound(false);
+    } else {
+      setIsTestingSound(true);
+      await playOrderBuzzSound(5000);
+      setTimeout(() => {
+        setIsTestingSound(false);
+      }, 5000);
+    }
+  };
 
   const handleLogout = async () => {
     setLogoutModalVisible(false);
@@ -250,6 +292,95 @@ export default function RestaurantSettingsScreen() {
                 trackColor={{ true: Colors.primaryLight, false: Colors.cardBorder }}
                 thumbColor={config.autoApproveOrders ? Colors.primary : Colors.textSubtle}
               />
+            </View>
+          </View>
+
+          {/* Order Sound & Buzz Alert Card */}
+          <View style={styles.sectionCard}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+              <Bell size={18} color={Colors.primary} />
+              <Text style={styles.sectionHeader}>Order Sound & Buzz Alerts</Text>
+            </View>
+            <Text style={styles.sectionSub}>
+              Loud 5-second buzzer chime and haptic vibration for real-time incoming orders.
+            </Text>
+
+            <View style={[styles.timingRow, { borderBottomWidth: 0, paddingVertical: 10 }]}>
+              <View style={{ flex: 1, marginRight: 10 }}>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: Colors.text }}>5-Sec Buzzer Alert</Text>
+                <Text style={{ fontSize: 11, color: Colors.textMuted, marginTop: 2 }}>Enabled for all new orders</Text>
+              </View>
+              <TouchableOpacity
+                style={[
+                  styles.soundTestBtn,
+                  isTestingSound && styles.soundTestBtnActive,
+                ]}
+                onPress={handleTestOrderBuzz}
+                activeOpacity={0.8}
+              >
+                {isTestingSound ? (
+                  <>
+                    <VolumeX size={15} color="#FFFFFF" />
+                    <Text style={styles.soundTestBtnText}>Stop Alert</Text>
+                  </>
+                ) : (
+                  <>
+                    <Volume2 size={15} color="#FFFFFF" />
+                    <Text style={styles.soundTestBtnText}>Test 5s Buzz</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Thermal POS Printer & Auto-Print */}
+          <View style={styles.sectionCard}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+              <Printer size={18} color={Colors.primary} />
+              <Text style={styles.sectionHeader}>POS Thermal Printer</Text>
+            </View>
+            <Text style={styles.sectionSub}>
+              Auto-prints kitchen & POS thermal receipts whenever an order is placed.
+            </Text>
+
+            {/* Auto Print Switch */}
+            <View style={[styles.timingRow, { paddingVertical: 10 }]}>
+              <View style={{ flex: 1, marginRight: 10 }}>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: Colors.text }}>Auto-Print New Orders</Text>
+                <Text style={{ fontSize: 11, color: Colors.textMuted, marginTop: 2 }}>Print receipt automatically on order placement</Text>
+              </View>
+              <Switch
+                value={autoPrintEnabled}
+                onValueChange={handleToggleAutoPrint}
+                trackColor={{ true: Colors.primary, false: Colors.cardBorder }}
+                thumbColor="#FFFFFF"
+              />
+            </View>
+
+            {/* Test Print Button */}
+            <View style={[styles.timingRow, { borderBottomWidth: 0, paddingVertical: 10 }]}>
+              <View style={{ flex: 1, marginRight: 10 }}>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: Colors.text }}>Test Thermal Print</Text>
+                <Text style={{ fontSize: 11, color: Colors.textMuted, marginTop: 2 }}>Print a sample POS receipt</Text>
+              </View>
+              <TouchableOpacity
+                style={[
+                  styles.soundTestBtn,
+                  { backgroundColor: '#1E293B' },
+                ]}
+                onPress={handleTestPrint}
+                disabled={isTestingPrint}
+                activeOpacity={0.8}
+              >
+                {isTestingPrint ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <>
+                    <Printer size={15} color="#FFFFFF" />
+                    <Text style={styles.soundTestBtnText}>Test Print</Text>
+                  </>
+                )}
+              </TouchableOpacity>
             </View>
           </View>
 
@@ -640,5 +771,22 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '800',
     fontSize: 15,
+  },
+  soundTestBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: Colors.primary,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  soundTestBtnActive: {
+    backgroundColor: Colors.danger,
+  },
+  soundTestBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
   },
 });
