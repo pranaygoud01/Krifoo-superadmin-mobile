@@ -39,13 +39,21 @@ import {
   Smartphone,
   Monitor,
   RotateCw,
+  Wifi,
+  Layers,
+  Settings2,
+  CheckCircle2,
 } from 'lucide-react-native';
 import { playOrderBuzzSound, stopOrderBuzzSound } from '../services/sound.service';
 import {
   printSampleThermalReceipt,
   isAutoPrintEnabled,
   setAutoPrintEnabled,
+  getPosPrinterConfig,
+  savePosPrinterConfig,
+  POS_BRANDS,
 } from '../services/thermal-print.service';
+import { PosPrinterConfig, PosBrand, DEFAULT_POS_CONFIG } from '../services/pos-config.service';
 import {
   getSavedOrientation,
   applyOrientation,
@@ -86,10 +94,89 @@ export default function SettingsScreen() {
   const [appOrientation, setAppOrientation] = useState<AppOrientation>('portrait');
   const [isChangingOrientation, setIsChangingOrientation] = useState(false);
 
+  // Universal POS Printer Configuration State
+  const [posConfig, setPosConfig] = useState<PosPrinterConfig>(DEFAULT_POS_CONFIG);
+  const [showBrandDropdown, setShowBrandDropdown] = useState(false);
+  const [printerIpInput, setPrinterIpInput] = useState('192.168.1.100');
+  const [printerPortInput, setPrinterPortInput] = useState('9100');
+  const [isSavingIp, setIsSavingIp] = useState(false);
+
   useEffect(() => {
-    isAutoPrintEnabled().then(setAutoPrintState);
+    getPosPrinterConfig().then((cfg) => {
+      setPosConfig(cfg);
+      setPrinterIpInput(cfg.ipAddress || '192.168.1.100');
+      setPrinterPortInput(String(cfg.port || 9100));
+      setAutoPrintState(cfg.autoPrint);
+    });
     getSavedOrientation().then(setAppOrientation);
   }, []);
+
+  const handleSelectBrand = async (brandId: PosBrand) => {
+    const selectedBrand = POS_BRANDS.find((b) => b.id === brandId);
+    const newConn = selectedBrand?.defaultConnection || 'network';
+    const updated = await savePosPrinterConfig({
+      brand: brandId,
+      connectionType: newConn,
+    });
+    setPosConfig(updated);
+    setShowBrandDropdown(false);
+    showToast({
+      title: 'Printer Brand Updated',
+      message: `Configured for ${selectedBrand?.name}`,
+      type: 'success',
+    });
+  };
+
+  const handleSaveNetworkSettings = async () => {
+    setIsSavingIp(true);
+    try {
+      const portNum = parseInt(printerPortInput, 10) || 9100;
+      const updated = await savePosPrinterConfig({
+        ipAddress: printerIpInput.trim(),
+        port: portNum,
+      });
+      setPosConfig(updated);
+      showToast({
+        title: 'Network Printer Saved',
+        message: `Connected to ${printerIpInput.trim()}:${portNum}`,
+        type: 'success',
+      });
+    } catch {
+      showToast({ title: 'Error', message: 'Failed to save network printer settings', type: 'error' });
+    } finally {
+      setIsSavingIp(false);
+    }
+  };
+
+  const handleSetPaperWidth = async (width: '80mm' | '58mm') => {
+    const updated = await savePosPrinterConfig({ paperWidth: width });
+    setPosConfig(updated);
+    showToast({
+      title: 'Paper Width Changed',
+      message: `Set to ${width} thermal roll format`,
+      type: 'info',
+    });
+  };
+
+  const handleSetCopies = async (copies: number) => {
+    const updated = await savePosPrinterConfig({ copies });
+    setPosConfig(updated);
+    showToast({
+      title: 'Print Copies Updated',
+      message: copies === 2 ? '2 Copies (Customer + Kitchen Ticket)' : '1 Copy (Customer Receipt)',
+      type: 'info',
+    });
+  };
+
+  const handleToggleAutoCut = async (autoCut: boolean) => {
+    const updated = await savePosPrinterConfig({ autoCut });
+    setPosConfig(updated);
+  };
+
+  const handleToggleCashDrawer = async (openCashDrawer: boolean) => {
+    const updated = await savePosPrinterConfig({ openCashDrawer });
+    setPosConfig(updated);
+  };
 
   const handleSetOrientation = async (mode: AppOrientation) => {
     if (isChangingOrientation) return;
@@ -121,6 +208,8 @@ export default function SettingsScreen() {
   const handleToggleAutoPrint = async (val: boolean) => {
     setAutoPrintState(val);
     await setAutoPrintEnabled(val);
+    const updated = await savePosPrinterConfig({ autoPrint: val });
+    setPosConfig(updated);
     showToast({
       title: val ? 'Auto-Print Enabled' : 'Auto-Print Disabled',
       message: val ? 'New orders will automatically print on thermal paper.' : 'Auto-printing for new orders disabled.',
@@ -607,21 +696,239 @@ export default function SettingsScreen() {
           </View>
         </View>
 
-        {/* Thermal Printer & Auto-Print Card */}
+        {/* Universal Multi-Brand POS Printer Card */}
         <View style={styles.card}>
           <View style={styles.cardHeader}>
             <Printer size={20} color={Colors.primary} />
-            <Text style={styles.cardTitle}> POS Thermal Printer</Text>
+            <Text style={styles.cardTitle}>Universal POS & Printer Setup</Text>
           </View>
           <Text style={styles.cardSubtitle}>
-            Auto-prints formatted receipts matching standard restaurant POS printers whenever a new order arrives.
+            Configure your restaurant's thermal receipt printer. Supports SUNMI, Flipdish, RetailZ, Star, Epson, Citizen, Munbyn, Xprinter & WiFi/LAN printers.
           </Text>
 
-          {/* Auto Print Toggle */}
+          {/* 1. Brand Selector Header */}
+          <View style={[styles.configItem, { paddingVertical: 12 }]}>
+            <View style={{ flex: 1, marginRight: 12 }}>
+              <Text style={styles.configItemTitle}>Active POS Brand</Text>
+              <Text style={styles.configItemSub}>
+                {POS_BRANDS.find((b) => b.id === posConfig.brand)?.name || 'Generic POS'}
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={styles.changeBrandBtn}
+              onPress={() => setShowBrandDropdown(!showBrandDropdown)}
+              activeOpacity={0.8}
+            >
+              <Settings2 size={15} color="#FFFFFF" />
+              <Text style={styles.changeBrandBtnText}>
+                {showBrandDropdown ? 'Close Brands' : 'Select Brand'}
+              </Text>
+              {showBrandDropdown ? (
+                <ChevronUp size={14} color="#FFFFFF" />
+              ) : (
+                <ChevronDown size={14} color="#FFFFFF" />
+              )}
+            </TouchableOpacity>
+          </View>
+
+          {/* 2. Expandable Brand Selection List */}
+          {showBrandDropdown && (
+            <View style={styles.brandDropdownList}>
+              <Text style={styles.dropdownHeader}>Choose your POS Terminal or Printer Brand:</Text>
+              {POS_BRANDS.map((brand) => {
+                const isSelected = posConfig.brand === brand.id;
+                return (
+                  <TouchableOpacity
+                    key={brand.id}
+                    style={[
+                      styles.brandOptionRow,
+                      isSelected && styles.brandOptionRowSelected,
+                    ]}
+                    onPress={() => handleSelectBrand(brand.id)}
+                    activeOpacity={0.7}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text
+                        style={[
+                          styles.brandOptionName,
+                          isSelected && styles.brandOptionNameSelected,
+                        ]}
+                      >
+                        {brand.name}
+                      </Text>
+                      <Text style={styles.brandOptionSub}>{brand.subtitle}</Text>
+                    </View>
+                    {isSelected && (
+                      <CheckCircle2 size={18} color={Colors.primary} />
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          )}
+
+          {/* 3. Connection Specific Settings */}
+          {posConfig.connectionType === 'builtin' ? (
+            <View style={styles.hardwareBadgeBox}>
+              <CheckCircle2 size={16} color="#10B981" />
+              <Text style={styles.hardwareBadgeText}>
+                Hardware Inner Printer Service Active (Direct Native SDK)
+              </Text>
+            </View>
+          ) : posConfig.connectionType === 'network' ? (
+            <View style={styles.networkConfigBox}>
+              <View style={styles.networkHeaderRow}>
+                <Wifi size={16} color={Colors.primary} />
+                <Text style={styles.networkBoxTitle}>WiFi / LAN Printer Network Settings</Text>
+              </View>
+              <Text style={styles.networkBoxSub}>
+                Enter the local IP address printed on your printer's self-test slip (Port 9100).
+              </Text>
+              <View style={styles.networkInputsRow}>
+                <View style={{ flex: 2 }}>
+                  <Text style={styles.inputLabel}>Printer IP Address</Text>
+                  <TextInput
+                    style={styles.formInput}
+                    value={printerIpInput}
+                    onChangeText={setPrinterIpInput}
+                    placeholder="192.168.1.100"
+                    placeholderTextColor={Colors.textSubtle}
+                    keyboardType="numeric"
+                    autoCapitalize="none"
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.inputLabel}>Port</Text>
+                  <TextInput
+                    style={styles.formInput}
+                    value={printerPortInput}
+                    onChangeText={setPrinterPortInput}
+                    placeholder="9100"
+                    placeholderTextColor={Colors.textSubtle}
+                    keyboardType="numeric"
+                  />
+                </View>
+                <TouchableOpacity
+                  style={styles.saveIpBtn}
+                  onPress={handleSaveNetworkSettings}
+                  disabled={isSavingIp}
+                >
+                  {isSavingIp ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <>
+                      <Save size={14} color="#FFFFFF" />
+                      <Text style={styles.saveIpBtnText}>Save</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : null}
+
+          {/* 4. Paper Roll Size Selector */}
+          <View style={[styles.configItem, { paddingVertical: 10 }]}>
+            <View style={{ flex: 1, marginRight: 12 }}>
+              <Text style={styles.configItemTitle}>Thermal Paper Width</Text>
+              <Text style={styles.configItemSub}>80mm (Standard POS) or 58mm (Compact)</Text>
+            </View>
+            <View style={styles.segmentGroup}>
+              <TouchableOpacity
+                style={[
+                  styles.segmentBtn,
+                  posConfig.paperWidth === '80mm' && styles.segmentBtnActive,
+                ]}
+                onPress={() => handleSetPaperWidth('80mm')}
+              >
+                <Text
+                  style={[
+                    styles.segmentBtnText,
+                    posConfig.paperWidth === '80mm' && styles.segmentBtnTextActive,
+                  ]}
+                >
+                  80mm
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.segmentBtn,
+                  posConfig.paperWidth === '58mm' && styles.segmentBtnActive,
+                ]}
+                onPress={() => handleSetPaperWidth('58mm')}
+              >
+                <Text
+                  style={[
+                    styles.segmentBtnText,
+                    posConfig.paperWidth === '58mm' && styles.segmentBtnTextActive,
+                  ]}
+                >
+                  58mm
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* 5. Print Copies (1 Copy vs 2 Copies for Kitchen KOT) */}
+          <View style={[styles.configItem, { paddingVertical: 10 }]}>
+            <View style={{ flex: 1, marginRight: 12 }}>
+              <Text style={styles.configItemTitle}>Print Copies</Text>
+              <Text style={styles.configItemSub}>1 copy for customer, or 2 for Customer + Kitchen</Text>
+            </View>
+            <View style={styles.segmentGroup}>
+              <TouchableOpacity
+                style={[
+                  styles.segmentBtn,
+                  posConfig.copies === 1 && styles.segmentBtnActive,
+                ]}
+                onPress={() => handleSetCopies(1)}
+              >
+                <Text
+                  style={[
+                    styles.segmentBtnText,
+                    posConfig.copies === 1 && styles.segmentBtnTextActive,
+                  ]}
+                >
+                  1 Copy
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.segmentBtn,
+                  posConfig.copies === 2 && styles.segmentBtnActive,
+                ]}
+                onPress={() => handleSetCopies(2)}
+              >
+                <Text
+                  style={[
+                    styles.segmentBtnText,
+                    posConfig.copies === 2 && styles.segmentBtnTextActive,
+                  ]}
+                >
+                  2 Copies
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* 6. Hardware Auto-Cut Switch */}
+          <View style={[styles.configItem, { paddingVertical: 10 }]}>
+            <View style={{ flex: 1, marginRight: 12 }}>
+              <Text style={styles.configItemTitle}>Auto Paper Cut</Text>
+              <Text style={styles.configItemSub}>Automatically slice receipt after printing</Text>
+            </View>
+            <Switch
+              value={posConfig.autoCut}
+              onValueChange={handleToggleAutoCut}
+              trackColor={{ true: Colors.primary, false: Colors.cardBorder }}
+              thumbColor="#FFFFFF"
+            />
+          </View>
+
+          {/* 7. Auto Print Toggle */}
           <View style={[styles.configItem, { paddingVertical: 10 }]}>
             <View style={{ flex: 1, marginRight: 12 }}>
               <Text style={styles.configItemTitle}>Auto-Print New Orders</Text>
-              <Text style={styles.configItemSub}>Automatically triggers print job on order placement</Text>
+              <Text style={styles.configItemSub}>Automatically prints on order arrival</Text>
             </View>
             <Switch
               value={autoPrintEnabled}
@@ -631,16 +938,18 @@ export default function SettingsScreen() {
             />
           </View>
 
-          {/* Test Print Button */}
-          <View style={[styles.configItem, { borderBottomWidth: 0, paddingVertical: 10 }]}>
+          {/* 8. Test Print Button */}
+          <View style={[styles.configItem, { borderBottomWidth: 0, paddingVertical: 12 }]}>
             <View style={{ flex: 1, marginRight: 12 }}>
-              <Text style={styles.configItemTitle}>Test Thermal Print</Text>
-              <Text style={styles.configItemSub}>Print a sample POS receipt</Text>
+              <Text style={styles.configItemTitle}>Test Active Printer</Text>
+              <Text style={styles.configItemSub}>
+                Send a sample receipt to {POS_BRANDS.find((b) => b.id === posConfig.brand)?.name || 'active printer'}
+              </Text>
             </View>
             <TouchableOpacity
               style={[
                 styles.soundTestBtn,
-                { backgroundColor: '#1E293B' },
+                { backgroundColor: '#0F172A' },
               ]}
               onPress={handleTestPrint}
               disabled={isTestingPrint}
@@ -1114,6 +1423,156 @@ const styles = StyleSheet.create({
   soundTestBtnText: {
     color: '#FFFFFF',
     fontSize: 12,
+    fontWeight: '700',
+  },
+  changeBrandBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: Colors.primary,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 7,
+  },
+  changeBrandBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  brandDropdownList: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.cardBorder,
+    padding: 8,
+    marginVertical: 10,
+    gap: 4,
+  },
+  dropdownHeader: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.textSubtle,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  brandOptionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  brandOptionRowSelected: {
+    backgroundColor: '#EFF6FF',
+    borderColor: Colors.primary,
+  },
+  brandOptionName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.text,
+  },
+  brandOptionNameSelected: {
+    color: Colors.primary,
+  },
+  brandOptionSub: {
+    fontSize: 11,
+    color: Colors.textMuted,
+    marginTop: 2,
+  },
+  hardwareBadgeBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    borderRadius: 8,
+    padding: 10,
+    marginVertical: 8,
+  },
+  hardwareBadgeText: {
+    color: '#065F46',
+    fontSize: 12,
+    fontWeight: '600',
+    flex: 1,
+  },
+  networkConfigBox: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.cardBorder,
+    padding: 12,
+    marginVertical: 8,
+  },
+  networkHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 4,
+  },
+  networkBoxTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.text,
+  },
+  networkBoxSub: {
+    fontSize: 11,
+    color: Colors.textMuted,
+    marginBottom: 10,
+  },
+  networkInputsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'flex-end',
+  },
+  saveIpBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: Colors.primary,
+    paddingHorizontal: 12,
+    height: 38,
+    borderRadius: 8,
+    justifyContent: 'center',
+  },
+  saveIpBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  segmentGroup: {
+    flexDirection: 'row',
+    backgroundColor: '#F1F5F9',
+    borderRadius: 8,
+    padding: 3,
+    borderWidth: 1,
+    borderColor: Colors.cardBorder,
+  },
+  segmentBtn: {
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+    borderRadius: 6,
+  },
+  segmentBtnActive: {
+    backgroundColor: Colors.primary,
+    shadowColor: Colors.primary,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  segmentBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.textMuted,
+  },
+  segmentBtnTextActive: {
+    color: '#FFFFFF',
     fontWeight: '700',
   },
   orientationButtonsRow: {

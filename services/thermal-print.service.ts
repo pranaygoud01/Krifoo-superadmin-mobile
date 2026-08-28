@@ -2,8 +2,10 @@ import * as Print from 'expo-print';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Order } from '../types';
 import { isSunmiAvailable, printSunmiOrderReceipt } from './sunmi-printer.service';
+import { getPosPrinterConfig, savePosPrinterConfig, PosPrinterConfig, POS_BRANDS } from './pos-config.service';
+import { printNetworkOrderReceipt, testNetworkPrinter } from './printer/network-printer.service';
 
-export { isSunmiAvailable, printSunmiOrderReceipt };
+export { isSunmiAvailable, printSunmiOrderReceipt, getPosPrinterConfig, savePosPrinterConfig, POS_BRANDS, testNetworkPrinter };
 
 const AUTO_PRINT_KEY = '@krifoo_auto_print_thermal';
 
@@ -103,14 +105,17 @@ export function generateThermalReceiptHtml(order: Partial<Order> & any): string 
 
   // Address
   const rawAddress =
+    order.deliveryAddress?.fullAddress ||
     order.deliveryAddress?.formattedAddress ||
     order.deliveryAddress?.addressLine1 ||
-    order.deliveryAddress?.city ||
+    order.deliveryAddress?.address ||
     (typeof order.deliveryAddress === 'string' ? order.deliveryAddress : '') ||
-    'Takeaway / Collection';
+    (isDelivery ? 'Delivery Address Specified' : 'Takeaway / Collection');
 
   const postalCode =
     order.deliveryAddress?.postalCode ||
+    order.deliveryAddress?.postcode ||
+    order.deliveryAddress?.postCode ||
     order.deliveryAddress?.zipCode ||
     (rawAddress.match(/[A-Z]{1,2}[0-9][A-Z0-9]? ?[0-9][A-Z]{2}/i)?.[0] || '');
 
@@ -372,18 +377,65 @@ export function generateThermalReceiptHtml(order: Partial<Order> & any): string 
       itemsList.length > 0
         ? itemsList
             .map((item: any) => {
-              const qty = item.quantity || 1;
-              const name = item.name || 'Item';
-              const price = item.price ? item.price * qty : 0;
-              const addons = item.customization?.addOns || [];
-              const size = item.customization?.size;
+              const qty = Number(item.quantity || item.qty || 1);
+              const name =
+                item.itemName ||
+                item.name ||
+                item.title ||
+                item.itemId?.name ||
+                item.itemId?.itemName ||
+                item.menuItemId?.name ||
+                item.menuItemId?.itemName ||
+                item.menuItem?.name ||
+                item.menuItem?.itemName ||
+                item.dishName ||
+                item.productName ||
+                'Item';
+
+              let price = 0;
+              if (item.itemTotal !== undefined && item.itemTotal !== null && !isNaN(item.itemTotal)) {
+                price = Number(item.itemTotal);
+              } else if (item.basePrice !== undefined && item.basePrice !== null && !isNaN(item.basePrice)) {
+                price = Number(item.basePrice) * qty;
+              } else if (item.price !== undefined && item.price !== null && !isNaN(item.price)) {
+                price = Number(item.price) * qty;
+              }
+
+              const optionsList: string[] = [];
+              if (Array.isArray(item.selectedVariants)) {
+                item.selectedVariants.forEach((v: any) => {
+                  if (typeof v === 'string' && v.trim()) optionsList.push(v.trim());
+                  else if (v && typeof v === 'object') {
+                    const vName = v.variantName || v.name || v.title || '';
+                    const vPrice = v.price || v.additionalPrice ? ` (+${formatMoney(v.price || v.additionalPrice)})` : '';
+                    if (vName) optionsList.push(`${vName}${vPrice}`);
+                  }
+                });
+              }
+              if (Array.isArray(item.selectedAddons)) {
+                item.selectedAddons.forEach((a: any) => {
+                  if (typeof a === 'string' && a.trim()) optionsList.push(a.trim());
+                  else if (a && typeof a === 'object') {
+                    const aName = a.addonName || a.name || a.title || '';
+                    const aPrice = a.price || a.additionalPrice ? ` (+${formatMoney(a.price || a.additionalPrice)})` : '';
+                    if (aName) optionsList.push(`${aName}${aPrice}`);
+                  }
+                });
+              }
+              if (item.customization?.size) optionsList.push(`Size: ${item.customization.size}`);
+              if (Array.isArray(item.customization?.addOns)) {
+                item.customization.addOns.forEach((a: string) => { if (a) optionsList.push(a); });
+              }
+
+              const itemNote = item.instructions || item.specialInstructions || item.note || '';
+
               return `
               <div class="item-row">
                 <div class="item-name-qty">${qty} x &nbsp;${name}</div>
                 <div class="item-price">${formatMoney(price)}</div>
               </div>
-              ${size ? `<div class="item-addon">• Size: ${size}</div>` : ''}
-              ${addons.map((a: string) => `<div class="item-addon">+ ${a}</div>`).join('')}
+              ${optionsList.map((opt: string) => `<div class="item-addon">+ ${opt}</div>`).join('')}
+              ${itemNote ? `<div class="item-addon" style="font-style: italic;">* ${itemNote}</div>` : ''}
             `;
             })
             .join('')
@@ -501,15 +553,24 @@ const THERMAL_80MM_WIDTH_POINTS = 227;
 const recentPrints = new Map<string, number>();
 
 /**
- * Print an order on an 80mm thermal printer
- * - On Sunmi V3 MIX / Sunmi POS: Uses direct Sunmi AIDL SDK (Instant, silent, auto paper-cut)
- * - On other devices (Generic Android / iOS / Tablet): Uses system print spooler fallback
+ * Print an order on the restaurant's configured thermal POS printer
+ * - SUNMI / Flipdish: Uses direct Sunmi AIDL SDK
+ * - Epson / Star / RetailZ / Munbyn / ESC-POS: Uses Network TCP/IP ESC-POS driver
+ * - System / Generic: Uses expo-print PDF/HTML spooler
  * 
  * @param order Order data object
- * @param isManual True if initiated by direct user tap (bypasses deduplication debounce)
+ * @param isManual True if initiated by direct user tap (bypasses auto-print check & debounce)
  */
 export async function printThermalReceipt(order: Partial<Order> & any, isManual: boolean = false): Promise<boolean> {
   try {
+    const config = await getPosPrinterConfig();
+
+    // If auto-print is disabled and this was not a manual user click, skip
+    if (!config.autoPrint && !isManual) {
+      console.log('[Print] Auto-print is disabled in POS settings, skipping.');
+      return false;
+    }
+
     const orderKey = String(order._id || order.orderNumber || order.id || '');
     const now = Date.now();
 
@@ -521,49 +582,67 @@ export async function printThermalReceipt(order: Partial<Order> & any, isManual:
         return true;
       }
       recentPrints.set(orderKey, now);
-      // Clean up old entries
       if (recentPrints.size > 100) {
         recentPrints.clear();
       }
     }
 
-    console.log('[Print] Preparing 80mm thermal receipt for order:', order.orderNumber || order._id);
+    console.log(`[Print] Dispatching print job for order ${order.orderNumber || order._id} using brand: ${config.brand.toUpperCase()} (${config.connectionType})`);
 
-    // 1. Check if Sunmi POS printer hardware is available
-    const hasSunmi = await isSunmiAvailable();
-    if (hasSunmi) {
-      console.log('[Print] Detected Sunmi POS hardware. Printing via Sunmi AIDL SDK...');
-      const success = await printSunmiOrderReceipt(order);
-      if (success) {
-        console.log('[Print] Sunmi direct receipt printed successfully.');
-        return true;
+    const copies = Math.max(1, config.copies || 1);
+    let success = false;
+
+    for (let copy = 1; copy <= copies; copy++) {
+      if (copy > 1) {
+        console.log(`[Print] Printing copy ${copy} of ${copies}...`);
       }
-      console.warn('[Print] Sunmi direct print returned false, falling back to system print...');
+
+      // 1. Built-in Sunmi / Flipdish POS hardware
+      if (config.connectionType === 'builtin' || config.brand === 'sunmi' || config.brand === 'flipdish') {
+        const hasSunmi = await isSunmiAvailable();
+        if (hasSunmi) {
+          const res = await printSunmiOrderReceipt(order);
+          if (res) {
+            success = true;
+            continue;
+          }
+        }
+      }
+
+      // 2. Network ESC/POS (Epson, Star, RetailZ, Citizen, Bixolon, Munbyn, Xprinter)
+      if (config.connectionType === 'network' || ['epson', 'star', 'retailz', 'citizen', 'bixolon', 'munbyn_xprinter', 'generic_network'].includes(config.brand)) {
+        const res = await printNetworkOrderReceipt(order, config);
+        if (res) {
+          success = true;
+          continue;
+        }
+        console.warn('[Print] Network ESC/POS print returned false, falling back to system print...');
+      }
+
+      // 3. Fallback: System Spooler / AirPrint
+      try {
+        const html = generateThermalReceiptHtml(order);
+        const file = await Print.printToFileAsync({
+          html,
+          width: THERMAL_80MM_WIDTH_POINTS,
+        });
+
+        await Print.printAsync({
+          uri: file.uri,
+        });
+        success = true;
+      } catch (fallbackErr) {
+        console.warn('[Print] System print fallback error:', fallbackErr);
+        const html = generateThermalReceiptHtml(order);
+        await Print.printAsync({
+          html,
+          width: THERMAL_80MM_WIDTH_POINTS,
+        });
+        success = true;
+      }
     }
 
-    // 2. Fallback for generic Android phones, tablets, or iOS devices
-    const html = generateThermalReceiptHtml(order);
-
-    try {
-      const file = await Print.printToFileAsync({
-        html,
-        width: THERMAL_80MM_WIDTH_POINTS,
-      });
-
-      console.log('[Print] 80mm PDF generated at:', file.uri);
-      await Print.printAsync({
-        uri: file.uri,
-      });
-    } catch (fallbackErr) {
-      console.warn('[Print] Print with URI failed, falling back to direct html print:', fallbackErr);
-      await Print.printAsync({
-        html,
-        width: THERMAL_80MM_WIDTH_POINTS,
-      });
-    }
-
-    console.log('[Print] Thermal receipt print job sent successfully.');
-    return true;
+    return success;
   } catch (error) {
     console.error('[Print] Failed printing thermal receipt:', error);
     return false;
@@ -594,8 +673,10 @@ export const SAMPLE_THERMAL_ORDER = {
   },
   orderedItems: [
     {
+      itemName: 'Mandi chicken biryani',
       name: 'Mandi chicken biryani',
       price: 10.0,
+      basePrice: 10.0,
       quantity: 2,
     },
   ],

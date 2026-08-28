@@ -112,18 +112,51 @@ export async function printSunmiOrderReceipt(order: Partial<Order> & any): Promi
       order.phoneNumber ||
       '';
 
-    const deliveryAddress =
-      order.deliveryAddress?.formattedAddress ||
-      order.deliveryAddress?.address ||
-      order.deliveryAddress?.street ||
-      order.customerDetails?.address ||
-      '';
+    // Comprehensive delivery address extraction
+    let deliveryAddress = '';
+    let deliveryPostcode = '';
 
-    const deliveryPostcode = order.deliveryAddress?.postalCode || order.deliveryAddress?.postcode || '';
+    if (typeof order.deliveryAddress === 'string' && order.deliveryAddress.trim()) {
+      deliveryAddress = order.deliveryAddress.trim();
+    } else if (order.deliveryAddress && typeof order.deliveryAddress === 'object') {
+      const addrObj = order.deliveryAddress;
+      const addrParts: string[] = [];
+
+      if (addrObj.fullAddress) {
+        addrParts.push(addrObj.fullAddress);
+      } else {
+        if (addrObj.addressLine1) addrParts.push(addrObj.addressLine1);
+        if (addrObj.addressLine2) addrParts.push(addrObj.addressLine2);
+        if (addrObj.street) addrParts.push(addrObj.street);
+        if (addrObj.formattedAddress) addrParts.push(addrObj.formattedAddress);
+        if (addrObj.address) addrParts.push(addrObj.address);
+      }
+
+      if (addrObj.landmark) addrParts.push(`Landmark: ${addrObj.landmark}`);
+      if (addrObj.city && !addrParts.some((p) => p.includes(addrObj.city))) {
+        addrParts.push(addrObj.city);
+      }
+
+      deliveryAddress = addrParts.filter(Boolean).join(', ');
+      deliveryPostcode = addrObj.postalCode || addrObj.postcode || addrObj.postCode || addrObj.zipCode || '';
+    } else if (order.customerDetails?.address) {
+      deliveryAddress = typeof order.customerDetails.address === 'string'
+        ? order.customerDetails.address
+        : (order.customerDetails.address.fullAddress || order.customerDetails.address.addressLine1 || '');
+      deliveryPostcode = order.customerDetails.address?.postalCode || order.customerDetails.address?.postcode || '';
+    }
+
+    // Try extracting UK postcode from the address string if not already present
+    if (!deliveryPostcode && deliveryAddress) {
+      const ukPostcodeMatch = deliveryAddress.match(/[A-Z]{1,2}[0-9][A-Z0-9]?\s*[0-9][A-Z]{2}/i);
+      if (ukPostcodeMatch) {
+        deliveryPostcode = ukPostcodeMatch[0].toUpperCase();
+      }
+    }
 
     const orderNum = order.orderNumber || (order._id ? `#${order._id.slice(-5).toUpperCase()}` : '#00000');
-    const fulfillmentType = (order.orderType || order.deliveryType || 'DELIVERY').toUpperCase();
-    const isDelivery = fulfillmentType.includes('DELIV');
+    const fulfillmentType = (order.orderType || order.deliveryType || (deliveryAddress ? 'DELIVERY' : 'COLLECTION')).toUpperCase();
+    const isDelivery = fulfillmentType.includes('DELIV') || Boolean(deliveryAddress);
     const { placedAt, targetTime } = formatOrderDate(order.createdAt);
 
     // ==========================================
@@ -171,12 +204,17 @@ export async function printSunmiOrderReceipt(order: Partial<Order> & any): Promi
       SunmiPrinter.printerText(`  Phone: ${customerPhone}\n`);
     }
 
-    if (isDelivery && (deliveryAddress || deliveryPostcode)) {
+    // PRINT DELIVERY ADDRESS
+    if (isDelivery && deliveryAddress) {
+      SunmiPrinter.setFontSize(22);
       SunmiPrinter.setFontWeight(true);
       SunmiPrinter.printerText(`DELIVERY ADDRESS:\n`);
+      SunmiPrinter.printerText(`  ${deliveryAddress}\n`);
+      if (deliveryPostcode && !deliveryAddress.includes(deliveryPostcode)) {
+        SunmiPrinter.printerText(`  POSTCODE: ${deliveryPostcode}\n`);
+      }
       SunmiPrinter.setFontWeight(false);
-      if (deliveryAddress) SunmiPrinter.printerText(`  ${deliveryAddress}\n`);
-      if (deliveryPostcode) SunmiPrinter.printerText(`  Postcode: ${deliveryPostcode}\n`);
+      SunmiPrinter.setFontSize(20);
     }
 
     if (order.deliveryInstructions || order.notes) {
@@ -199,34 +237,116 @@ export async function printSunmiOrderReceipt(order: Partial<Order> & any): Promi
     SunmiPrinter.setFontSize(20);
     SunmiPrinter.printerText('------------------------------------------------\n');
 
-    const items = order.items || order.orderedItems || [];
-    items.forEach((item: any) => {
-      const qty = `${item.quantity || 1}x`;
-      const name = item.name || item.title || item.menuItemId?.name || 'Item';
-      const itemPrice = (item.price || 0) * (item.quantity || 1);
+    const itemsList =
+      (Array.isArray(order.orderedItems) && order.orderedItems.length > 0)
+        ? order.orderedItems
+        : (Array.isArray(order.items) && order.items.length > 0)
+          ? order.items
+          : [];
+
+    itemsList.forEach((item: any) => {
+      const qtyNum = Number(item.quantity || item.qty || 1);
+      const qtyStr = `${qtyNum}x`;
+
+      // Resolve item name from all possible backend schemas
+      const name =
+        item.itemName ||
+        item.name ||
+        item.title ||
+        item.itemId?.name ||
+        item.itemId?.itemName ||
+        item.menuItemId?.name ||
+        item.menuItemId?.itemName ||
+        item.menuItem?.name ||
+        item.menuItem?.itemName ||
+        item.dishName ||
+        item.productName ||
+        'Item';
+
+      // Resolve item price
+      let itemPrice = 0;
+      if (item.itemTotal !== undefined && item.itemTotal !== null && !isNaN(item.itemTotal)) {
+        itemPrice = Number(item.itemTotal);
+      } else if (item.basePrice !== undefined && item.basePrice !== null && !isNaN(item.basePrice)) {
+        itemPrice = Number(item.basePrice) * qtyNum;
+      } else if (item.price !== undefined && item.price !== null && !isNaN(item.price)) {
+        itemPrice = Number(item.price) * qtyNum;
+      }
       const priceStr = formatMoney(itemPrice);
 
       SunmiPrinter.setFontSize(22);
       SunmiPrinter.setFontWeight(true);
-      SunmiPrinter.printColumnsString([qty, name, priceStr], [6, 32, 10], [AlignValue.LEFT, AlignValue.LEFT, AlignValue.RIGHT]);
+      SunmiPrinter.printColumnsString([qtyStr, name, priceStr], [6, 32, 10], [AlignValue.LEFT, AlignValue.LEFT, AlignValue.RIGHT]);
       SunmiPrinter.setFontWeight(false);
 
-      // Modifiers / Options / Instructions
-      const options = item.options || item.selectedOptions || item.modifiers || [];
-      if (Array.isArray(options) && options.length > 0) {
-        SunmiPrinter.setFontSize(18);
-        options.forEach((opt: any) => {
-          const optName = typeof opt === 'string' ? opt : (opt.name || opt.title || '');
-          const optPrice = opt.price ? ` (+${formatMoney(opt.price)})` : '';
-          if (optName) {
-            SunmiPrinter.printerText(`    + ${optName}${optPrice}\n`);
+      // Collect all variants, add-ons, customizations
+      const optionsList: string[] = [];
+
+      if (Array.isArray(item.selectedVariants)) {
+        item.selectedVariants.forEach((v: any) => {
+          if (typeof v === 'string' && v.trim()) {
+            optionsList.push(v.trim());
+          } else if (v && typeof v === 'object') {
+            const vName = v.variantName || v.name || v.title || v.optionName || '';
+            const vPrice = v.price || v.additionalPrice ? ` (+${formatMoney(v.price || v.additionalPrice)})` : '';
+            if (vName) optionsList.push(`${vName}${vPrice}`);
           }
         });
       }
 
-      if (item.specialInstructions || item.note) {
+      if (Array.isArray(item.selectedAddons)) {
+        item.selectedAddons.forEach((a: any) => {
+          if (typeof a === 'string' && a.trim()) {
+            optionsList.push(a.trim());
+          } else if (a && typeof a === 'object') {
+            const aName = a.addonName || a.name || a.title || '';
+            const aPrice = a.price || a.additionalPrice ? ` (+${formatMoney(a.price || a.additionalPrice)})` : '';
+            if (aName) optionsList.push(`${aName}${aPrice}`);
+          }
+        });
+      }
+
+      if (item.customization) {
+        if (item.customization.size) {
+          optionsList.push(`Size: ${item.customization.size}`);
+        }
+        if (Array.isArray(item.customization.addOns)) {
+          item.customization.addOns.forEach((a: any) => {
+            if (typeof a === 'string' && a.trim()) optionsList.push(a.trim());
+            else if (a?.name) optionsList.push(a.name);
+          });
+        }
+      }
+
+      if (Array.isArray(item.options)) {
+        item.options.forEach((opt: any) => {
+          if (typeof opt === 'string' && opt.trim()) optionsList.push(opt.trim());
+          else if (opt?.name) {
+            const optPrice = opt.price ? ` (+${formatMoney(opt.price)})` : '';
+            optionsList.push(`${opt.name}${optPrice}`);
+          }
+        });
+      }
+
+      if (Array.isArray(item.modifiers)) {
+        item.modifiers.forEach((m: any) => {
+          if (typeof m === 'string' && m.trim()) optionsList.push(m.trim());
+          else if (m?.name) optionsList.push(m.name);
+        });
+      }
+
+      if (optionsList.length > 0) {
         SunmiPrinter.setFontSize(18);
-        SunmiPrinter.printerText(`    * Note: ${item.specialInstructions || item.note}\n`);
+        optionsList.forEach((optStr) => {
+          SunmiPrinter.printerText(`    + ${optStr}\n`);
+        });
+      }
+
+      // Item instructions / special notes
+      const itemNote = item.instructions || item.specialInstructions || item.note || '';
+      if (itemNote) {
+        SunmiPrinter.setFontSize(18);
+        SunmiPrinter.printerText(`    * Note: ${itemNote}\n`);
       }
     });
 
@@ -283,7 +403,7 @@ export async function printSunmiOrderReceipt(order: Partial<Order> & any): Promi
     SunmiPrinter.setAlignment(AlignValue.CENTER);
     SunmiPrinter.setFontSize(20);
     SunmiPrinter.printerText('\nThank you for ordering with Krifoo!\n');
-    SunmiPrinter.printerText('www.krifoo.com\n');
+    SunmiPrinter.printerText('www.krifoo.co.uk\n');
 
     // Feed paper lines so the print clears the cutter blade
     SunmiPrinter.lineWrap(4);

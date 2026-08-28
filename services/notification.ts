@@ -1,3 +1,4 @@
+import * as TaskManager from 'expo-task-manager';
 import * as Device from 'expo-device';
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
@@ -9,6 +10,55 @@ import { orderService } from './order.service';
 
 let Notifications: any = null;
 let notificationListener: any = null;
+
+export const BACKGROUND_NOTIFICATION_TASK = 'BACKGROUND_NOTIFICATION_TASK';
+
+// Define the background notification task so Android wakes up the app when closed / killed
+try {
+  TaskManager.defineTask(BACKGROUND_NOTIFICATION_TASK, async ({ data, error }: any) => {
+    if (error) {
+      console.error('[Background Notification] Task error:', error);
+      return;
+    }
+
+    try {
+      console.log('[Background Notification] Received push in background/closed state:', JSON.stringify(data));
+      const autoPrint = await isAutoPrintEnabled();
+      if (!autoPrint) {
+        console.log('[Background Notification] Auto-print disabled, skipping.');
+        return;
+      }
+
+      const notification = data?.notification;
+      const content = notification?.request?.content || data || {};
+      const notificationData = content.data || data?.data || {};
+
+      const status = notificationData.status || notificationData.order?.status || '';
+      const isNonNewStatus = ['preparing', 'ready_for_pickup', 'out_for_delivery', 'delivered', 'cancelled'].includes(status);
+      if (isNonNewStatus) {
+        return;
+      }
+
+      const orderObj = notificationData.order || notificationData.data || (notificationData.orderedItems ? notificationData : null);
+      const orderId = notificationData.orderId || notificationData.id || orderObj?._id;
+
+      if (orderObj && (orderObj.orderedItems?.length || orderObj.items?.length)) {
+        console.log('[Background Notification] Printing receipt directly from push payload...');
+        await printThermalReceipt(orderObj);
+      } else if (orderId) {
+        console.log('[Background Notification] Fetching order for background print, ID:', orderId);
+        const res = await orderService.getOrderById(orderId);
+        if (res.success && res.data) {
+          await printThermalReceipt(res.data);
+        }
+      }
+    } catch (err) {
+      console.error('[Background Notification] Background print failed:', err);
+    }
+  });
+} catch (taskDefError) {
+  console.warn('[Background Notification] Could not define TaskManager task:', taskDefError);
+}
 
 try {
   Notifications = require('expo-notifications');
@@ -123,6 +173,17 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
       if (finalStatus !== 'granted') {
         console.warn('[Push] Permission denied for native push alerts.');
         return null;
+      }
+
+      // Register background notification task
+      try {
+        const isRegistered = await TaskManager.isTaskRegisteredAsync(BACKGROUND_NOTIFICATION_TASK);
+        if (!isRegistered) {
+          await Notifications.registerTaskAsync(BACKGROUND_NOTIFICATION_TASK);
+          console.log('[Push] Registered BACKGROUND_NOTIFICATION_TASK for closed-app printing.');
+        }
+      } catch (taskRegErr) {
+        console.warn('[Push] Could not register background task:', taskRegErr);
       }
 
       const projectId =
