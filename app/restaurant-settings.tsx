@@ -16,7 +16,26 @@ import { useRouter } from 'expo-router';
 import { Header } from '../components/Header';
 import { Colors } from '../constants/colors';
 import { restaurantOwnerService } from '../services/restaurant-owner.service';
-import { Save, Clock, Shield, HelpCircle, AlertCircle, ExternalLink, CreditCard, Check, LogOut, Bell, Volume2, VolumeX, Printer } from 'lucide-react-native';
+import {
+  Save,
+  Clock,
+  Shield,
+  HelpCircle,
+  AlertCircle,
+  ExternalLink,
+  CreditCard,
+  Check,
+  LogOut,
+  Bell,
+  Volume2,
+  VolumeX,
+  Printer,
+  Settings2,
+  ChevronDown,
+  ChevronUp,
+  CheckCircle2,
+  Wifi,
+} from 'lucide-react-native';
 import { useAuth } from '../context/AuthContext';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { playOrderBuzzSound, stopOrderBuzzSound } from '../services/sound.service';
@@ -25,6 +44,14 @@ import {
   isAutoPrintEnabled,
   setAutoPrintEnabled,
 } from '../services/thermal-print.service';
+import {
+  POS_BRANDS,
+  PosBrand,
+  PosPrinterConfig,
+  getPosPrinterConfig,
+  savePosPrinterConfig,
+  DEFAULT_POS_CONFIG,
+} from '../services/pos-config.service';
 
 interface Timing {
   day: string;
@@ -42,22 +69,93 @@ export default function RestaurantSettingsScreen() {
   const [isTestingSound, setIsTestingSound] = useState(false);
   const [autoPrintEnabled, setAutoPrintState] = useState(true);
   const [isTestingPrint, setIsTestingPrint] = useState(false);
+  const [restaurantId, setRestaurantId] = useState<string>('');
+
+  // POS Printer Configuration State
+  const [posConfig, setPosConfig] = useState<PosPrinterConfig>(DEFAULT_POS_CONFIG);
+  const [showBrandDropdown, setShowBrandDropdown] = useState(false);
+  const [printerIpInput, setPrinterIpInput] = useState('192.168.1.100');
+  const [printerPortInput, setPrinterPortInput] = useState('9100');
+  const [isSavingIp, setIsSavingIp] = useState(false);
 
   useEffect(() => {
     isAutoPrintEnabled().then(setAutoPrintState);
+    getPosPrinterConfig().then((cfg) => {
+      setPosConfig(cfg);
+      setPrinterIpInput(cfg.ipAddress || '192.168.1.100');
+      setPrinterPortInput(String(cfg.port || 9100));
+    });
   }, []);
+
+  const handleSelectBrand = async (brandId: PosBrand) => {
+    const selectedBrand = POS_BRANDS.find((b) => b.id === brandId);
+    const newConn = selectedBrand?.defaultConnection || 'network';
+    const updated = await savePosPrinterConfig(
+      {
+        brand: brandId,
+        connectionType: newConn,
+      },
+      restaurantId || undefined
+    );
+    setPosConfig(updated);
+    setShowBrandDropdown(false);
+    Alert.alert('POS Brand Configured', `Restaurant printer set to ${selectedBrand?.name}`);
+  };
+
+  const handleSaveNetworkSettings = async () => {
+    setIsSavingIp(true);
+    try {
+      const portNum = parseInt(printerPortInput, 10) || 9100;
+      const updated = await savePosPrinterConfig(
+        {
+          ipAddress: printerIpInput.trim(),
+          port: portNum,
+        },
+        restaurantId || undefined
+      );
+      setPosConfig(updated);
+      Alert.alert('Network Printer Saved', `Connected to ${printerIpInput.trim()}:${portNum}`);
+    } catch {
+      Alert.alert('Error', 'Failed to save network printer settings');
+    } finally {
+      setIsSavingIp(false);
+    }
+  };
+
+  const handleSetPaperWidth = async (width: '80mm' | '58mm') => {
+    const updated = await savePosPrinterConfig({ paperWidth: width }, restaurantId || undefined);
+    setPosConfig(updated);
+  };
+
+  const handleSetCopies = async (copies: number) => {
+    const updated = await savePosPrinterConfig({ copies }, restaurantId || undefined);
+    setPosConfig(updated);
+  };
+
+  const handleToggleAutoCut = async (autoCut: boolean) => {
+    const updated = await savePosPrinterConfig({ autoCut }, restaurantId || undefined);
+    setPosConfig(updated);
+  };
 
   const handleToggleAutoPrint = async (val: boolean) => {
     setAutoPrintState(val);
     await setAutoPrintEnabled(val);
+    const updated = await savePosPrinterConfig({ autoPrint: val }, restaurantId || undefined);
+    setPosConfig(updated);
   };
 
   const handleTestPrint = async () => {
     setIsTestingPrint(true);
     try {
-      await printSampleThermalReceipt();
+      const success = await printSampleThermalReceipt();
+      if (success) {
+        Alert.alert('Print Sent', `Test receipt sent to ${POS_BRANDS.find((b) => b.id === posConfig.brand)?.name || 'printer'}.`);
+      } else {
+        Alert.alert('Print Status', 'Could not reach thermal printer. Ensure printer is on the same WiFi/Network.');
+      }
     } catch (e) {
       console.error(e);
+      Alert.alert('Print Error', 'Failed to send test print.');
     } finally {
       setIsTestingPrint(false);
     }
@@ -104,6 +202,15 @@ export default function RestaurantSettingsScreen() {
       const res = await restaurantOwnerService.getRestaurantProfile();
       if (res.success && res.data) {
         const r = res.data;
+        if (r._id) {
+          setRestaurantId(r._id);
+          const pConfig = await getPosPrinterConfig(r._id);
+          setPosConfig(pConfig);
+          setPrinterIpInput(pConfig.ipAddress || '192.168.1.100');
+          setPrinterPortInput(String(pConfig.port || 9100));
+          setAutoPrintState(pConfig.autoPrint);
+        }
+
         setConfig({
           acceptsOnlineOrders: r.acceptsOnlineOrders ?? true,
           acceptsDining: r.acceptsDining ?? true,
@@ -333,17 +440,235 @@ export default function RestaurantSettingsScreen() {
             </View>
           </View>
 
-          {/* Thermal POS Printer & Auto-Print */}
+          {/* Universal Thermal POS Printer & Multi-Brand Setup */}
           <View style={styles.sectionCard}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
               <Printer size={18} color={Colors.primary} />
-              <Text style={styles.sectionHeader}>POS Thermal Printer</Text>
+              <Text style={styles.sectionHeader}>Universal POS & Thermal Printer</Text>
             </View>
             <Text style={styles.sectionSub}>
-              Auto-prints kitchen & POS thermal receipts whenever an order is placed.
+              Configure your restaurant's thermal receipt printer. Supports Epson TM-m30, SUNMI V3 MIX, Star Micronics, RetailZ, Citizen, Munbyn & WiFi/LAN printers.
             </Text>
 
-            {/* Auto Print Switch */}
+            {/* 1. Brand Selector Header */}
+            <View style={[styles.timingRow, { paddingVertical: 12 }]}>
+              <View style={{ flex: 1, marginRight: 10 }}>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: Colors.text }}>Configured Brand</Text>
+                <Text style={{ fontSize: 12, color: Colors.primary, fontWeight: '700', marginTop: 2 }}>
+                  {POS_BRANDS.find((b) => b.id === posConfig.brand)?.name || 'Generic POS'}
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.changeBrandBtn}
+                onPress={() => setShowBrandDropdown(!showBrandDropdown)}
+                activeOpacity={0.8}
+              >
+                <Settings2 size={14} color="#FFFFFF" />
+                <Text style={styles.changeBrandBtnText}>
+                  {showBrandDropdown ? 'Close' : 'Select Brand'}
+                </Text>
+                {showBrandDropdown ? (
+                  <ChevronUp size={13} color="#FFFFFF" />
+                ) : (
+                  <ChevronDown size={13} color="#FFFFFF" />
+                )}
+              </TouchableOpacity>
+            </View>
+
+            {/* 2. Expandable Brand Selection List */}
+            {showBrandDropdown && (
+              <View style={styles.brandDropdownList}>
+                <Text style={styles.dropdownHeader}>Select this Restaurant's Printer Brand:</Text>
+                {POS_BRANDS.map((brand) => {
+                  const isSelected = posConfig.brand === brand.id;
+                  return (
+                    <TouchableOpacity
+                      key={brand.id}
+                      style={[
+                        styles.brandOptionRow,
+                        isSelected && styles.brandOptionRowSelected,
+                      ]}
+                      onPress={() => handleSelectBrand(brand.id)}
+                      activeOpacity={0.7}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <Text
+                          style={[
+                            styles.brandOptionName,
+                            isSelected && styles.brandOptionNameSelected,
+                          ]}
+                        >
+                          {brand.name}
+                        </Text>
+                        <Text style={styles.brandOptionSub}>{brand.subtitle}</Text>
+                      </View>
+                      {isSelected && (
+                        <CheckCircle2 size={18} color={Colors.primary} />
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            )}
+
+            {/* 3. Connection Specific Settings */}
+            {posConfig.connectionType === 'builtin' ? (
+              <View style={styles.hardwareBadgeBox}>
+                <CheckCircle2 size={16} color="#10B981" />
+                <Text style={styles.hardwareBadgeText}>
+                  Hardware Built-in Direct Native SDK Active
+                </Text>
+              </View>
+            ) : posConfig.connectionType === 'network' ? (
+              <View style={styles.networkConfigBox}>
+                <View style={styles.networkHeaderRow}>
+                  <Wifi size={15} color={Colors.primary} />
+                  <Text style={styles.networkBoxTitle}>WiFi / LAN Printer Network Settings</Text>
+                </View>
+                <Text style={styles.networkBoxSub}>
+                  Enter the local IP address printed on your printer's self-test slip (Port 9100 / 80).
+                </Text>
+                <View style={styles.networkInputsRow}>
+                  <View style={{ flex: 2 }}>
+                    <Text style={styles.inputMiniLabel}>Printer IP Address</Text>
+                    <TextInput
+                      style={styles.netFormInput}
+                      value={printerIpInput}
+                      onChangeText={setPrinterIpInput}
+                      placeholder="192.168.1.100"
+                      placeholderTextColor={Colors.textSubtle}
+                      keyboardType="numeric"
+                      autoCapitalize="none"
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.inputMiniLabel}>Port</Text>
+                    <TextInput
+                      style={styles.netFormInput}
+                      value={printerPortInput}
+                      onChangeText={setPrinterPortInput}
+                      placeholder="9100"
+                      placeholderTextColor={Colors.textSubtle}
+                      keyboardType="numeric"
+                    />
+                  </View>
+                  <TouchableOpacity
+                    style={styles.saveIpBtn}
+                    onPress={handleSaveNetworkSettings}
+                    disabled={isSavingIp}
+                  >
+                    {isSavingIp ? (
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                    ) : (
+                      <>
+                        <Save size={13} color="#FFFFFF" />
+                        <Text style={styles.saveIpBtnText}>Save</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : null}
+
+            {/* 4. Thermal Paper Width */}
+            <View style={[styles.timingRow, { paddingVertical: 10 }]}>
+              <View style={{ flex: 1, marginRight: 10 }}>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: Colors.text }}>Thermal Paper Width</Text>
+                <Text style={{ fontSize: 11, color: Colors.textMuted, marginTop: 2 }}>80mm (Standard POS) or 58mm (Compact)</Text>
+              </View>
+              <View style={styles.segmentGroup}>
+                <TouchableOpacity
+                  style={[
+                    styles.segmentBtn,
+                    posConfig.paperWidth === '80mm' && styles.segmentBtnActive,
+                  ]}
+                  onPress={() => handleSetPaperWidth('80mm')}
+                >
+                  <Text
+                    style={[
+                      styles.segmentBtnText,
+                      posConfig.paperWidth === '80mm' && styles.segmentBtnTextActive,
+                    ]}
+                  >
+                    80mm
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.segmentBtn,
+                    posConfig.paperWidth === '58mm' && styles.segmentBtnActive,
+                  ]}
+                  onPress={() => handleSetPaperWidth('58mm')}
+                >
+                  <Text
+                    style={[
+                      styles.segmentBtnText,
+                      posConfig.paperWidth === '58mm' && styles.segmentBtnTextActive,
+                    ]}
+                  >
+                    58mm
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* 5. Print Copies */}
+            <View style={[styles.timingRow, { paddingVertical: 10 }]}>
+              <View style={{ flex: 1, marginRight: 10 }}>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: Colors.text }}>Print Copies</Text>
+                <Text style={{ fontSize: 11, color: Colors.textMuted, marginTop: 2 }}>1 for customer, or 2 for Customer + Kitchen</Text>
+              </View>
+              <View style={styles.segmentGroup}>
+                <TouchableOpacity
+                  style={[
+                    styles.segmentBtn,
+                    posConfig.copies === 1 && styles.segmentBtnActive,
+                  ]}
+                  onPress={() => handleSetCopies(1)}
+                >
+                  <Text
+                    style={[
+                      styles.segmentBtnText,
+                      posConfig.copies === 1 && styles.segmentBtnTextActive,
+                    ]}
+                  >
+                    1 Copy
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.segmentBtn,
+                    posConfig.copies === 2 && styles.segmentBtnActive,
+                  ]}
+                  onPress={() => handleSetCopies(2)}
+                >
+                  <Text
+                    style={[
+                      styles.segmentBtnText,
+                      posConfig.copies === 2 && styles.segmentBtnTextActive,
+                    ]}
+                  >
+                    2 Copies
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* 6. Auto Paper Cut */}
+            <View style={[styles.timingRow, { paddingVertical: 10 }]}>
+              <View style={{ flex: 1, marginRight: 10 }}>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: Colors.text }}>Auto Paper Cut</Text>
+                <Text style={{ fontSize: 11, color: Colors.textMuted, marginTop: 2 }}>Automatically slice receipt after printing</Text>
+              </View>
+              <Switch
+                value={posConfig.autoCut}
+                onValueChange={handleToggleAutoCut}
+                trackColor={{ true: Colors.primary, false: Colors.cardBorder }}
+                thumbColor="#FFFFFF"
+              />
+            </View>
+
+            {/* 7. Auto Print Switch */}
             <View style={[styles.timingRow, { paddingVertical: 10 }]}>
               <View style={{ flex: 1, marginRight: 10 }}>
                 <Text style={{ fontSize: 13, fontWeight: '700', color: Colors.text }}>Auto-Print New Orders</Text>
@@ -357,16 +682,18 @@ export default function RestaurantSettingsScreen() {
               />
             </View>
 
-            {/* Test Print Button */}
-            <View style={[styles.timingRow, { borderBottomWidth: 0, paddingVertical: 10 }]}>
+            {/* 8. Test Print Button */}
+            <View style={[styles.timingRow, { borderBottomWidth: 0, paddingVertical: 12 }]}>
               <View style={{ flex: 1, marginRight: 10 }}>
-                <Text style={{ fontSize: 13, fontWeight: '700', color: Colors.text }}>Test Thermal Print</Text>
-                <Text style={{ fontSize: 11, color: Colors.textMuted, marginTop: 2 }}>Print a sample POS receipt</Text>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: Colors.text }}>Test Active Printer</Text>
+                <Text style={{ fontSize: 11, color: Colors.textMuted, marginTop: 2 }}>
+                  Send a sample receipt to {POS_BRANDS.find((b) => b.id === posConfig.brand)?.name || 'active printer'}
+                </Text>
               </View>
               <TouchableOpacity
                 style={[
                   styles.soundTestBtn,
-                  { backgroundColor: '#1E293B' },
+                  { backgroundColor: '#0F172A' },
                 ]}
                 onPress={handleTestPrint}
                 disabled={isTestingPrint}
@@ -788,5 +1115,165 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 12,
     fontWeight: '700',
+  },
+  changeBrandBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: Colors.primary,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 8,
+  },
+  changeBrandBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  brandDropdownList: {
+    backgroundColor: Colors.cardSurface,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.cardBorder,
+    padding: 10,
+    marginVertical: 10,
+    gap: 6,
+  },
+  dropdownHeader: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.textMuted,
+    marginBottom: 4,
+    textTransform: 'uppercase',
+  },
+  brandOptionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 9,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    backgroundColor: Colors.card,
+    borderWidth: 1,
+    borderColor: Colors.cardBorder,
+  },
+  brandOptionRowSelected: {
+    borderColor: Colors.primary,
+    backgroundColor: Colors.primaryLight,
+  },
+  brandOptionName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.text,
+  },
+  brandOptionNameSelected: {
+    color: Colors.primary,
+  },
+  brandOptionSub: {
+    fontSize: 11,
+    color: Colors.textMuted,
+    marginTop: 2,
+  },
+  hardwareBadgeBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#ECFDF5',
+    padding: 10,
+    borderRadius: 8,
+    marginVertical: 8,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  hardwareBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#065F46',
+    flex: 1,
+  },
+  networkConfigBox: {
+    backgroundColor: Colors.cardSurface,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.cardBorder,
+    padding: 12,
+    marginVertical: 8,
+  },
+  networkHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 4,
+  },
+  networkBoxTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.text,
+  },
+  networkBoxSub: {
+    fontSize: 11,
+    color: Colors.textMuted,
+    marginBottom: 10,
+    lineHeight: 15,
+  },
+  networkInputsRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 8,
+  },
+  inputMiniLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: Colors.textMuted,
+    marginBottom: 4,
+  },
+  netFormInput: {
+    backgroundColor: Colors.card,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.cardBorder,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    fontSize: 13,
+    color: Colors.text,
+  },
+  saveIpBtn: {
+    backgroundColor: Colors.primary,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    paddingHorizontal: 12,
+    height: 38,
+    borderRadius: 8,
+  },
+  saveIpBtnText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 12,
+  },
+  segmentGroup: {
+    flexDirection: 'row',
+    backgroundColor: Colors.cardSurface,
+    borderRadius: 8,
+    padding: 3,
+    borderWidth: 1,
+    borderColor: Colors.cardBorder,
+  },
+  segmentBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  segmentBtnActive: {
+    backgroundColor: Colors.primary,
+  },
+  segmentBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Colors.textMuted,
+  },
+  segmentBtnTextActive: {
+    color: '#FFFFFF',
   },
 });

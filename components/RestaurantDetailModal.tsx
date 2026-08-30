@@ -13,7 +13,8 @@ import {
 import { Restaurant, VerificationStatus } from '../types';
 import { Colors } from '../constants/colors';
 import { StatusBadge } from './StatusBadge';
-import { X, FileText, CheckCircle, XCircle, Clock } from 'lucide-react-native';
+import { X, FileText, CheckCircle, XCircle, Clock, Printer } from 'lucide-react-native';
+import { getBrandName, getPosPrinterConfig } from '../services/pos-config.service';
 
 interface RestaurantDetailModalProps {
   visible: boolean;
@@ -30,6 +31,15 @@ export const RestaurantDetailModal: React.FC<RestaurantDetailModalProps> = ({
 }) => {
   const [remarks, setRemarks] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [printerBrand, setPrinterBrand] = useState('Epson ePOS (TM-m30)');
+
+  React.useEffect(() => {
+    if (restaurant?._id) {
+      getPosPrinterConfig(restaurant._id).then((cfg) => {
+        setPrinterBrand(getBrandName(cfg.brand));
+      });
+    }
+  }, [restaurant?._id]);
 
   if (!restaurant) return null;
 
@@ -97,6 +107,10 @@ export const RestaurantDetailModal: React.FC<RestaurantDetailModalProps> = ({
                   <Text style={styles.value}>{restaurant.cuisineTypes.join(', ')}</Text>
                 </View>
               ) : null}
+              <View style={styles.infoRow}>
+                <Text style={styles.label}>POS Printer:</Text>
+                <Text style={[styles.value, { color: Colors.primary, fontWeight: '700' }]}>{printerBrand}</Text>
+              </View>
             </View>
 
             {/* Documents Section */}

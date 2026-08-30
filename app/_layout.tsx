@@ -16,6 +16,7 @@ import {
 import * as SplashScreen from 'expo-splash-screen';
 import { Text, StyleSheet } from 'react-native';
 
+import { FontSizeProvider, globalFontScale } from '../context/FontSizeContext';
 import { SocketProvider } from '../context/SocketContext';
 import { initAppOrientation } from '../services/orientation.service';
 
@@ -39,9 +40,22 @@ const oldRender = (Text as any).render;
 (Text as any).render = function (...args: any[]) {
   const origin = oldRender.call(this, ...args);
   if (origin && origin.props) {
+    const flattened = StyleSheet.flatten(origin.props.style) || {};
     const fontFamily = getFontFamily(origin.props.style);
+
+    const extraStyle: any = { fontFamily };
+
+    if (globalFontScale !== 1.0) {
+      if (flattened.fontSize !== undefined) {
+        extraStyle.fontSize = Math.round(flattened.fontSize * globalFontScale);
+      }
+      if (flattened.lineHeight !== undefined) {
+        extraStyle.lineHeight = Math.round(flattened.lineHeight * globalFontScale);
+      }
+    }
+
     return React.cloneElement(origin, {
-      style: [{ fontFamily }, origin.props.style],
+      style: [origin.props.style, extraStyle],
     });
   }
   return origin;
@@ -68,36 +82,38 @@ export default function RootLayout() {
   }
 
   return (
-    <AuthProvider>
-      <ToastProvider>
-        <SocketProvider>
-          <StatusBar style="dark" backgroundColor={Colors.background} />
-          <Stack
-            screenOptions={{
-              headerShown: false,
-              contentStyle: { backgroundColor: Colors.background },
-              animation: 'fade',
-            }}
-          >
-            <Stack.Screen name="index" />
-            <Stack.Screen name="login" />
-            <Stack.Screen name="register" options={{ animation: 'slide_from_right' }} />
-            <Stack.Screen name="(tabs)" />
-            <Stack.Screen name="settings" options={{ animation: 'slide_from_right' }} />
-            <Stack.Screen name="privacy-policy" options={{ animation: 'slide_from_right' }} />
-            <Stack.Screen name="terms-conditions" options={{ animation: 'slide_from_right' }} />
-            <Stack.Screen name="order-details" options={{ animation: 'slide_from_right' }} />
-            <Stack.Screen name="restaurant-details" options={{ animation: 'slide_from_right' }} />
-            <Stack.Screen name="notifications" options={{ animation: 'slide_from_right' }} />
-            <Stack.Screen name="tables" options={{ animation: 'slide_from_right' }} />
-            <Stack.Screen name="bookings" options={{ animation: 'slide_from_right' }} />
-            <Stack.Screen name="marketing" options={{ animation: 'slide_from_right' }} />
-            <Stack.Screen name="fleet" options={{ animation: 'slide_from_right' }} />
-            <Stack.Screen name="restaurant-settings" options={{ animation: 'slide_from_right' }} />
-            <Stack.Screen name="add-edit-menu" options={{ animation: 'slide_from_right' }} />
-          </Stack>
-        </SocketProvider>
-      </ToastProvider>
-    </AuthProvider>
+    <FontSizeProvider>
+      <AuthProvider>
+        <ToastProvider>
+          <SocketProvider>
+            <StatusBar style="dark" backgroundColor={Colors.background} />
+            <Stack
+              screenOptions={{
+                headerShown: false,
+                contentStyle: { backgroundColor: Colors.background },
+                animation: 'fade',
+              }}
+            >
+              <Stack.Screen name="index" />
+              <Stack.Screen name="login" />
+              <Stack.Screen name="register" options={{ animation: 'slide_from_right' }} />
+              <Stack.Screen name="(tabs)" />
+              <Stack.Screen name="settings" options={{ animation: 'slide_from_right' }} />
+              <Stack.Screen name="privacy-policy" options={{ animation: 'slide_from_right' }} />
+              <Stack.Screen name="terms-conditions" options={{ animation: 'slide_from_right' }} />
+              <Stack.Screen name="order-details" options={{ animation: 'slide_from_right' }} />
+              <Stack.Screen name="restaurant-details" options={{ animation: 'slide_from_right' }} />
+              <Stack.Screen name="notifications" options={{ animation: 'slide_from_right' }} />
+              <Stack.Screen name="tables" options={{ animation: 'slide_from_right' }} />
+              <Stack.Screen name="bookings" options={{ animation: 'slide_from_right' }} />
+              <Stack.Screen name="marketing" options={{ animation: 'slide_from_right' }} />
+              <Stack.Screen name="fleet" options={{ animation: 'slide_from_right' }} />
+              <Stack.Screen name="restaurant-settings" options={{ animation: 'slide_from_right' }} />
+              <Stack.Screen name="add-edit-menu" options={{ animation: 'slide_from_right' }} />
+            </Stack>
+          </SocketProvider>
+        </ToastProvider>
+      </AuthProvider>
+    </FontSizeProvider>
   );
 }

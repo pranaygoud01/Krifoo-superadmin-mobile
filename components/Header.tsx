@@ -7,6 +7,7 @@ import { Colors } from '../constants/colors';
 import { orderService } from '../services/order.service';
 import { restaurantService } from '../services/restaurant.service';
 import { useAuth } from '../context/AuthContext';
+import { useFontSize } from '../context/FontSizeContext';
 
 interface HeaderProps {
   title: string;
@@ -103,6 +104,8 @@ export const Header: React.FC<HeaderProps> = ({
     }
   };
 
+  const { scaleLabel, increaseFontSize, decreaseFontSize, scaleIndex } = useFontSize();
+
   return (
     <SafeAreaView edges={['top']} style={styles.safeArea}>
       <View style={styles.header}>
@@ -146,6 +149,33 @@ export const Header: React.FC<HeaderProps> = ({
         </View>
 
         <View style={styles.rightContainer}>
+          {/* Global Font Size Controller (A- / A+) */}
+          <View style={styles.fontScaleContainer}>
+            <TouchableOpacity
+              style={[styles.fontBtn, scaleIndex === 0 && styles.fontBtnDisabled]}
+              onPress={decreaseFontSize}
+              disabled={scaleIndex === 0}
+              activeOpacity={0.7}
+              hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+            >
+              <Text style={[styles.fontBtnText, scaleIndex === 0 && styles.fontBtnTextDisabled]}>A-</Text>
+            </TouchableOpacity>
+
+            <View style={styles.fontScaleBadge}>
+              <Text style={styles.fontScaleBadgeText}>{scaleLabel}</Text>
+            </View>
+
+            <TouchableOpacity
+              style={[styles.fontBtn, scaleIndex === 3 && styles.fontBtnDisabled]}
+              onPress={increaseFontSize}
+              disabled={scaleIndex === 3}
+              activeOpacity={0.7}
+              hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+            >
+              <Text style={[styles.fontBtnText, scaleIndex === 3 && styles.fontBtnTextDisabled]}>A+</Text>
+            </TouchableOpacity>
+          </View>
+
           {rightElement ? (
             rightElement
           ) : (
@@ -250,16 +280,62 @@ const styles = StyleSheet.create({
   rightContainer: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 8,
+  },
+  fontScaleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.cardSurface,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: Colors.cardBorder,
+    paddingHorizontal: 4,
+    paddingVertical: 3,
+    height: 38,
+    gap: 2,
+  },
+  fontBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: Colors.card,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: Colors.cardBorder,
+  },
+  fontBtnDisabled: {
+    opacity: 0.35,
+    backgroundColor: 'transparent',
+  },
+  fontBtnText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: Colors.primary,
+  },
+  fontBtnTextDisabled: {
+    color: Colors.textMuted,
+  },
+  fontScaleBadge: {
+    paddingHorizontal: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 34,
+  },
+  fontScaleBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: Colors.textMuted,
   },
   defaultActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 8,
   },
   actionIconButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     backgroundColor: Colors.cardSurface,
     borderWidth: 1,
     borderColor: Colors.cardBorder,

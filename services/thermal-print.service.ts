@@ -1,11 +1,22 @@
 import * as Print from 'expo-print';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Order } from '../types';
-import { isSunmiAvailable, printSunmiOrderReceipt } from './sunmi-printer.service';
-import { getPosPrinterConfig, savePosPrinterConfig, PosPrinterConfig, POS_BRANDS } from './pos-config.service';
+import { getPosPrinterConfig, savePosPrinterConfig, PosPrinterConfig, POS_BRANDS, getBrandOption, getBrandName } from './pos-config.service';
 import { printNetworkOrderReceipt, testNetworkPrinter } from './printer/network-printer.service';
+import { printEpsonOrderReceipt, testEpsonPrinter } from './printer/epson-printer.service';
 
-export { isSunmiAvailable, printSunmiOrderReceipt, getPosPrinterConfig, savePosPrinterConfig, POS_BRANDS, testNetworkPrinter };
+export {
+  isSunmiAvailable,
+  printSunmiOrderReceipt,
+  getPosPrinterConfig,
+  savePosPrinterConfig,
+  POS_BRANDS,
+  getBrandOption,
+  getBrandName,
+  testNetworkPrinter,
+  printEpsonOrderReceipt,
+  testEpsonPrinter,
+};
 
 const AUTO_PRINT_KEY = '@krifoo_auto_print_thermal';
 
@@ -563,7 +574,8 @@ const recentPrints = new Map<string, number>();
  */
 export async function printThermalReceipt(order: Partial<Order> & any, isManual: boolean = false): Promise<boolean> {
   try {
-    const config = await getPosPrinterConfig();
+    const restId = typeof order.restaurantId === 'object' ? order.restaurantId?._id : (order.restaurantId || order.restaurant);
+    const config = await getPosPrinterConfig(restId ? String(restId) : undefined);
 
     // If auto-print is disabled and this was not a manual user click, skip
     if (!config.autoPrint && !isManual) {
@@ -609,7 +621,17 @@ export async function printThermalReceipt(order: Partial<Order> & any, isManual:
         }
       }
 
-      // 2. Network ESC/POS (Epson, Star, RetailZ, Citizen, Bixolon, Munbyn, Xprinter)
+      // 2. Epson ePOS XML SDK (Epson TM-m30, TM-T88, TM-T20, TM-T82)
+      if (config.brand === 'epson') {
+        const epsonRes = await printEpsonOrderReceipt(order, config);
+        if (epsonRes) {
+          success = true;
+          continue;
+        }
+        console.warn('[Print] Epson ePOS XML print returned false, attempting network ESC/POS stream...');
+      }
+
+      // 3. Network ESC/POS (Star, RetailZ, Citizen, Bixolon, Munbyn, Xprinter, Generic)
       if (config.connectionType === 'network' || ['epson', 'star', 'retailz', 'citizen', 'bixolon', 'munbyn_xprinter', 'generic_network'].includes(config.brand)) {
         const res = await printNetworkOrderReceipt(order, config);
         if (res) {
