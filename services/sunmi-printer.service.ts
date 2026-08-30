@@ -1,8 +1,28 @@
 import { Platform } from 'react-native';
-import SunmiPrinter, { AlignValue } from '@un1v3r/react-native-sunmi-printer';
 import { Order } from '../types';
 
+export enum AlignValue {
+  LEFT = 0,
+  CENTER = 1,
+  RIGHT = 2,
+}
+
+let _cachedSunmiModule: any = null;
 let _cachedIsSunmi: boolean | null = null;
+
+function getSunmiModule(): any {
+  if (_cachedSunmiModule) return _cachedSunmiModule;
+  if (Platform.OS !== 'android') return null;
+
+  try {
+    const mod = require('@un1v3r/react-native-sunmi-printer');
+    _cachedSunmiModule = mod?.default || mod;
+    return _cachedSunmiModule;
+  } catch (e) {
+    // Native Sunmi TurboModule not registered (e.g. running in Expo Go or non-Sunmi device)
+    return null;
+  }
+}
 
 /**
  * Check if Sunmi Printer hardware & service are available on the current device.
@@ -18,9 +38,14 @@ export async function isSunmiAvailable(maxRetries: number = 3): Promise<boolean>
     return true;
   }
 
+  const sunmi = getSunmiModule();
+  if (!sunmi || typeof sunmi.hasPrinter !== 'function') {
+    return false;
+  }
+
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      const hasPrinter = await SunmiPrinter.hasPrinter();
+      const hasPrinter = await sunmi.hasPrinter();
       if (hasPrinter) {
         _cachedIsSunmi = true;
         return true;
@@ -78,11 +103,17 @@ function formatOrderDate(dateString?: string): { placedAt: string; targetTime: s
  * - Automatic paper cut upon completion
  */
 export async function printSunmiOrderReceipt(order: Partial<Order> & any): Promise<boolean> {
+  const sunmi = getSunmiModule();
+  if (!sunmi || typeof sunmi.printerInit !== 'function') {
+    console.log('[Sunmi] Native Sunmi module not available on this device/environment.');
+    return false;
+  }
+
   try {
     console.log('[Sunmi] Initializing Sunmi Printer for order:', order.orderNumber || order._id);
 
     // 1. Initialize printer state
-    SunmiPrinter.printerInit();
+    sunmi.printerInit();
 
     // Restaurant details
     const restaurantName =
@@ -162,80 +193,80 @@ export async function printSunmiOrderReceipt(order: Partial<Order> & any): Promi
     // ==========================================
     // 1. HEADER SECTION
     // ==========================================
-    SunmiPrinter.setAlignment(AlignValue.CENTER);
-    SunmiPrinter.setFontSize(28);
-    SunmiPrinter.setFontWeight(true);
-    SunmiPrinter.printerText(`${restaurantName.toUpperCase()}\n`);
+    sunmi.setAlignment(AlignValue.CENTER);
+    sunmi.setFontSize(28);
+    sunmi.setFontWeight(true);
+    sunmi.printerText(`${restaurantName.toUpperCase()}\n`);
 
     if (restaurantPhone) {
-      SunmiPrinter.setFontSize(20);
-      SunmiPrinter.setFontWeight(false);
-      SunmiPrinter.printerText(`Tel: ${restaurantPhone}\n`);
+      sunmi.setFontSize(20);
+      sunmi.setFontWeight(false);
+      sunmi.printerText(`Tel: ${restaurantPhone}\n`);
     }
 
-    SunmiPrinter.setFontSize(20);
-    SunmiPrinter.printerText('================================================\n');
+    sunmi.setFontSize(20);
+    sunmi.printerText('================================================\n');
 
     // ORDER NUMBER & TYPE
-    SunmiPrinter.setFontSize(36);
-    SunmiPrinter.setFontWeight(true);
-    SunmiPrinter.printerText(`ORDER: ${orderNum}\n`);
+    sunmi.setFontSize(36);
+    sunmi.setFontWeight(true);
+    sunmi.printerText(`ORDER: ${orderNum}\n`);
 
-    SunmiPrinter.setFontSize(24);
-    SunmiPrinter.printerText(`[ ${fulfillmentType} ]\n`);
-    SunmiPrinter.setFontWeight(false);
+    sunmi.setFontSize(24);
+    sunmi.printerText(`[ ${fulfillmentType} ]\n`);
+    sunmi.setFontWeight(false);
 
-    SunmiPrinter.setFontSize(20);
-    SunmiPrinter.printerText('------------------------------------------------\n');
+    sunmi.setFontSize(20);
+    sunmi.printerText('------------------------------------------------\n');
 
     // ==========================================
     // 2. TIMINGS & CUSTOMER SECTION
     // ==========================================
-    SunmiPrinter.setAlignment(AlignValue.LEFT);
-    SunmiPrinter.setFontSize(20);
-    SunmiPrinter.printerText(`Placed: ${placedAt}    Target: ${targetTime}\n`);
-    SunmiPrinter.printerText('------------------------------------------------\n');
+    sunmi.setAlignment(AlignValue.LEFT);
+    sunmi.setFontSize(20);
+    sunmi.printerText(`Placed: ${placedAt}    Target: ${targetTime}\n`);
+    sunmi.printerText('------------------------------------------------\n');
 
-    SunmiPrinter.setFontWeight(true);
-    SunmiPrinter.printerText(`CUSTOMER:\n`);
-    SunmiPrinter.setFontWeight(false);
-    SunmiPrinter.printerText(`  Name:  ${customerName}\n`);
+    sunmi.setFontWeight(true);
+    sunmi.printerText(`CUSTOMER:\n`);
+    sunmi.setFontWeight(false);
+    sunmi.printerText(`  Name:  ${customerName}\n`);
     if (customerPhone) {
-      SunmiPrinter.printerText(`  Phone: ${customerPhone}\n`);
+      sunmi.printerText(`  Phone: ${customerPhone}\n`);
     }
 
     // PRINT DELIVERY ADDRESS
     if (isDelivery && deliveryAddress) {
-      SunmiPrinter.setFontSize(22);
-      SunmiPrinter.setFontWeight(true);
-      SunmiPrinter.printerText(`DELIVERY ADDRESS:\n`);
-      SunmiPrinter.printerText(`  ${deliveryAddress}\n`);
+      sunmi.setFontSize(22);
+      sunmi.setFontWeight(true);
+      sunmi.printerText(`DELIVERY ADDRESS:\n`);
+      sunmi.printerText(`  ${deliveryAddress}\n`);
       if (deliveryPostcode && !deliveryAddress.includes(deliveryPostcode)) {
-        SunmiPrinter.printerText(`  POSTCODE: ${deliveryPostcode}\n`);
+        sunmi.printerText(`  POSTCODE: ${deliveryPostcode}\n`);
       }
-      SunmiPrinter.setFontWeight(false);
-      SunmiPrinter.setFontSize(20);
+      sunmi.setFontWeight(false);
+      sunmi.setFontSize(20);
     }
 
     if (order.deliveryInstructions || order.notes) {
       const note = order.deliveryInstructions || order.notes;
-      SunmiPrinter.setFontWeight(true);
-      SunmiPrinter.printerText(`SPECIAL NOTE: ${note}\n`);
-      SunmiPrinter.setFontWeight(false);
+      sunmi.setFontWeight(true);
+      sunmi.printerText(`SPECIAL NOTE: ${note}\n`);
+      sunmi.setFontWeight(false);
     }
 
-    SunmiPrinter.printerText('================================================\n');
+    sunmi.printerText('================================================\n');
 
     // ==========================================
     // 3. ORDER ITEMS TABLE (80mm Width)
     // ==========================================
-    SunmiPrinter.setFontSize(22);
-    SunmiPrinter.setFontWeight(true);
+    sunmi.setFontSize(22);
+    sunmi.setFontWeight(true);
     // Table Header: QTY (6), ITEM (32), PRICE (10)
-    SunmiPrinter.printColumnsString(['QTY', 'ITEM', 'PRICE'], [6, 32, 10], [AlignValue.LEFT, AlignValue.LEFT, AlignValue.RIGHT]);
-    SunmiPrinter.setFontWeight(false);
-    SunmiPrinter.setFontSize(20);
-    SunmiPrinter.printerText('------------------------------------------------\n');
+    sunmi.printColumnsString(['QTY', 'ITEM', 'PRICE'], [6, 32, 10], [AlignValue.LEFT, AlignValue.LEFT, AlignValue.RIGHT]);
+    sunmi.setFontWeight(false);
+    sunmi.setFontSize(20);
+    sunmi.printerText('------------------------------------------------\n');
 
     const itemsList =
       (Array.isArray(order.orderedItems) && order.orderedItems.length > 0)
@@ -274,10 +305,10 @@ export async function printSunmiOrderReceipt(order: Partial<Order> & any): Promi
       }
       const priceStr = formatMoney(itemPrice);
 
-      SunmiPrinter.setFontSize(22);
-      SunmiPrinter.setFontWeight(true);
-      SunmiPrinter.printColumnsString([qtyStr, name, priceStr], [6, 32, 10], [AlignValue.LEFT, AlignValue.LEFT, AlignValue.RIGHT]);
-      SunmiPrinter.setFontWeight(false);
+      sunmi.setFontSize(22);
+      sunmi.setFontWeight(true);
+      sunmi.printColumnsString([qtyStr, name, priceStr], [6, 32, 10], [AlignValue.LEFT, AlignValue.LEFT, AlignValue.RIGHT]);
+      sunmi.setFontWeight(false);
 
       // Collect all variants, add-ons, customizations
       const optionsList: string[] = [];
@@ -336,81 +367,81 @@ export async function printSunmiOrderReceipt(order: Partial<Order> & any): Promi
       }
 
       if (optionsList.length > 0) {
-        SunmiPrinter.setFontSize(18);
+        sunmi.setFontSize(18);
         optionsList.forEach((optStr) => {
-          SunmiPrinter.printerText(`    + ${optStr}\n`);
+          sunmi.printerText(`    + ${optStr}\n`);
         });
       }
 
       // Item instructions / special notes
       const itemNote = item.instructions || item.specialInstructions || item.note || '';
       if (itemNote) {
-        SunmiPrinter.setFontSize(18);
-        SunmiPrinter.printerText(`    * Note: ${itemNote}\n`);
+        sunmi.setFontSize(18);
+        sunmi.printerText(`    * Note: ${itemNote}\n`);
       }
     });
 
-    SunmiPrinter.setFontSize(20);
-    SunmiPrinter.printerText('================================================\n');
+    sunmi.setFontSize(20);
+    sunmi.printerText('================================================\n');
 
     // ==========================================
     // 4. TOTALS & BREAKDOWN
     // ==========================================
     const subtotal = order.pricing?.subtotal !== undefined ? order.pricing.subtotal : (order.subtotal !== undefined ? order.subtotal : (order.totalAmount || 0));
-    SunmiPrinter.printColumnsString(['Subtotal:', formatMoney(subtotal)], [32, 16], [AlignValue.LEFT, AlignValue.RIGHT]);
+    sunmi.printColumnsString(['Subtotal:', formatMoney(subtotal)], [32, 16], [AlignValue.LEFT, AlignValue.RIGHT]);
 
     const deliveryFee = order.pricing?.deliveryFee !== undefined ? order.pricing.deliveryFee : order.deliveryFee;
     if (deliveryFee !== undefined && deliveryFee > 0) {
-      SunmiPrinter.printColumnsString(['Delivery Fee:', formatMoney(deliveryFee)], [32, 16], [AlignValue.LEFT, AlignValue.RIGHT]);
+      sunmi.printColumnsString(['Delivery Fee:', formatMoney(deliveryFee)], [32, 16], [AlignValue.LEFT, AlignValue.RIGHT]);
     }
 
     const serviceFee = order.pricing?.serviceFee !== undefined ? order.pricing.serviceFee : (order.pricing?.handlingCharge !== undefined ? order.pricing.handlingCharge : order.serviceFee);
     if (serviceFee !== undefined && serviceFee > 0) {
-      SunmiPrinter.printColumnsString(['Service Fee:', formatMoney(serviceFee)], [32, 16], [AlignValue.LEFT, AlignValue.RIGHT]);
+      sunmi.printColumnsString(['Service Fee:', formatMoney(serviceFee)], [32, 16], [AlignValue.LEFT, AlignValue.RIGHT]);
     }
 
     const discount = order.pricing?.discount !== undefined ? order.pricing.discount : order.discount;
     if (discount !== undefined && discount > 0) {
-      SunmiPrinter.printColumnsString(['Discount:', `-${formatMoney(discount)}`], [32, 16], [AlignValue.LEFT, AlignValue.RIGHT]);
+      sunmi.printColumnsString(['Discount:', `-${formatMoney(discount)}`], [32, 16], [AlignValue.LEFT, AlignValue.RIGHT]);
     }
 
     const tip = order.pricing?.tip !== undefined ? order.pricing.tip : order.tip;
     if (tip !== undefined && tip > 0) {
-      SunmiPrinter.printColumnsString(['Driver Tip:', formatMoney(tip)], [32, 16], [AlignValue.LEFT, AlignValue.RIGHT]);
+      sunmi.printColumnsString(['Driver Tip:', formatMoney(tip)], [32, 16], [AlignValue.LEFT, AlignValue.RIGHT]);
     }
 
-    SunmiPrinter.printerText('------------------------------------------------\n');
+    sunmi.printerText('------------------------------------------------\n');
 
     // TOTAL AMOUNT (Double Size)
     const grandTotal = order.pricing?.total !== undefined ? order.pricing.total : (order.totalAmount || order.total || subtotal);
-    SunmiPrinter.setFontSize(28);
-    SunmiPrinter.setFontWeight(true);
-    SunmiPrinter.printColumnsString(['TOTAL:', formatMoney(grandTotal)], [24, 24], [AlignValue.LEFT, AlignValue.RIGHT]);
-    SunmiPrinter.setFontWeight(false);
+    sunmi.setFontSize(28);
+    sunmi.setFontWeight(true);
+    sunmi.printColumnsString(['TOTAL:', formatMoney(grandTotal)], [24, 24], [AlignValue.LEFT, AlignValue.RIGHT]);
+    sunmi.setFontWeight(false);
 
-    SunmiPrinter.setFontSize(20);
-    SunmiPrinter.printerText('------------------------------------------------\n');
+    sunmi.setFontSize(20);
+    sunmi.printerText('------------------------------------------------\n');
 
     // Payment Info
     const paymentMethod = (order.paymentType || order.paymentMethod || 'Online / Card').toUpperCase();
     const paymentStatus = (order.paymentStatus || 'PAID').toUpperCase();
-    SunmiPrinter.setAlignment(AlignValue.LEFT);
-    SunmiPrinter.printerText(`Payment: ${paymentMethod} (${paymentStatus})\n`);
+    sunmi.setAlignment(AlignValue.LEFT);
+    sunmi.printerText(`Payment: ${paymentMethod} (${paymentStatus})\n`);
 
     // ==========================================
     // 5. FOOTER & CUT PAPER
     // ==========================================
-    SunmiPrinter.setAlignment(AlignValue.CENTER);
-    SunmiPrinter.setFontSize(20);
-    SunmiPrinter.printerText('\nThank you for ordering with Krifoo!\n');
-    SunmiPrinter.printerText('www.krifoo.co.uk\n');
+    sunmi.setAlignment(AlignValue.CENTER);
+    sunmi.setFontSize(20);
+    sunmi.printerText('\nThank you for ordering with Krifoo!\n');
+    sunmi.printerText('www.krifoo.co.uk\n');
 
     // Feed paper lines so the print clears the cutter blade
-    SunmiPrinter.lineWrap(4);
+    sunmi.lineWrap(4);
 
     // Trigger Sunmi hardware automatic paper cutter
     try {
-      SunmiPrinter.cutPaper();
+      sunmi.cutPaper();
     } catch (cutErr) {
       console.warn('[Sunmi] Cut paper command failed (device might not have auto-cutter):', cutErr);
     }

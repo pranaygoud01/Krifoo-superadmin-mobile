@@ -1,10 +1,10 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Text, StyleSheet } from 'react-native';
+import { View } from 'react-native';
 
 const FONT_SCALE_STORAGE_KEY = '@krifoo_font_scale_preference';
 
-export const FONT_SCALE_LEVELS = [0.88, 1.0, 1.15, 1.3] as const;
+export const FONT_SCALE_LEVELS = [0.85, 1.0, 1.2, 1.4] as const;
 
 interface FontSizeContextType {
   fontScale: number;
@@ -90,8 +90,10 @@ export const FontSizeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         setFontScaleIndex: updateScale,
       }}
     >
-      {/* Keying children by scaleIndex ensures all rendered text nodes immediately recalculate styles */}
-      <React.Fragment key={`font_scale_${scaleIndex}`}>{children}</React.Fragment>
+      {/* Keying the root View by scaleIndex forces React to unmount & re-render all screen routes with new font styles */}
+      <View key={`app_root_scale_${scaleIndex}`} style={{ flex: 1 }}>
+        {children}
+      </View>
     </FontSizeContext.Provider>
   );
 };

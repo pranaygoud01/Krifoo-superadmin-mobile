@@ -24,7 +24,7 @@ import { initAppOrientation } from '../services/orientation.service';
 initAppOrientation().catch(() => {});
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
-// Global override to apply Inter-Tight font and automatically map weight styles
+// Global font family mapper
 const getFontFamily = (style: any) => {
   if (!style) return 'InterTight_400Regular';
   const flattened = StyleSheet.flatten(style);
@@ -36,6 +36,7 @@ const getFontFamily = (style: any) => {
   return 'InterTight_400Regular';
 };
 
+// Global override on React Native's Text.render to apply Inter-Tight font and dynamic font scaling
 const oldRender = (Text as any).render;
 (Text as any).render = function (...args: any[]) {
   const origin = oldRender.call(this, ...args);
@@ -45,11 +46,11 @@ const oldRender = (Text as any).render;
 
     const extraStyle: any = { fontFamily };
 
-    if (globalFontScale !== 1.0) {
-      if (flattened.fontSize !== undefined) {
+    if (globalFontScale !== 1.0 && origin.props.allowFontScaling !== false) {
+      if (flattened.fontSize !== undefined && typeof flattened.fontSize === 'number') {
         extraStyle.fontSize = Math.round(flattened.fontSize * globalFontScale);
       }
-      if (flattened.lineHeight !== undefined) {
+      if (flattened.lineHeight !== undefined && typeof flattened.lineHeight === 'number') {
         extraStyle.lineHeight = Math.round(flattened.lineHeight * globalFontScale);
       }
     }

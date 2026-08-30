@@ -158,11 +158,11 @@ export const Header: React.FC<HeaderProps> = ({
               activeOpacity={0.7}
               hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
             >
-              <Text style={[styles.fontBtnText, scaleIndex === 0 && styles.fontBtnTextDisabled]}>A-</Text>
+              <Text allowFontScaling={false} style={[styles.fontBtnText, scaleIndex === 0 && styles.fontBtnTextDisabled]}>A-</Text>
             </TouchableOpacity>
 
             <View style={styles.fontScaleBadge}>
-              <Text style={styles.fontScaleBadgeText}>{scaleLabel}</Text>
+              <Text allowFontScaling={false} style={styles.fontScaleBadgeText}>{scaleLabel}</Text>
             </View>
 
             <TouchableOpacity
@@ -172,7 +172,7 @@ export const Header: React.FC<HeaderProps> = ({
               activeOpacity={0.7}
               hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
             >
-              <Text style={[styles.fontBtnText, scaleIndex === 3 && styles.fontBtnTextDisabled]}>A+</Text>
+              <Text allowFontScaling={false} style={[styles.fontBtnText, scaleIndex === 3 && styles.fontBtnTextDisabled]}>A+</Text>
             </TouchableOpacity>
           </View>
 
