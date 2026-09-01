@@ -27,16 +27,20 @@ import {
   Check,
   Navigation,
   Printer,
+  Phone,
+  Banknote,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react-native';
 import { printThermalReceipt, isAutoPrintEnabled } from '../services/thermal-print.service';
 
-const STATUS_OPTIONS = [
-  { label: 'Placed', value: 'placed' },
-  { label: 'Preparing', value: 'preparing' },
-  { label: 'Ready for Pickup', value: 'ready_for_pickup' },
-  { label: 'Out for Delivery', value: 'out_for_delivery' },
-  { label: 'Delivered', value: 'delivered' },
-  { label: 'Cancelled', value: 'cancelled' },
+const STATUS_DROPDOWN_OPTIONS = [
+  { label: 'Placed', sub: 'New Order Received', value: 'placed', icon: '📦' },
+  { label: 'Preparing', sub: 'In Kitchen Cooking', value: 'preparing', icon: '🍳' },
+  { label: 'Ready for Pickup', sub: 'Self Pickup Collection', value: 'ready_for_pickup', icon: '🛍️' },
+  { label: 'Out for Delivery', sub: 'Rider Out on Road', value: 'out_for_delivery', icon: '🛵' },
+  { label: 'Delivered', sub: 'Order Completed & Delivered', value: 'delivered', icon: '✅' },
+  { label: 'Cancelled', sub: 'Order Cancelled', value: 'cancelled', icon: '❌' },
 ];
 
 export default function OrderDetailsScreen() {
@@ -215,6 +219,9 @@ export default function OrderDetailsScreen() {
       ? order.customerId?.phoneNumber || order.customerDetails?.phoneNumber
       : order.customerDetails?.phoneNumber;
 
+  const orderTypeRaw = String(order.orderType || (order as any).fulfillmentType || '').toLowerCase();
+  const isDeliveryOrder = orderTypeRaw === 'delivery' || (!orderTypeRaw && !!order.deliveryAddress && typeof order.deliveryAddress === 'object');
+
   const deliveryPartner =
     typeof order.assignedDeliveryPartnerId === 'object'
       ? order.assignedDeliveryPartnerId
@@ -246,7 +253,7 @@ export default function OrderDetailsScreen() {
       />
 
       <ScrollView style={styles.scrollBody} showsVerticalScrollIndicator={false}>
-        {/* Current Status Box */}
+        {/* Dropdown Status Selector Card */}
         {order.status === 'placed' ? (
           <View style={styles.acceptActionsRow}>
             <TouchableOpacity
@@ -269,76 +276,86 @@ export default function OrderDetailsScreen() {
             </TouchableOpacity>
           </View>
         ) : (
-          <View style={styles.statusBox}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.statusBoxLabel}>Current Order Status</Text>
-              <Text style={styles.statusBoxDate}>
-                {order.createdAt ? new Date(order.createdAt).toLocaleString() : ''}
-              </Text>
-            </View>
-            <View style={{ alignItems: 'flex-end', gap: 6 }}>
-              <StatusBadge status={order.status} type="order" />
-              <TouchableOpacity
-                style={styles.editStatusBtn}
-                onPress={() => setEditingStatus(!editingStatus)}
-              >
-                <Edit2 size={12} color={Colors.primary} />
-                <Text style={styles.editStatusBtnText}>
-                  {editingStatus ? 'Cancel' : 'Edit Status'}
+          <View style={{ marginBottom: 14 }}>
+            <TouchableOpacity
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                backgroundColor: Colors.card,
+                borderRadius: 12,
+                borderWidth: 1.2,
+                borderColor: Colors.cardBorder,
+                paddingHorizontal: 14,
+                paddingVertical: 10,
+              }}
+              onPress={() => setEditingStatus(!editingStatus)}
+              activeOpacity={0.8}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                <Text style={{ color: Colors.textMuted, fontSize: 12, fontWeight: '700' }}>Status:</Text>
+                <StatusBadge status={order.status} type="order" />
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: Colors.primaryLight, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 }}>
+                <Text style={{ color: Colors.primary, fontSize: 11, fontWeight: '700' }}>
+                  {editingStatus ? 'Close' : 'Change Status'}
                 </Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
+                {editingStatus ? <ChevronUp size={15} color={Colors.primary} /> : <ChevronDown size={15} color={Colors.primary} />}
+              </View>
+            </TouchableOpacity>
 
-        {/* Thermal Print Action Card */}
-        <TouchableOpacity
-          style={styles.printCardBtn}
-          onPress={handlePrintReceipt}
-          disabled={printing}
-          activeOpacity={0.8}
-        >
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <Printer size={18} color="#FFFFFF" />
-            <Text style={styles.printCardBtnText}>
-              {printing ? 'Printing Receipt...' : 'Print Receipt'}
-            </Text>
-          </View>
-          <View style={styles.thermalBadge}>
-            <Text style={styles.thermalBadgeText}> POS</Text>
-          </View>
-        </TouchableOpacity>
-
-        {/* Editing Status Selector */}
-        {editingStatus && (
-          <View style={styles.statusPickerCard}>
-            <Text style={styles.statusPickerTitle}>Select New Status:</Text>
-            <View style={styles.statusGrid}>
-              {STATUS_OPTIONS.map((opt) => {
-                const isSelected = order.status === opt.value;
-                return (
-                  <TouchableOpacity
-                    key={opt.value}
-                    disabled={updatingStatus}
-                    style={[
-                      styles.statusChip,
-                      isSelected && styles.statusChipSelected,
-                    ]}
-                    onPress={() => handleUpdateStatus(opt.value)}
-                  >
-                    {isSelected && <Check size={12} color="#FFFFFF" style={{ marginRight: 4 }} />}
-                    <Text
+            {editingStatus && (
+              <View
+                style={{
+                  backgroundColor: Colors.card,
+                  borderRadius: 12,
+                  borderWidth: 1.2,
+                  borderColor: Colors.primary,
+                  marginTop: 6,
+                  padding: 6,
+                  elevation: 4,
+                }}
+              >
+                {STATUS_DROPDOWN_OPTIONS.map((opt) => {
+                  const isSelected = order.status === opt.value;
+                  return (
+                    <TouchableOpacity
+                      key={opt.value}
+                      disabled={updatingStatus}
                       style={[
-                        styles.statusChipText,
-                        isSelected && styles.statusChipTextSelected,
+                        {
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          paddingHorizontal: 12,
+                          paddingVertical: 10,
+                          borderRadius: 8,
+                          marginVertical: 1,
+                        },
+                        isSelected && { backgroundColor: '#F3F4F6' },
                       ]}
+                      onPress={() => handleUpdateStatus(opt.value)}
+                      activeOpacity={0.7}
                     >
-                      {opt.label}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
+                      <Text style={{ fontSize: 16, marginRight: 10 }}>{opt.icon}</Text>
+                      <View style={{ flex: 1 }}>
+                        <Text
+                          style={[
+                            { color: Colors.text, fontSize: 13, fontWeight: '700' },
+                            isSelected && { color: Colors.primary },
+                          ]}
+                        >
+                          {opt.label}
+                        </Text>
+                        <Text style={{ color: Colors.textMuted, fontSize: 11, marginTop: 1 }}>
+                          {opt.sub}
+                        </Text>
+                      </View>
+                      {isSelected && <Check size={16} color="#10B981" style={{ marginLeft: 8 }} />}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            )}
           </View>
         )}
 
@@ -357,8 +374,21 @@ export default function OrderDetailsScreen() {
             <User size={16} color={Colors.info} />
             <Text style={styles.cardTitle}>Customer Information</Text>
           </View>
-          <Text style={styles.infoName}>{customerName}</Text>
-          {customerPhone ? <Text style={styles.infoText}>Phone: {customerPhone}</Text> : null}
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.infoName}>{customerName}</Text>
+              {customerPhone ? <Text style={styles.infoText}>Phone: {customerPhone}</Text> : null}
+            </View>
+            {customerPhone ? (
+              <TouchableOpacity
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#2563EB', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 16 }}
+                onPress={() => Linking.openURL(`tel:${customerPhone}`)}
+              >
+                <Phone size={12} color="#FFFFFF" />
+                <Text style={{ color: '#FFFFFF', fontSize: 11, fontWeight: '700' }}>Call Customer</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
 
           <View style={styles.divider} />
 
@@ -410,7 +440,7 @@ export default function OrderDetailsScreen() {
                     </Text>
                   ) : null}
                 </View>
-                <Text style={styles.itemPrice}>€{itemTotal.toFixed(2)}</Text>
+                <Text style={styles.itemPrice}>£{itemTotal.toFixed(2)}</Text>
               </View>
             );
           })}
@@ -421,14 +451,14 @@ export default function OrderDetailsScreen() {
           <View style={styles.priceRow}>
             <Text style={styles.priceLabel}>Subtotal:</Text>
             <Text style={styles.priceVal}>
-              €{(order.pricing?.subtotal || 0).toFixed(2)}
+              £{(order.pricing?.subtotal || 0).toFixed(2)}
             </Text>
           </View>
 
           <View style={styles.priceRow}>
             <Text style={styles.priceLabel}>Delivery Fee:</Text>
             <Text style={styles.priceVal}>
-              €{(order.pricing?.deliveryFee || order.deliveryFee || 0).toFixed(2)}
+              {(order.pricing?.deliveryFee || order.deliveryFee || 0) === 0 ? 'FREE' : `£${(order.pricing?.deliveryFee || order.deliveryFee || 0).toFixed(2)}`}
             </Text>
           </View>
 
@@ -436,7 +466,7 @@ export default function OrderDetailsScreen() {
             <View style={styles.priceRow}>
               <Text style={styles.priceLabel}>Tax & Charges:</Text>
               <Text style={styles.priceVal}>
-                €{(order.pricing?.tax || order.taxAmount || 0).toFixed(2)}
+                £{(order.pricing?.tax || order.taxAmount || 0).toFixed(2)}
               </Text>
             </View>
           ) : null}
@@ -445,51 +475,102 @@ export default function OrderDetailsScreen() {
             <View style={styles.priceRow}>
               <Text style={styles.priceLabel}>Discount:</Text>
               <Text style={[styles.priceVal, { color: Colors.success }]}>
-                -€{(order.pricing?.discount || order.pricing?.discountAmount || 0).toFixed(2)}
+                -£{(order.pricing?.discount || order.pricing?.discountAmount || 0).toFixed(2)}
               </Text>
             </View>
           ) : null}
 
           <View style={[styles.priceRow, styles.totalPriceRow]}>
             <Text style={styles.totalLabel}>Total Payable:</Text>
-            <Text style={styles.totalVal}>€{totalAmt.toFixed(2)}</Text>
+            <Text style={styles.totalVal}>£{totalAmt.toFixed(2)}</Text>
           </View>
         </View>
 
-        {/* Payment & Driver Details Card */}
+        {/* Payment Method Card */}
         <View style={styles.card}>
           <View style={styles.cardHeader}>
-            <CreditCard size={16} color={Colors.warning} />
+            <CreditCard size={16} color={Colors.primary} />
             <Text style={styles.cardTitle}>Payment Method</Text>
           </View>
-          <Text style={styles.infoName}>
-            {(order.paymentType || 'Cash').toUpperCase()} ({order.paymentStatus || 'pending'})
-          </Text>
-
-          <View style={styles.divider} />
-
-          <View style={styles.cardHeader}>
-            <Bike size={16} color={Colors.primary} />
-            <Text style={styles.cardTitle}>Assigned Delivery Partner</Text>
-          </View>
-
-          {deliveryPartner ? (
-            <View style={styles.driverInfoBox}>
-              <Text style={styles.infoName}>{deliveryPartner.fullName}</Text>
-              {deliveryPartner.phoneNumber ? (
-                <Text style={styles.infoText}>Phone: {deliveryPartner.phoneNumber}</Text>
-              ) : null}
-              {deliveryPartner.vehicleNumber ? (
-                <Text style={styles.infoText}>Vehicle: {deliveryPartner.vehicleNumber}</Text>
-              ) : null}
+          
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+              <View style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: '#F3F4F6', alignItems: 'center', justifyContent: 'center' }}>
+                {(order.paymentType || 'cash').toLowerCase() === 'cash' ? (
+                  <Banknote size={18} color="#16A34A" />
+                ) : (
+                  <CreditCard size={18} color="#2563EB" />
+                )}
+              </View>
+              <View>
+                <Text style={{ color: Colors.text, fontSize: 14, fontWeight: '800' }}>
+                  {(order.paymentType || 'Cash').toUpperCase()}
+                </Text>
+                <Text style={{ color: Colors.textMuted, fontSize: 11, marginTop: 1 }}>
+                  {(order.paymentType || 'cash').toLowerCase() === 'cash'
+                    ? 'Pay on fulfillment / COD'
+                    : 'Processed via Stripe'}
+                </Text>
+              </View>
             </View>
-          ) : (
-            <Text style={styles.unassignedText}>No delivery partner assigned yet.</Text>
-          )}
+
+            <View
+              style={[
+                { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 14, borderWidth: 1 },
+                order.paymentStatus === 'paid' || order.status === 'delivered'
+                  ? { backgroundColor: '#DCFCE7', borderColor: '#86EFAC' }
+                  : { backgroundColor: '#FEF3C7', borderColor: '#FDE68A' },
+              ]}
+            >
+              <Text
+                style={[
+                  { fontSize: 11, fontWeight: '800', letterSpacing: 0.5 },
+                  order.paymentStatus === 'paid' || order.status === 'delivered'
+                    ? { color: '#15803D' }
+                    : { color: '#B45309' },
+                ]}
+              >
+                {order.paymentStatus === 'paid' || order.status === 'delivered' ? 'PAID' : (order.paymentStatus || 'PENDING').toUpperCase()}
+              </Text>
+            </View>
+          </View>
         </View>
 
-        {/* Assign / Reassign Driver Button */}
-        {order.status !== 'delivered' && order.status !== 'cancelled' && (
+        {/* Driver Details Card (Only for Delivery Orders) */}
+        {isDeliveryOrder && (
+          <View style={styles.card}>
+            <View style={styles.cardHeader}>
+              <Bike size={16} color={Colors.primary} />
+              <Text style={styles.cardTitle}>Assigned Delivery Partner</Text>
+            </View>
+
+            {deliveryPartner ? (
+              <View style={styles.driverInfoBox}>
+                <Text style={styles.infoName}>{deliveryPartner.fullName}</Text>
+                {deliveryPartner.phoneNumber ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 3 }}>
+                    <Text style={styles.infoText}>Phone: {deliveryPartner.phoneNumber}</Text>
+                    <TouchableOpacity
+                      style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#2563EB', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 12 }}
+                      onPress={() => Linking.openURL(`tel:${deliveryPartner.phoneNumber}`)}
+                    >
+                      <Phone size={11} color="#FFFFFF" />
+                      <Text style={{ color: '#FFFFFF', fontSize: 10.5, fontWeight: '800' }}>Call Rider</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : null}
+                {deliveryPartner.vehicleNumber ? (
+                  <Text style={styles.infoText}>Vehicle: {deliveryPartner.vehicleNumber}</Text>
+                ) : null}
+              </View>
+            ) : (
+              <Text style={styles.unassignedText}>No delivery partner assigned yet.</Text>
+            )}
+          </View>
+        )}
+
+        {/* Assign / Reassign Driver Button (Only for Delivery Orders) */}
+        {isDeliveryOrder && order.status !== 'delivered' && order.status !== 'cancelled' && (
           <TouchableOpacity
             style={styles.assignDriverBtn}
             onPress={() => setAssignModalVisible(true)}
@@ -500,6 +581,8 @@ export default function OrderDetailsScreen() {
             </Text>
           </TouchableOpacity>
         )}
+        {/* Bottom Spacer */}
+        <View style={{ height: 40 }} />
       </ScrollView>
 
       {/* Assign Delivery Partner Modal */}

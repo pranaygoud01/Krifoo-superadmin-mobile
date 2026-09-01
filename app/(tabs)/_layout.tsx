@@ -1,7 +1,7 @@
 import React from 'react';
 import { Tabs } from 'expo-router';
 import { Colors } from '../../constants/colors';
-import { Home, Store, Receipt, Users, Menu as MenuIcon } from 'lucide-react-native';
+import { Home, Store, Receipt, Users, Menu as MenuIcon, Settings } from 'lucide-react-native';
 import { StatusBar } from 'expo-status-bar';
 import { TouchableOpacity, StyleSheet, View, Text, Platform, LayoutAnimation, UIManager, Animated } from 'react-native';
 import * as Haptics from 'expo-haptics';
@@ -130,6 +130,8 @@ function AdminTabBar({ state, descriptors, navigation }: any) {
               return <Users size={size} color={color} strokeWidth={isFocused ? 2.2 : 1.8} />;
             case 'menu':
               return <MenuIcon size={size} color={color} strokeWidth={isFocused ? 2.2 : 1.8} />;
+            case 'settings':
+              return <Settings size={size} color={color} strokeWidth={isFocused ? 2.2 : 1.8} />;
             default:
               return null;
           }
@@ -169,7 +171,7 @@ export default function TabLayout() {
         <Tabs.Screen
           name="restaurants"
           options={{
-            title: 'Restaurants',
+            title: 'Stores',
           }}
         />
         <Tabs.Screen
@@ -188,6 +190,12 @@ export default function TabLayout() {
           name="menu"
           options={{
             title: 'Menu',
+          }}
+        />
+        <Tabs.Screen
+          name="settings"
+          options={{
+            title: 'Settings',
           }}
         />
       </Tabs>

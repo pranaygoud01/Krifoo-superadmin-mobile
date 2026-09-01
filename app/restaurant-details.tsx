@@ -29,16 +29,7 @@ import {
   Phone,
   User,
   Info,
-  Printer,
-  Wifi,
 } from 'lucide-react-native';
-import {
-  getPosPrinterConfig,
-  getBrandName,
-  PosPrinterConfig,
-  DEFAULT_POS_CONFIG,
-} from '../services/pos-config.service';
-import { printSampleThermalReceipt } from '../services/thermal-print.service';
 
 export default function RestaurantDetailsScreen() {
   const router = useRouter();
@@ -51,8 +42,6 @@ export default function RestaurantDetailsScreen() {
   const [remarks, setRemarks] = useState('');
   const [updating, setUpdating] = useState(false);
   const [deactivateModalVisible, setDeactivateModalVisible] = useState(false);
-  const [posConfig, setPosConfig] = useState<PosPrinterConfig>(DEFAULT_POS_CONFIG);
-  const [isTestingPrint, setIsTestingPrint] = useState(false);
 
   const fetchRestaurantDetail = async () => {
     if (!restaurantId) return;
@@ -75,27 +64,7 @@ export default function RestaurantDetailsScreen() {
 
   useEffect(() => {
     fetchRestaurantDetail();
-    if (restaurantId) {
-      getPosPrinterConfig(restaurantId).then(setPosConfig);
-    }
   }, [restaurantId]);
-
-  const handleTestPrint = async () => {
-    setIsTestingPrint(true);
-    try {
-      showToast({ title: 'Testing Printer', message: `Sending sample receipt to ${getBrandName(posConfig.brand)}...`, type: 'info' });
-      const success = await printSampleThermalReceipt();
-      if (success) {
-        showToast({ title: 'Print Success', message: 'Sample receipt sent to printer.', type: 'success' });
-      } else {
-        showToast({ title: 'Print Status', message: 'Could not connect to printer.', type: 'warning' });
-      }
-    } catch (e) {
-      showToast({ title: 'Print Error', message: 'Failed to test print.', type: 'error' });
-    } finally {
-      setIsTestingPrint(false);
-    }
-  };
 
   const handleUpdateVerification = async (newStatus: VerificationStatus) => {
     if (!restaurant) return;
@@ -302,52 +271,6 @@ export default function RestaurantDetailsScreen() {
               </View>
             </View>
           )}
-        </View>
-
-        {/* Configured POS Thermal Printer Card */}
-        <View style={styles.sectionCard}>
-          <View style={styles.titleRow}>
-            <Printer size={18} color={Colors.primary} />
-            <Text style={styles.sectionTitle}>Configured POS Thermal Printer</Text>
-          </View>
-          <View style={styles.detailRow}>
-            <Text style={styles.locationLabel}>Hardware Brand:</Text>
-            <Text style={[styles.detailVal, { color: Colors.primary, fontWeight: '700' }]}>
-              {getBrandName(posConfig.brand)}
-            </Text>
-          </View>
-          <View style={styles.detailRow}>
-            <Text style={styles.locationLabel}>Connection:</Text>
-            <Text style={styles.detailVal}>
-              {posConfig.connectionType === 'builtin'
-                ? 'Built-in Hardware SDK'
-                : `Network IP (${posConfig.ipAddress}:${posConfig.port})`}
-            </Text>
-          </View>
-          <View style={styles.detailRow}>
-            <Text style={styles.locationLabel}>Paper Roll:</Text>
-            <Text style={styles.detailVal}>{posConfig.paperWidth} | {posConfig.copies} {posConfig.copies === 1 ? 'Copy' : 'Copies'}</Text>
-          </View>
-          <View style={styles.detailRow}>
-            <Text style={styles.locationLabel}>Auto-Print:</Text>
-            <Text style={[styles.detailVal, { color: posConfig.autoPrint ? Colors.success : Colors.danger, fontWeight: '700' }]}>
-              {posConfig.autoPrint ? 'ENABLED' : 'DISABLED'}
-            </Text>
-          </View>
-          <TouchableOpacity
-            style={[styles.testPrintBtn, { marginTop: 10 }]}
-            onPress={handleTestPrint}
-            disabled={isTestingPrint}
-          >
-            {isTestingPrint ? (
-              <ActivityIndicator size="small" color="#FFFFFF" />
-            ) : (
-              <>
-                <Printer size={14} color="#FFFFFF" />
-                <Text style={styles.testPrintBtnText}>Test Print Receipt</Text>
-              </>
-            )}
-          </TouchableOpacity>
         </View>
 
         {/* Submitted Documents Card */}
@@ -750,19 +673,5 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '700',
     fontSize: 13,
-  },
-  testPrintBtn: {
-    backgroundColor: Colors.primary,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 10,
-    borderRadius: 8,
-  },
-  testPrintBtnText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-    fontSize: 12,
   },
 });

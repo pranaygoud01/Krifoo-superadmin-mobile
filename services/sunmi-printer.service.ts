@@ -1,4 +1,5 @@
 import { Platform } from 'react-native';
+import * as RN from 'react-native';
 import { Order } from '../types';
 
 export enum AlignValue {
@@ -14,7 +15,18 @@ function getSunmiModule(): any {
   if (_cachedSunmiModule) return _cachedSunmiModule;
   if (Platform.OS !== 'android') return null;
 
+  // Check if native SunmiPrinter module exists in current binary before invoking library
   try {
+    const nativeMods = (RN as any)?.NativeModules;
+    const turboReg = (RN as any)?.TurboModuleRegistry;
+    const hasNativeModule =
+      nativeMods?.SunmiPrinter ||
+      (turboReg && typeof turboReg.get === 'function' && turboReg.get('SunmiPrinter'));
+
+    if (!hasNativeModule) {
+      return null;
+    }
+
     const mod = require('@un1v3r/react-native-sunmi-printer');
     _cachedSunmiModule = mod?.default || mod;
     return _cachedSunmiModule;

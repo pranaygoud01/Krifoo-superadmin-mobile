@@ -13,13 +13,15 @@ export type PosBrand =
   | 'generic_network'
   | 'system';
 
-export type PosConnectionType = 'builtin' | 'network' | 'system';
+export type PosConnectionType = 'builtin' | 'network' | 'bluetooth' | 'system';
 
 export interface PosPrinterConfig {
   brand: PosBrand;
   connectionType: PosConnectionType;
   ipAddress: string;
   port: number;
+  macAddress?: string;
+  target?: string;
   paperWidth: '80mm' | '58mm';
   autoPrint: boolean;
   copies: number;
@@ -34,69 +36,77 @@ export interface BrandOption {
   subtitle: string;
   defaultConnection: PosConnectionType;
   isBuiltIn?: boolean;
+  badge?: string;
+  supportsBluetooth?: boolean;
 }
 
 export const POS_BRANDS: BrandOption[] = [
   {
     id: 'epson',
-    name: 'Epson ePOS (TM-m30 / TM-T88)',
-    subtitle: 'TM-m30, TM-m30II, TM-T88, TM-T20 (ePOS SDK & WiFi/LAN)',
-    defaultConnection: 'network',
+    name: 'Epson ePOS (TM-m30III / TM-T88)',
+    subtitle: 'Bluetooth (MFi/SPP) & WiFi/LAN (TM-m30, TM-m30II, TM-m30III, TM-T88)',
+    defaultConnection: 'bluetooth',
+    badge: 'RECOMMENDED',
+    supportsBluetooth: true,
   },
   {
     id: 'sunmi',
-    name: 'SUNMI Terminal',
-    subtitle: 'V3 MIX, V2s, T2, D2 (Built-in AIDL)',
+    name: 'SUNMI POS Terminal',
+    subtitle: 'V3 MIX, V2s, T2, D2 (Built-in Thermal Printer)',
     defaultConnection: 'builtin',
     isBuiltIn: true,
+    badge: 'BUILT-IN',
   },
   {
     id: 'star',
     name: 'Star Micronics (UK)',
-    subtitle: 'TSP100, TSP143III, TSP650, mPOP (StarPRNT)',
+    subtitle: 'TSP100, TSP143III, TSP650, mPOP (Bluetooth / LAN)',
     defaultConnection: 'network',
-  },
-  {
-    id: 'retailz',
-    name: 'RetailZ / Retailz EPOS',
-    subtitle: 'UK Retail & Takeaway Thermal POS',
-    defaultConnection: 'network',
-  },
-  {
-    id: 'flipdish',
-    name: 'Flipdish POS',
-    subtitle: 'Flipdish Terminal / Kitchen Printer',
-    defaultConnection: 'builtin',
-    isBuiltIn: true,
-  },
-  {
-    id: 'citizen',
-    name: 'Citizen Systems (UK)',
-    subtitle: 'CT-E351, CT-S310II, CT-S651',
-    defaultConnection: 'network',
-  },
-  {
-    id: 'bixolon',
-    name: 'Bixolon / Aures / Sam4s (UK)',
-    subtitle: 'SRP-350, ODP333, Giant-100',
-    defaultConnection: 'network',
+    supportsBluetooth: true,
   },
   {
     id: 'munbyn_xprinter',
     name: 'Munbyn / Xprinter / Rongta',
-    subtitle: 'Amazon UK Popular 80mm/58mm Printers',
+    subtitle: 'Popular Amazon UK 80mm & 58mm Thermal Printers',
+    defaultConnection: 'bluetooth',
+    supportsBluetooth: true,
+  },
+  {
+    id: 'retailz',
+    name: 'RetailZ / Retailz EPOS',
+    subtitle: 'UK Takeaway & Fast Food Thermal POS',
+    defaultConnection: 'network',
+  },
+  {
+    id: 'flipdish',
+    name: 'Flipdish Terminal',
+    subtitle: 'Flipdish Kitchen & Counter Terminal',
+    defaultConnection: 'builtin',
+    isBuiltIn: true,
+    badge: 'BUILT-IN',
+  },
+  {
+    id: 'citizen',
+    name: 'Citizen Systems (UK)',
+    subtitle: 'CT-E351, CT-S310II, CT-S651 (LAN / USB)',
+    defaultConnection: 'network',
+  },
+  {
+    id: 'bixolon',
+    name: 'Bixolon / Aures / Sam4s',
+    subtitle: 'SRP-350, ODP333, Giant-100 (LAN / Serial)',
     defaultConnection: 'network',
   },
   {
     id: 'generic_network',
-    name: 'Generic ESC/POS Printer',
-    subtitle: 'WiFi / LAN IP (Port 9100)',
+    name: 'Generic ESC/POS Thermal Printer',
+    subtitle: 'WiFi / LAN IP (Port 9100 / 8008)',
     defaultConnection: 'network',
   },
   {
     id: 'system',
-    name: 'Standard System Print',
-    subtitle: 'Android / iOS Print Dialog & AirPrint',
+    name: 'Standard System Print / AirPrint',
+    subtitle: 'iOS AirPrint & Android System Print Spooler',
     defaultConnection: 'system',
   },
 ];
@@ -105,14 +115,16 @@ const POS_CONFIG_KEY = '@krifoo_pos_printer_config';
 
 export const DEFAULT_POS_CONFIG: PosPrinterConfig = {
   brand: 'epson',
-  connectionType: 'network',
-  ipAddress: '192.168.1.100',
+  connectionType: 'bluetooth',
+  ipAddress: '',
   port: 9100,
+  macAddress: '',
+  target: '',
   paperWidth: '80mm',
   autoPrint: true,
   copies: 1,
   autoCut: true,
-  openCashDrawer: false,
+  openCashDrawer: true,
 };
 
 /**

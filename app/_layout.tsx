@@ -110,6 +110,13 @@ export default function RootLayout() {
               <Stack.Screen name="marketing" options={{ animation: 'slide_from_right' }} />
               <Stack.Screen name="fleet" options={{ animation: 'slide_from_right' }} />
               <Stack.Screen name="restaurant-settings" options={{ animation: 'slide_from_right' }} />
+              <Stack.Screen name="store-profile" options={{ animation: 'slide_from_right' }} />
+              <Stack.Screen name="operation-settings" options={{ animation: 'slide_from_right' }} />
+              <Stack.Screen name="delivery-settings" options={{ animation: 'slide_from_right' }} />
+              <Stack.Screen name="operational-timings" options={{ animation: 'slide_from_right' }} />
+              <Stack.Screen name="sound-settings" options={{ animation: 'slide_from_right' }} />
+              <Stack.Screen name="payout-settings" options={{ animation: 'slide_from_right' }} />
+              <Stack.Screen name="printer-settings" options={{ animation: 'slide_from_right' }} />
               <Stack.Screen name="add-edit-menu" options={{ animation: 'slide_from_right' }} />
             </Stack>
           </SocketProvider>

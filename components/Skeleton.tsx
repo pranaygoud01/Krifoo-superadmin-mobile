@@ -144,6 +144,60 @@ export const UserListSkeleton = () => (
   </View>
 );
 
+export const RestaurantSettingsSkeleton = () => (
+  <View style={{ padding: 16 }}>
+    {/* Store Banner Card Skeleton */}
+    <View
+      style={{
+        backgroundColor: Colors.cardSurface,
+        borderRadius: 16,
+        padding: 16,
+        marginBottom: 20,
+        borderWidth: 1,
+        borderColor: Colors.cardBorder,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+      }}
+    >
+      <Skeleton width={44} height={44} borderRadius={12} />
+      <View style={{ flex: 1 }}>
+        <Skeleton width="55%" height={16} style={{ marginBottom: 6 }} />
+        <Skeleton width="35%" height={12} />
+      </View>
+      <Skeleton width={52} height={24} borderRadius={12} />
+    </View>
+
+    {/* Section Title */}
+    <Skeleton width={150} height={11} style={{ marginBottom: 12, marginLeft: 4 }} />
+
+    {/* Setting Items */}
+    {[1, 2, 3, 4, 5, 6, 7].map((item) => (
+      <View
+        key={item}
+        style={{
+          backgroundColor: Colors.cardSurface,
+          borderRadius: 14,
+          padding: 14,
+          marginBottom: 10,
+          borderWidth: 1,
+          borderColor: Colors.cardBorder,
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 12,
+        }}
+      >
+        <Skeleton width={40} height={40} borderRadius={10} />
+        <View style={{ flex: 1 }}>
+          <Skeleton width="50%" height={14} style={{ marginBottom: 6 }} />
+          <Skeleton width="80%" height={10} />
+        </View>
+        <Skeleton width={16} height={16} borderRadius={8} />
+      </View>
+    ))}
+  </View>
+);
+
 const styles = StyleSheet.create({
   skeleton: {
     backgroundColor: '#E2E8F0',

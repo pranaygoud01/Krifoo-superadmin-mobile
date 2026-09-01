@@ -14,9 +14,9 @@ export async function getSavedOrientation(): Promise<AppOrientation> {
     if (saved === 'landscape' || saved === 'portrait' || saved === 'auto') {
       return saved;
     }
-    return 'portrait';
+    return 'auto';
   } catch {
-    return 'portrait';
+    return 'auto';
   }
 }
 

@@ -3,8 +3,10 @@ import { Modal, View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIn
 import { Order } from '../types';
 import { Colors } from '../constants/colors';
 import { StatusBadge } from './StatusBadge';
-import { X, Store, User, MapPin, Bike, CreditCard } from 'lucide-react-native';
+import { X, Store, User, MapPin, Bike, CreditCard, Phone, ShoppingBag, UtensilsCrossed, Tag, Receipt, CheckCircle2, Printer, Banknote, ChevronDown, ChevronUp, Check } from 'lucide-react-native';
+import { Linking } from 'react-native';
 import { orderService } from '../services/order.service';
+import { printThermalReceipt } from '../services/thermal-print.service';
 
 interface OrderDetailModalProps {
   visible: boolean;
@@ -25,6 +27,19 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
   const [loadingStatus, setLoadingStatus] = React.useState(false);
   const [fetchedOrder, setFetchedOrder] = React.useState<Order | null>(null);
   const [loading, setLoading] = React.useState(false);
+  const [printing, setPrinting] = React.useState(false);
+
+  const handlePrint = async () => {
+    if (!order) return;
+    setPrinting(true);
+    try {
+      await printThermalReceipt(order, true);
+    } catch (e) {
+      console.error('[OrderDetailModal] Print failed:', e);
+    } finally {
+      setPrinting(false);
+    }
+  };
 
   React.useEffect(() => {
     if (visible && propOrder?._id) {
@@ -55,13 +70,13 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
 
   if (!order) return null;
 
-  const STATUS_OPTIONS = [
-    { label: 'Placed', value: 'placed' },
-    { label: 'Preparing', value: 'preparing' },
-    { label: 'Ready for Pickup', value: 'ready_for_pickup' },
-    { label: 'Out for Delivery', value: 'out_for_delivery' },
-    { label: 'Delivered', value: 'delivered' },
-    { label: 'Cancelled', value: 'cancelled' },
+  const STATUS_DROPDOWN_OPTIONS = [
+    { label: 'Placed', sub: 'New Order Received', value: 'placed', icon: '📦', color: '#3B82F6' },
+    { label: 'Preparing', sub: 'In Kitchen Cooking', value: 'preparing', icon: '🍳', color: '#F59E0B' },
+    { label: 'Ready for Pickup', sub: 'Self Pickup Collection', value: 'ready_for_pickup', icon: '🛍️', color: '#EA580C' },
+    { label: 'Out for Delivery', sub: 'Rider Out on Road', value: 'out_for_delivery', icon: '🛵', color: '#8B5CF6' },
+    { label: 'Delivered', sub: 'Order Completed & Delivered', value: 'delivered', icon: '✅', color: '#10B981' },
+    { label: 'Cancelled', sub: 'Order Cancelled', value: 'cancelled', icon: '❌', color: '#EF4444' },
   ];
 
   const handleStatusSelect = async (newStatus: string) => {
@@ -91,13 +106,39 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
     ? order.customerId?.phoneNumber || order.customerDetails?.phoneNumber
     : order.customerDetails?.phoneNumber;
 
+  const orderTypeRaw = String(order.orderType || (order as any).fulfillmentType || '').toLowerCase();
+  const isDeliveryOrder = orderTypeRaw === 'delivery' || (!orderTypeRaw && !!order.deliveryAddress && typeof order.deliveryAddress === 'object');
+
   const deliveryPartner = typeof order.assignedDeliveryPartnerId === 'object'
     ? order.assignedDeliveryPartnerId
     : undefined;
 
-  const addressText = typeof order.deliveryAddress === 'object'
-    ? order.deliveryAddress?.addressLine1 || order.deliveryAddress?.formattedAddress || 'Self Pickup'
-    : order.deliveryAddress || 'Self Pickup';
+  const formatAddress = () => {
+    const addr = order.deliveryAddress;
+    if (!addr) {
+      if (typeof order.customerDetails?.address === 'string' && order.customerDetails.address.trim()) {
+        return order.customerDetails.address.trim();
+      }
+      return 'Self Pickup';
+    }
+    if (typeof addr === 'string') return addr.trim() || 'Self Pickup';
+    if (addr.formattedAddress && addr.formattedAddress.trim()) return addr.formattedAddress.trim();
+
+    const parts = [
+      (addr as any).houseNumber || (addr as any).flatNumber || (addr as any).doorNo,
+      addr.addressLine1,
+      addr.addressLine2,
+      addr.street,
+      (addr as any).landmark,
+      addr.area,
+      addr.city,
+      addr.postalCode || addr.postcode || (addr as any).zipCode,
+    ].filter(Boolean);
+
+    return parts.length > 0 ? parts.join(', ') : ((addr as any).fullAddress || (addr as any).address || 'Self Pickup');
+  };
+
+  const addressText = formatAddress();
 
   const orderedItemsList = order.orderedItems || [];
 
@@ -107,8 +148,12 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
         <View style={styles.modalContent}>
           <View style={styles.header}>
             <View>
-              <Text style={styles.headerTitle}>Order Details</Text>
-              {/* <Text style={styles.headerSub}>ID: #{order._id}</Text> */}
+              <Text style={styles.headerTitle}>
+                Order #{order.orderNumber || order._id?.substring(0, 8)}
+              </Text>
+              <Text style={styles.headerSub}>
+                {order.createdAt ? new Date(order.createdAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : ''}
+              </Text>
             </View>
             <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
               <X size={20} color={Colors.textMuted} />
@@ -124,7 +169,7 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
             </View>
           ) : (
             <ScrollView style={styles.scrollBody} showsVerticalScrollIndicator={false}>
-            {/* Status Header */}
+            {/* Dropdown Status Selector */}
             {order.status === 'placed' ? (
               <View style={styles.acceptActionsRow}>
                 <TouchableOpacity
@@ -147,56 +192,52 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
                 </TouchableOpacity>
               </View>
             ) : (
-              <View style={styles.statusBox}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.statusBoxLabel}>Current Order Status</Text>
-                  <Text style={styles.statusBoxDate}>
-                    {order.createdAt ? new Date(order.createdAt).toLocaleString() : ''}
-                  </Text>
-                </View>
-                <View style={{ alignItems: 'flex-end', gap: 6 }}>
-                  <StatusBadge status={order.status} type="order" />
-                  <TouchableOpacity
-                    style={styles.editStatusBtn}
-                    onPress={() => setEditingStatus(!editingStatus)}
-                  >
+              <View style={styles.dropdownContainer}>
+                <TouchableOpacity
+                  style={styles.dropdownTrigger}
+                  onPress={() => setEditingStatus(!editingStatus)}
+                  activeOpacity={0.8}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                    <Text style={styles.dropdownTriggerLabel}>Status:</Text>
+                    <StatusBadge status={order.status} type="order" />
+                  </View>
+                  <View style={styles.dropdownChevronBox}>
                     <Text style={styles.editStatusBtnText}>
-                      {editingStatus ? 'Cancel' : 'Edit Status'}
+                      {editingStatus ? 'Close' : 'Change Status'}
                     </Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            )}
+                    {editingStatus ? <ChevronUp size={15} color={Colors.primary} /> : <ChevronDown size={15} color={Colors.primary} />}
+                  </View>
+                </TouchableOpacity>
 
-            {/* Editing Status Picker */}
-            {editingStatus && (
-              <View style={styles.statusPickerCard}>
-                <Text style={styles.statusPickerTitle}>Select New Status:</Text>
-                <View style={styles.statusGrid}>
-                  {STATUS_OPTIONS.map((opt) => {
-                    const isSelected = order.status === opt.value;
-                    return (
-                      <TouchableOpacity
-                        key={opt.value}
-                        disabled={loadingStatus}
-                        style={[
-                          styles.statusChip,
-                          isSelected && styles.statusChipSelected,
-                        ]}
-                        onPress={() => handleStatusSelect(opt.value)}
-                      >
-                        <Text
+                {editingStatus && (
+                  <View style={styles.dropdownMenu}>
+                    {STATUS_DROPDOWN_OPTIONS.map((opt) => {
+                      const isSelected = order.status === opt.value;
+                      return (
+                        <TouchableOpacity
+                          key={opt.value}
+                          disabled={loadingStatus}
                           style={[
-                            styles.statusChipText,
-                            isSelected && styles.statusChipTextSelected,
+                            styles.dropdownItem,
+                            isSelected && styles.dropdownItemSelected,
                           ]}
+                          onPress={() => handleStatusSelect(opt.value)}
+                          activeOpacity={0.7}
                         >
-                          {opt.label}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
+                          <Text style={{ fontSize: 16, marginRight: 10 }}>{opt.icon}</Text>
+                          <View style={{ flex: 1 }}>
+                            <Text style={[styles.dropdownItemText, isSelected && styles.dropdownItemTextSelected]}>
+                              {opt.label}
+                            </Text>
+                            <Text style={styles.dropdownItemSubText}>{opt.sub}</Text>
+                          </View>
+                          {isSelected && <Check size={16} color="#10B981" style={{ marginLeft: 8 }} />}
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                )}
               </View>
             )}
 
@@ -209,14 +250,30 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
               <Text style={styles.infoName}>{restaurantName}</Text>
             </View>
 
-            {/* Customer & Address */}
+            {/* Customer & Location */}
             <View style={styles.card}>
               <View style={styles.cardHeader}>
                 <User size={16} color={Colors.info} />
-                <Text style={styles.cardTitle}>Customer Information</Text>
+                <Text style={styles.cardTitle}>Customer & Location</Text>
               </View>
-              <Text style={styles.infoName}>{customerName}</Text>
-              {customerPhone ? <Text style={styles.infoText}>Phone: {customerPhone}</Text> : null}
+              
+              <View style={styles.customerRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.infoName}>{customerName}</Text>
+                  {customerPhone ? (
+                    <View style={styles.phoneWithCallRow}>
+                      <Text style={styles.infoText}>Phone: {customerPhone}</Text>
+                      <TouchableOpacity
+                        style={styles.callRiderInlineBtn}
+                        onPress={() => Linking.openURL(`tel:${customerPhone}`)}
+                      >
+                        <Phone size={11} color="#FFFFFF" />
+                        <Text style={styles.callRiderInlineBtnText}>Call Customer</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : null}
+                </View>
+              </View>
 
               <View style={styles.divider} />
 
@@ -235,6 +292,10 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
 
             {/* Items List */}
             <View style={styles.card}>
+              <View style={styles.cardHeader}>
+                <Receipt size={16} color={Colors.primary} />
+                <Text style={styles.cardTitle}>Ordered Items</Text>
+              </View>
               {orderedItemsList.map((item, idx) => {
                 const itemName = item.name || (item as any).itemName || 'Item';
                 const itemPrice = item.price || (item as any).basePrice || 0;
@@ -256,8 +317,8 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
                           Add-ons: {item.customization.addOns.join(', ')}
                         </Text>
                       ) : null}
-                     </View>
-                    <Text style={styles.itemPrice}>€{itemTotal.toFixed(2)}</Text>
+                    </View>
+                    <Text style={styles.itemPrice}>£{itemTotal.toFixed(2)}</Text>
                   </View>
                 );
               })}
@@ -268,22 +329,31 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
               <View style={styles.priceRow}>
                 <Text style={styles.priceLabel}>Subtotal:</Text>
                 <Text style={styles.priceVal}>
-                  €{(order.pricing?.subtotal || 0).toFixed(2)}
+                  £{(order.pricing?.subtotal || 0).toFixed(2)}
                 </Text>
               </View>
 
               <View style={styles.priceRow}>
                 <Text style={styles.priceLabel}>Delivery Fee:</Text>
                 <Text style={styles.priceVal}>
-                  €{(order.pricing?.deliveryFee || order.deliveryFee || 0).toFixed(2)}
+                  {(order.pricing?.deliveryFee || order.deliveryFee || 0) === 0 ? 'FREE' : `£${(order.pricing?.deliveryFee || order.deliveryFee || 0).toFixed(2)}`}
                 </Text>
               </View>
 
-              {(order.pricing?.tax || order.taxAmount) ? (
+              {(order.pricing?.handlingCharge || order.pricing?.tax || order.taxAmount) ? (
                 <View style={styles.priceRow}>
-                  <Text style={styles.priceLabel}>Tax & Charges:</Text>
+                  <Text style={styles.priceLabel}>Handling & Tax:</Text>
                   <Text style={styles.priceVal}>
-                    €{(order.pricing?.tax || order.taxAmount || 0).toFixed(2)}
+                    £{(order.pricing?.handlingCharge || order.pricing?.tax || order.taxAmount || 0).toFixed(2)}
+                  </Text>
+                </View>
+              ) : null}
+
+              {(order.pricing?.platformFee) ? (
+                <View style={styles.priceRow}>
+                  <Text style={styles.priceLabel}>Platform Fee:</Text>
+                  <Text style={styles.priceVal}>
+                    £{(order.pricing?.platformFee || 0).toFixed(2)}
                   </Text>
                 </View>
               ) : null}
@@ -292,15 +362,15 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
                 <View style={styles.priceRow}>
                   <Text style={styles.priceLabel}>Discount:</Text>
                   <Text style={[styles.priceVal, { color: Colors.success }]}>
-                    -€{(order.pricing?.discount || order.pricing?.discountAmount || 0).toFixed(2)}
+                    -£{(order.pricing?.discount || order.pricing?.discountAmount || 0).toFixed(2)}
                   </Text>
                 </View>
               ) : null}
 
               <View style={[styles.priceRow, styles.totalPriceRow]}>
-                <Text style={styles.totalLabel}>Total Payable:</Text>
+                <Text style={styles.totalLabel}>Total Paid:</Text>
                 <Text style={styles.totalVal}>
-                  €{(
+                  £{(
                     order.pricing?.totalAmount ??
                     order.pricing?.total ??
                     order.totalAmount ??
@@ -311,42 +381,116 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
               </View>
             </View>
 
-            {/* Payment & Delivery Partner */}
-            <View style={styles.card}>
+            {/* Payment Method Card */}
+            <View style={styles.paymentCard}>
               <View style={styles.cardHeader}>
-                <CreditCard size={16} color={Colors.warning} />
+                <CreditCard size={16} color={Colors.primary} />
                 <Text style={styles.cardTitle}>Payment Method</Text>
               </View>
-              <Text style={styles.infoName}>
-                {(order.paymentType || 'Cash').toUpperCase()} ({order.paymentStatus || 'pending'})
-              </Text>
-
-              <View style={styles.divider} />
-
-              <View style={styles.cardHeader}>
-                <Bike size={16} color={Colors.primary} />
-                <Text style={styles.cardTitle}>Assigned Delivery Partner</Text>
-              </View>
-
-              {deliveryPartner ? (
-                <View style={styles.driverInfoBox}>
-                  <Text style={styles.infoName}>{deliveryPartner.fullName}</Text>
-                  {deliveryPartner.phoneNumber ? (
-                    <Text style={styles.infoText}>Phone: {deliveryPartner.phoneNumber}</Text>
-                  ) : null}
-                  {deliveryPartner.vehicleNumber ? (
-                    <Text style={styles.infoText}>Vehicle: {deliveryPartner.vehicleNumber}</Text>
-                  ) : null}
+              <View style={styles.paymentDetailRow}>
+                <View style={styles.paymentMethodInfo}>
+                  <View style={styles.paymentIconBadge}>
+                    {(order.paymentType || 'cash').toLowerCase() === 'cash' ? (
+                      <Banknote size={18} color="#16A34A" />
+                    ) : (
+                      <CreditCard size={18} color="#2563EB" />
+                    )}
+                  </View>
+                  <View>
+                    <Text style={styles.paymentMethodTitle}>
+                      {(order.paymentType || 'Cash').toUpperCase()}
+                    </Text>
+                    <Text style={styles.paymentMethodSub}>
+                      {(order.paymentType || 'cash').toLowerCase() === 'cash'
+                        ? 'Pay on fulfillment / COD'
+                        : 'Processed via Stripe'}
+                    </Text>
+                  </View>
                 </View>
-              ) : (
-                <Text style={styles.unassignedText}>No delivery partner assigned yet.</Text>
-              )}
+
+                <View
+                  style={[
+                    styles.paymentStatusBadge,
+                    order.paymentStatus === 'paid' || order.status === 'delivered'
+                      ? { backgroundColor: '#DCFCE7', borderColor: '#86EFAC' }
+                      : { backgroundColor: '#FEF3C7', borderColor: '#FDE68A' },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.paymentStatusBadgeText,
+                      order.paymentStatus === 'paid' || order.status === 'delivered'
+                        ? { color: '#15803D' }
+                        : { color: '#B45309' },
+                    ]}
+                  >
+                    {order.paymentStatus === 'paid' || order.status === 'delivered' ? 'PAID' : (order.paymentStatus || 'PENDING').toUpperCase()}
+                  </Text>
+                </View>
+              </View>
             </View>
+
+            {/* Assigned Delivery Partner Card (Only for Delivery Orders) */}
+            {isDeliveryOrder && (
+              <View style={styles.card}>
+                <View style={styles.cardHeader}>
+                  <Bike size={16} color={Colors.primary} />
+                  <Text style={styles.cardTitle}>Assigned Delivery Partner</Text>
+                </View>
+
+                {deliveryPartner ? (
+                  <View style={styles.driverInfoBox}>
+                    <Text style={styles.infoName}>{deliveryPartner.fullName}</Text>
+                    {deliveryPartner.phoneNumber ? (
+                      <View style={styles.phoneWithCallRow}>
+                        <Text style={styles.infoText}>Phone: {deliveryPartner.phoneNumber}</Text>
+                        <TouchableOpacity
+                          style={styles.callRiderInlineBtn}
+                          onPress={() => Linking.openURL(`tel:${deliveryPartner.phoneNumber}`)}
+                        >
+                          <Phone size={11} color="#FFFFFF" />
+                          <Text style={styles.callRiderInlineBtnText}>Call Rider</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ) : null}
+                    {deliveryPartner.vehicleNumber ? (
+                      <Text style={styles.infoText}>Vehicle: {deliveryPartner.vehicleNumber}</Text>
+                    ) : null}
+                  </View>
+                ) : (
+                  <Text style={styles.unassignedText}>No delivery partner assigned yet.</Text>
+                )}
+              </View>
+            )}
+
+            {/* Print Receipt Section for Delivered / Completed Orders */}
+            {order.status === 'delivered' && (
+              <View style={styles.printSectionCard}>
+                <TouchableOpacity
+                  style={styles.printReceiptBtn}
+                  onPress={handlePrint}
+                  disabled={printing}
+                  activeOpacity={0.82}
+                >
+                  {printing ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <>
+                      <Printer size={18} color="#FFFFFF" />
+                      <Text style={styles.printReceiptBtnText}>Print Thermal Receipt</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {/* Generous Bottom Spacing Spacer */}
+            <View style={{ height: 40 }} />
           </ScrollView>
           )}
 
-          {/* Footer Action */}
-          {order.status !== 'delivered' && order.status !== 'cancelled' && (
+          {/* Footer Action for Active Delivery Orders */}
+          {isDeliveryOrder && order.status !== 'delivered' && order.status !== 'cancelled' && (
             <View style={styles.footerAction}>
               <TouchableOpacity
                 style={styles.assignDriverBtn}
@@ -660,6 +804,193 @@ const styles = StyleSheet.create({
     color: '#EF4444',
     fontSize: 14,
     fontWeight: '700',
+  },
+  headerSub: {
+    color: Colors.textMuted,
+    fontSize: 11,
+    marginTop: 2,
+  },
+  customerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  callContactBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#2563EB',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 16,
+  },
+  callContactBtnText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+
+  /* Payment Method & Thermal Print Styles */
+  paymentCard: {
+    backgroundColor: Colors.card,
+    borderRadius: 14,
+    borderColor: Colors.cardBorder,
+    borderWidth: 1.2,
+    padding: 14,
+    marginBottom: 14,
+  },
+  paymentDetailRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 10,
+    gap: 12,
+  },
+  paymentMethodInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+  },
+  paymentIconBadge: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: '#F3F4F6',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  paymentMethodTitle: {
+    color: Colors.text,
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  paymentMethodSub: {
+    color: Colors.textMuted,
+    fontSize: 11,
+    marginTop: 1,
+  },
+  paymentStatusBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 14,
+    borderWidth: 1,
+  },
+  paymentStatusBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  printSectionCard: {
+    marginTop: 4,
+    marginBottom: 14,
+  },
+  printReceiptBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#FF5C39',
+    paddingVertical: 14,
+    borderRadius: 12,
+    shadowColor: '#FF5C39',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  printReceiptBtnText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  phoneWithCallRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 3,
+  },
+  callRiderInlineBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#2563EB',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
+  },
+  callRiderInlineBtnText: {
+    color: '#FFFFFF',
+    fontSize: 10.5,
+    fontWeight: '800',
+  },
+
+  /* Status Dropdown Styles */
+  dropdownContainer: {
+    marginBottom: 14,
+  },
+  dropdownTrigger: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: Colors.card,
+    borderRadius: 12,
+    borderWidth: 1.2,
+    borderColor: Colors.cardBorder,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  dropdownTriggerLabel: {
+    color: Colors.textMuted,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  dropdownChevronBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: Colors.primaryLight,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  dropdownMenu: {
+    backgroundColor: Colors.card,
+    borderRadius: 12,
+    borderWidth: 1.2,
+    borderColor: Colors.primary,
+    marginTop: 6,
+    padding: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  dropdownItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 8,
+    marginVertical: 1,
+  },
+  dropdownItemSelected: {
+    backgroundColor: '#F3F4F6',
+  },
+  dropdownItemText: {
+    color: Colors.text,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  dropdownItemTextSelected: {
+    color: Colors.primary,
+  },
+  dropdownItemSubText: {
+    color: Colors.textMuted,
+    fontSize: 11,
+    marginTop: 1,
   },
 });
 

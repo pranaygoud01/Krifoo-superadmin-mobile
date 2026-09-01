@@ -18,7 +18,13 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.krifoo.admin",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSBluetoothAlwaysUsageDescription": "This app requires Bluetooth access to discover and print receipt orders on thermal receipt printers.",
+        "NSBluetoothPeripheralUsageDescription": "This app requires Bluetooth access to connect to thermal receipt printers.",
+        "NSLocalNetworkUsageDescription": "This app requires Local Network access to discover and print receipts on network printers (Epson TM-m30III).",
+        "UISupportedExternalAccessoryProtocols": [
+          "com.epson.epos.print"
+        ]
       }
     },
     "android": {
@@ -32,7 +38,15 @@
       "permissions": [
         "RECEIVE_BOOT_COMPLETED",
         "WAKE_LOCK",
-        "VIBRATE"
+        "VIBRATE",
+        "BLUETOOTH",
+        "BLUETOOTH_ADMIN",
+        "BLUETOOTH_SCAN",
+        "BLUETOOTH_CONNECT",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "CHANGE_WIFI_MULTICAST_STATE",
+        "INTERNET"
       ]
     },
     "web": {
@@ -52,7 +66,20 @@
           ],
           "defaultChannel": "orders"
         }
-      ]
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "minSdkVersion": 24,
+            "usesCleartextTraffic": true
+          },
+          "ios": {
+            "deploymentTarget": "16.4"
+          }
+        }
+      ],
+      "expo-task-manager"
     ],
     "experiments": {
       "typedRoutes": true

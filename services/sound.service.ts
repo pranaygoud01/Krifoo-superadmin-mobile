@@ -1,12 +1,65 @@
 import { Audio } from 'expo-av';
 import { Vibration, Platform, AppState } from 'react-native';
 import * as Haptics from 'expo-haptics';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+export const SOUND_SETTINGS_KEY = '@krifoo_admin_sound_settings';
+
+export interface SoundSettings {
+  enabled: boolean;
+  volume: number; // 0.3, 0.7, 1.0
+  durationSeconds: number; // 3, 5, 10, 15
+  vibrationEnabled: boolean;
+  notifyOrders: boolean;
+  notifyBookings: boolean;
+  notifyCancellations: boolean;
+}
+
+export const DEFAULT_SOUND_SETTINGS: SoundSettings = {
+  enabled: true,
+  volume: 1.0,
+  durationSeconds: 5,
+  vibrationEnabled: true,
+  notifyOrders: true,
+  notifyBookings: true,
+  notifyCancellations: true,
+};
 
 let activeSound: Audio.Sound | null = null;
 let buzzTimeout: any = null;
 let iosHapticInterval: any = null;
 let currentRequestId = 0;
 let lastPlayTimestamp = 0;
+
+/**
+ * Retrieve saved sound settings or fallback to defaults
+ */
+export async function getSoundSettings(): Promise<SoundSettings> {
+  try {
+    const raw = await AsyncStorage.getItem(SOUND_SETTINGS_KEY);
+    if (raw) {
+      return { ...DEFAULT_SOUND_SETTINGS, ...JSON.parse(raw) };
+    }
+  } catch (e) {
+    console.warn('[SoundService] Failed to load sound settings:', e);
+  }
+  return DEFAULT_SOUND_SETTINGS;
+}
+
+/**
+ * Save updated sound settings
+ */
+export async function saveSoundSettings(settings: Partial<SoundSettings>): Promise<SoundSettings> {
+  try {
+    const current = await getSoundSettings();
+    const updated = { ...current, ...settings };
+    await AsyncStorage.setItem(SOUND_SETTINGS_KEY, JSON.stringify(updated));
+    return updated;
+  } catch (e) {
+    console.warn('[SoundService] Failed to save sound settings:', e);
+    return DEFAULT_SOUND_SETTINGS;
+  }
+}
 
 /**
  * Configure audio mode to ensure sound plays loudly even if device is on silent/vibrate
@@ -57,12 +110,31 @@ export async function stopOrderBuzzSound(): Promise<void> {
 }
 
 /**
- * Play a 5-second buzz sound and vibration alert for new orders.
+ * Play an order buzz sound and vibration alert for new orders.
  * Thread-safe with race condition protection & automatic guaranteed termination.
- * @param durationMs Duration in milliseconds (defaults to 5000ms / 5s)
+ * @param overrideDurationMs Optional duration override in milliseconds
+ * @param eventType Optional event filter ('order' | 'booking' | 'cancellation')
  */
-export async function playOrderBuzzSound(durationMs: number = 5000): Promise<void> {
+export async function playOrderBuzzSound(
+  overrideDurationMs?: number,
+  eventType?: 'order' | 'booking' | 'cancellation'
+): Promise<void> {
+  const settings = await getSoundSettings();
+
+  // Check master switch
+  if (!settings.enabled) {
+    console.log('[SoundService] Sound alerts are disabled.');
+    return;
+  }
+
+  // Check event-specific switches
+  if (eventType === 'order' && !settings.notifyOrders) return;
+  if (eventType === 'booking' && !settings.notifyBookings) return;
+  if (eventType === 'cancellation' && !settings.notifyCancellations) return;
+
+  const durationMs = overrideDurationMs || (settings.durationSeconds * 1000);
   const now = Date.now();
+
   // Debounce rapid duplicate calls (within 1.5s) to avoid overlapping audio loops
   if (now - lastPlayTimestamp < 1500 && activeSound) {
     console.log('[SoundService] Buzz alert already playing, skipping duplicate trigger.');
@@ -101,17 +173,19 @@ export async function playOrderBuzzSound(durationMs: number = 5000): Promise<voi
     // If another request started while we were stopping, abort
     if (requestId !== currentRequestId) return;
 
-    console.log(`[SoundService] Triggering ${durationMs}ms order buzz alert...`);
+    console.log(`[SoundService] Triggering ${durationMs}ms order buzz alert (Vol: ${settings.volume})...`);
 
-    // 2. Start vibration pattern
-    if (Platform.OS === 'android') {
-      Vibration.vibrate([0, 600, 150, 600, 150, 600, 150, 600, 150, 600, 150, 600], false);
-    } else {
-      Vibration.vibrate();
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-      iosHapticInterval = setInterval(() => {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {});
-      }, 700);
+    // 2. Start vibration pattern if enabled
+    if (settings.vibrationEnabled) {
+      if (Platform.OS === 'android') {
+        Vibration.vibrate([0, 600, 150, 600, 150, 600, 150, 600, 150, 600, 150, 600], false);
+      } else {
+        Vibration.vibrate();
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+        iosHapticInterval = setInterval(() => {
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {});
+        }, 700);
+      }
     }
 
     // 3. Audio setup & playback
@@ -124,7 +198,7 @@ export async function playOrderBuzzSound(durationMs: number = 5000): Promise<voi
       {
         shouldPlay: false,
         isLooping: true,
-        volume: 1.0,
+        volume: settings.volume,
       }
     );
 
@@ -139,7 +213,7 @@ export async function playOrderBuzzSound(durationMs: number = 5000): Promise<voi
     activeSound = sound;
     await sound.playAsync();
 
-    // 4. Guaranteed auto-stop buzz after specified duration (5 seconds)
+    // 4. Guaranteed auto-stop buzz after specified duration
     buzzTimeout = setTimeout(async () => {
       if (requestId === currentRequestId) {
         console.log('[SoundService] Auto-stopping buzz after duration expired.');
@@ -149,11 +223,13 @@ export async function playOrderBuzzSound(durationMs: number = 5000): Promise<voi
 
   } catch (error) {
     console.error('[SoundService] Error playing order buzz sound:', error);
-    // Fallback vibration
-    if (Platform.OS === 'android') {
-      Vibration.vibrate([0, 600, 150, 600, 150, 600, 150, 600, 150, 600, 150, 600], false);
-    } else {
-      Vibration.vibrate();
+    // Fallback vibration if enabled
+    if (settings.vibrationEnabled) {
+      if (Platform.OS === 'android') {
+        Vibration.vibrate([0, 600, 150, 600, 150, 600, 150, 600, 150, 600, 150, 600], false);
+      } else {
+        Vibration.vibrate();
+      }
     }
     // Ensure timeout cleans up vibration
     buzzTimeout = setTimeout(async () => {

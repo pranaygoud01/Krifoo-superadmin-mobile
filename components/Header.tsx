@@ -97,10 +97,14 @@ export const Header: React.FC<HeaderProps> = ({
   };
 
   const handleSettingsPress = () => {
-    if (isSuperAdmin) {
+    try {
+      if (isSuperAdmin) {
+        router.push('/settings');
+      } else {
+        router.push('/restaurant-settings');
+      }
+    } catch {
       router.push('/settings');
-    } else {
-      router.push('/restaurant-settings');
     }
   };
 

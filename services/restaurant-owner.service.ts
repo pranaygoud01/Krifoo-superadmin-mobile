@@ -5,13 +5,13 @@ export const restaurantOwnerService = {
   async getTables(): Promise<{ success: boolean; data?: any[]; message?: string }> {
     return apiRequest('/api/tables', { method: 'GET' });
   },
-  async addTable(data: { tableNumber: string; capacity: number }): Promise<{ success: boolean; message?: string }> {
+  async addTable(data: any): Promise<{ success: boolean; data?: any; message?: string }> {
     return apiRequest('/api/tables', {
       method: 'POST',
       body: data,
     });
   },
-  async updateTable(tableId: string, data: { tableNumber: string; capacity: number }): Promise<{ success: boolean; message?: string }> {
+  async updateTable(tableId: string, data: any): Promise<{ success: boolean; data?: any; message?: string }> {
     return apiRequest(`/api/tables/${tableId}`, {
       method: 'PUT',
       body: data,
@@ -20,7 +20,7 @@ export const restaurantOwnerService = {
   async deleteTable(tableId: string): Promise<{ success: boolean; message?: string }> {
     return apiRequest(`/api/tables/${tableId}`, { method: 'DELETE' });
   },
-  async toggleTableStatus(tableId: string): Promise<{ success: boolean; message?: string }> {
+  async toggleTableStatus(tableId: string): Promise<{ success: boolean; data?: any; message?: string }> {
     return apiRequest(`/api/tables/${tableId}/toggle-active`, { method: 'PATCH' });
   },
 
@@ -79,6 +79,9 @@ export const restaurantOwnerService = {
   },
 
   // --- Timings & Settings Profile ---
+  async getRestaurantTimings(): Promise<{ success: boolean; data?: any[]; message?: string }> {
+    return apiRequest('/api/restaurants/timings', { method: 'GET' });
+  },
   async getRestaurantProfile(): Promise<{ success: boolean; data?: any; message?: string }> {
     return apiRequest('/api/restaurants/me', { method: 'GET' });
   },

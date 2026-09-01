@@ -4,7 +4,7 @@ import { Order } from '../types';
 import { isSunmiAvailable, printSunmiOrderReceipt } from './sunmi-printer.service';
 import { getPosPrinterConfig, savePosPrinterConfig, PosPrinterConfig, POS_BRANDS, getBrandOption, getBrandName } from './pos-config.service';
 import { printNetworkOrderReceipt, testNetworkPrinter } from './printer/network-printer.service';
-import { printEpsonOrderReceipt, testEpsonPrinter } from './printer/epson-printer.service';
+import { printEpsonOrderReceipt, testEpsonPrinter, discoverEpsonPrinters } from './printer/epson-printer.service';
 
 export {
   isSunmiAvailable,
@@ -17,6 +17,7 @@ export {
   testNetworkPrinter,
   printEpsonOrderReceipt,
   testEpsonPrinter,
+  discoverEpsonPrinters,
 };
 
 const AUTO_PRINT_KEY = '@krifoo_auto_print_thermal';

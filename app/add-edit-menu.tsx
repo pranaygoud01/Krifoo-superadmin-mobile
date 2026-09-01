@@ -29,7 +29,7 @@ export default function AddEditMenuScreen() {
   const { user } = useAuth();
   const restaurantId = (typeof user?.restaurantId === 'object' ? user?.restaurantId?._id : user?.restaurantId) || user?._id || '';
 
-  const [activeTab, setActiveTab] = useState<'basic' | 'pricing' | 'custom'>('basic');
+  const [activeTab, setActiveTab] = useState<'basic' | 'custom'>('basic');
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -378,8 +378,7 @@ export default function AddEditMenuScreen() {
       {/* Tabs */}
       <View style={styles.tabsHeader}>
         {[
-          { id: 'basic', label: 'Basic Info' },
-          { id: 'pricing', label: 'Pricing & Availability' },
+          { id: 'basic', label: 'Basic Info & Pricing' },
           { id: 'custom', label: 'Options & Customizations' },
         ].map((tab) => (
           <TouchableOpacity
@@ -402,7 +401,7 @@ export default function AddEditMenuScreen() {
         </View>
       ) : (
         <ScrollView style={styles.formBody} showsVerticalScrollIndicator={false}>
-          {/* TAB 1: BASIC DETAILS */}
+          {/* TAB 1: BASIC INFO & PRICING */}
           {activeTab === 'basic' && (
             <View style={styles.tabContent}>
               {/* Image Picker Box */}
@@ -444,18 +443,6 @@ export default function AddEditMenuScreen() {
               </View>
 
               <View style={styles.inputGroup}>
-                <Text style={styles.label}>Description</Text>
-                <TextInput
-                  style={[styles.input, styles.textArea]}
-                  placeholder="Describe ingredients, allergen warnings, or size descriptions..."
-                  multiline
-                  numberOfLines={4}
-                  value={formState.description}
-                  onChangeText={(val) => handleChange('description', val)}
-                />
-              </View>
-
-              <View style={styles.inputGroup}>
                 <Text style={styles.label}>Category</Text>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.categoryRow}>
                   {categories.map((cat) => (
@@ -480,61 +467,7 @@ export default function AddEditMenuScreen() {
                 </ScrollView>
               </View>
 
-              <View style={styles.inputGroup}>
-                <Text style={styles.label}>Dietary Type</Text>
-                <View style={styles.radioRow}>
-                  {[
-                    { label: 'Vegetarian', value: 'veg' },
-                    { label: 'Non-Vegetarian', value: 'non-veg' },
-                    { label: 'Contains Egg', value: 'egg' },
-                  ].map((type) => (
-                    <TouchableOpacity
-                      key={type.value}
-                      style={[
-                        styles.radioItem,
-                        formState.itemType === type.value && styles.radioItemActive,
-                      ]}
-                      onPress={() => handleChange('itemType', type.value)}
-                    >
-                      <Text
-                        style={[
-                          styles.radioLabel,
-                          formState.itemType === type.value && styles.radioLabelActive,
-                        ]}
-                      >
-                        {type.label}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
-
-              <View style={styles.rowInputs}>
-                <View style={[styles.inputGroup, { flex: 1, marginRight: 8 }]}>
-                  <Text style={styles.label}>Min Order Qty</Text>
-                  <TextInput
-                    style={styles.input}
-                    keyboardType="numeric"
-                    value={formState.minimumQuantity}
-                    onChangeText={(val) => handleChange('minimumQuantity', val)}
-                  />
-                </View>
-                <View style={[styles.inputGroup, { flex: 1 }]}>
-                  <Text style={styles.label}>Max Order Qty</Text>
-                  <TextInput
-                    style={styles.input}
-                    keyboardType="numeric"
-                    value={formState.maximumQuantity}
-                    onChangeText={(val) => handleChange('maximumQuantity', val)}
-                  />
-                </View>
-              </View>
-            </View>
-          )}
-
-          {/* TAB 2: PRICING & AVAILABILITY */}
-          {activeTab === 'pricing' && (
-            <View style={styles.tabContent}>
+              {/* Pricing Scheme */}
               <View style={styles.inputGroup}>
                 <Text style={styles.label}>Pricing Scheme</Text>
                 <View style={styles.radioRow}>
@@ -683,8 +616,70 @@ export default function AddEditMenuScreen() {
                 </View>
               )}
 
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Description</Text>
+                <TextInput
+                  style={[styles.input, styles.textArea]}
+                  placeholder="Describe ingredients, allergen warnings, or size descriptions..."
+                  multiline
+                  numberOfLines={4}
+                  value={formState.description}
+                  onChangeText={(val) => handleChange('description', val)}
+                />
+              </View>
+
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Dietary Type</Text>
+                <View style={styles.radioRow}>
+                  {[
+                    { label: 'Vegetarian', value: 'veg' },
+                    { label: 'Non-Vegetarian', value: 'non-veg' },
+                    { label: 'Contains Egg', value: 'egg' },
+                  ].map((type) => (
+                    <TouchableOpacity
+                      key={type.value}
+                      style={[
+                        styles.radioItem,
+                        formState.itemType === type.value && styles.radioItemActive,
+                      ]}
+                      onPress={() => handleChange('itemType', type.value)}
+                    >
+                      <Text
+                        style={[
+                          styles.radioLabel,
+                          formState.itemType === type.value && styles.radioLabelActive,
+                        ]}
+                      >
+                        {type.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+
+              <View style={styles.rowInputs}>
+                <View style={[styles.inputGroup, { flex: 1, marginRight: 8 }]}>
+                  <Text style={styles.label}>Min Order Qty</Text>
+                  <TextInput
+                    style={styles.input}
+                    keyboardType="numeric"
+                    value={formState.minimumQuantity}
+                    onChangeText={(val) => handleChange('minimumQuantity', val)}
+                  />
+                </View>
+                <View style={[styles.inputGroup, { flex: 1 }]}>
+                  <Text style={styles.label}>Max Order Qty</Text>
+                  <TextInput
+                    style={styles.input}
+                    keyboardType="numeric"
+                    value={formState.maximumQuantity}
+                    onChangeText={(val) => handleChange('maximumQuantity', val)}
+                  />
+                </View>
+              </View>
+
               {/* Fulfilment Availabilities */}
-              <View style={[styles.inputGroup, { marginTop: 16 }]}>
+              <View style={[styles.inputGroup, { marginTop: 12 }]}>
                 <Text style={styles.label}>Availability Methods</Text>
                 <View style={styles.toggleItem}>
                   <Text style={styles.toggleTitle}>Available for Delivery</Text>

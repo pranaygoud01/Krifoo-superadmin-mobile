@@ -1,5 +1,7 @@
 import { Order } from '../../types';
 import { PosPrinterConfig } from '../pos-config.service';
+import { EpsonEposModule } from '../../src/modules/epson-epos';
+import { buildOrderEscPosBytes } from '../../src/services/printer/EscPosBuilder';
 
 /**
  * Format currency (£ for UK)
@@ -344,16 +346,51 @@ export function buildEpsonEposXml(order: Partial<Order> & any, config: PosPrinte
 }
 
 /**
- * Send print request to Epson TM-m30 / TM-series printer via Epson ePOS XML SDK endpoints
+ * Discover available Epson printers across Bluetooth (iOS MFi / Android SPP) & Local Network
+ */
+export async function discoverEpsonPrinters(): Promise<Array<{ id: string; name: string; connectionType: 'bluetooth' | 'network'; target?: string; ipAddress?: string }>> {
+  const discovered: Array<any> = [];
+  try {
+    const btDevices = await EpsonEposModule.discoverBluetoothPrinters();
+    discovered.push(...btDevices);
+  } catch (e) {
+    console.warn('[Epson SDK] Bluetooth scan error:', e);
+  }
+  try {
+    const lanDevices = await EpsonEposModule.discoverNetworkPrinters();
+    discovered.push(...lanDevices);
+  } catch (e) {
+    console.warn('[Epson SDK] Network scan error:', e);
+  }
+  return discovered;
+}
+
+/**
+ * Send print request to Epson TM-m30III printer via Bluetooth (MFi/SPP) or Epson ePOS XML SDK endpoints
  */
 export async function printEpsonOrderReceipt(
   order: Partial<Order> & any,
   config: PosPrinterConfig
 ): Promise<boolean> {
+  // 1. Bluetooth Connection Path (iOS MFi protocol com.epson.epos.print / Android SPP - No Wi-Fi required)
+  if (config.connectionType === 'bluetooth' || config.target?.startsWith('BT:')) {
+    try {
+      const target = config.target || config.macAddress || 'BT:EP-TM-M30III';
+      console.log(`[Epson Bluetooth] Sending print job to Bluetooth printer target: ${target}...`);
+      const escPosBytes = buildOrderEscPosBytes(order, config);
+      const success = await EpsonEposModule.printRawEscPos(target, escPosBytes);
+      if (success) {
+        return true;
+      }
+    } catch (btErr: any) {
+      console.warn(`[Epson Bluetooth] Bluetooth print error: ${btErr.message}`);
+    }
+  }
+
+  // 2. Local Network Path (Epson TM-m30 ePOS XML HTTP / SOAP API)
   const ip = config.ipAddress || '192.168.1.100';
   const xmlPayload = buildEpsonEposXml(order, config);
 
-  // Epson TM-m30 standard ePOS endpoints
   const endpoints = [
     `http://${ip}/cgi-bin/epos/service.cgi?devid=local_printer&timeout=10000`,
     `http://${ip}:8008/cgi-bin/epos/service.cgi?devid=local_printer&timeout=10000`,
@@ -370,7 +407,7 @@ export async function printEpsonOrderReceipt(
         method: 'POST',
         headers: {
           'Content-Type': 'text/xml; charset=utf-8',
-          'SOAPAction': '""',
+          SOAPAction: '""',
           'If-Modified-Since': 'Thu, 01 Jan 1970 00:00:00 GMT',
         },
         body: xmlPayload,
@@ -382,7 +419,6 @@ export async function printEpsonOrderReceipt(
       if (response.ok || response.status === 200) {
         const text = await response.text();
         console.log(`[Epson SDK] Response received from ${endpoint}:`, text.substring(0, 150));
-        // Check if response contains success attribute
         if (text.includes('success="true"') || text.includes('epos-print') || response.status === 200) {
           return true;
         }
@@ -396,23 +432,55 @@ export async function printEpsonOrderReceipt(
 }
 
 /**
- * Test Epson printer connection & status
+ * Test Epson printer connection & status (Supports both Bluetooth & Network)
  */
 export async function testEpsonPrinter(
   config: PosPrinterConfig
 ): Promise<{ success: boolean; message: string }> {
+  // Test Bluetooth target if connectionType is bluetooth
+  if (config.connectionType === 'bluetooth' || config.target?.startsWith('BT:')) {
+    try {
+      const target = config.target || config.macAddress || 'BT:EP-TM-M30III';
+      const sampleOrder: any = {
+        _id: 'TEST_BT',
+        orderNumber: 'TEST-BT',
+        orderType: 'DINE_IN',
+        createdAt: new Date().toISOString(),
+        customerDetails: { name: 'Bluetooth Test Print' },
+        orderedItems: [{ itemName: 'Epson TM-m30III Bluetooth Test', quantity: 1, basePrice: 0.0, itemTotal: 0.0 }],
+        pricing: { total: 0.0 },
+        paymentType: 'CASH',
+        paymentStatus: 'PAID',
+      };
+      const bytes = buildOrderEscPosBytes(sampleOrder, config);
+      const success = await EpsonEposModule.printRawEscPos(target, bytes);
+      if (success) {
+        return {
+          success: true,
+          message: `Successfully connected & printed test page to Epson TM-m30III via Bluetooth (${target}).`,
+        };
+      }
+    } catch (e: any) {
+      return {
+        success: false,
+        message: `Bluetooth connection failed: ${e?.message || 'Printer not in range or un-paired'}.`,
+      };
+    }
+  }
+
+  // Network test
   const ip = config.ipAddress || '192.168.1.100';
 
   const testXml = `<?xml version="1.0" encoding="utf-8"?>
 <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
   <s:Body>
     <epos-print xmlns="http://www.epson-pos.com/schemas/2011/03/epos-print">
-      <text align="center" width="2" height="2" em="true">EPSON TM-m30 TEST&#10;</text>
+      <text align="center" width="2" height="2" em="true">EPSON TM-m30III TEST&#10;</text>
       <text align="center" width="1" height="1" em="false">Krifoo POS System&#10;</text>
       <text align="center">================================&#10;</text>
-      <text align="left">Model: EPSON TM-m30&#10;</text>
+      <text align="left">Model: EPSON TM-m30III&#10;</text>
       <text align="left">IP: ${ip}&#10;</text>
-      <text align="left">SDK: Epson ePOS-Print XML&#10;</text>
+      <text align="left">Connection: ${config.connectionType.toUpperCase()}&#10;</text>
       <text align="left">Status: Connected &amp; Ready&#10;</text>
       <text align="center">================================&#10;</text>
       <feed line="3"/>
@@ -435,7 +503,7 @@ export async function testEpsonPrinter(
         method: 'POST',
         headers: {
           'Content-Type': 'text/xml; charset=utf-8',
-          'SOAPAction': '""',
+          SOAPAction: '""',
         },
         body: testXml,
         signal: controller.signal,
@@ -446,7 +514,7 @@ export async function testEpsonPrinter(
       if (response.ok || response.status === 200) {
         return {
           success: true,
-          message: `Successfully connected to Epson TM-m30 at ${ip}`,
+          message: `Successfully connected to Epson TM-m30III at ${ip}`,
         };
       }
     } catch (e) {
@@ -456,6 +524,6 @@ export async function testEpsonPrinter(
 
   return {
     success: false,
-    message: `Could not reach Epson TM-m30 at ${ip}. Ensure printer is on the same WiFi/Network.`,
+    message: `Could not reach Epson TM-m30III at ${ip}. Ensure printer is on the same WiFi/Network or switch to Bluetooth.`,
   };
 }

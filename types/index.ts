@@ -192,6 +192,50 @@ export interface MenuItem {
   displayImage?: string;
   displayImageUrl?: string;
   tags?: string[];
+  isFood?: boolean;
+  itemType?: string;
+  discountPercentage?: number;
+  pricingType?: string;
+  weightUnit?: string;
+  packageType?: string;
+  minimumQuantity?: number;
+  maximumQuantity?: number;
+  isBestseller?: boolean;
+  isBuyOneGetOne?: boolean;
+  offerTag?: string;
+  availableForDelivery?: boolean;
+  availableForEatIn?: boolean;
+  availableForCollection?: boolean;
+  weightVariants?: any[];
+  variantGroups?: any[];
+  addonGroups?: any[];
   createdAt?: string;
   updatedAt?: string;
+}
+
+export interface DiningTable {
+  _id: string;
+  restaurantId: string;
+  tableNumber: string;
+  capacity: number;
+  area?: string;
+  date: string;
+  availableHours: string[];
+  bookingPrice?: number;
+  maxBookingHours?: number;
+  isActive: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface TablePayload {
+  tableNumber: string;
+  capacity: number;
+  area?: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  bookingPrice?: number;
+  maxBookingHours?: number;
+  isActive?: boolean;
 }

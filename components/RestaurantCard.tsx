@@ -3,8 +3,7 @@ import { View, Text, StyleSheet, Image, TouchableOpacity, Switch } from 'react-n
 import { Restaurant } from '../types';
 import { Colors } from '../constants/colors';
 import { StatusBadge } from './StatusBadge';
-import { MapPin, Phone, Mail, CheckCircle, XCircle, Trash2, Eye, Printer } from 'lucide-react-native';
-import { getBrandName, getPosPrinterConfig } from '../services/pos-config.service';
+import { MapPin, Phone, Mail, CheckCircle, XCircle, Trash2, Eye } from 'lucide-react-native';
 
 interface RestaurantCardProps {
   restaurant: Restaurant;
@@ -36,16 +35,6 @@ export const RestaurantCard: React.FC<RestaurantCardProps> = ({
     'pending';
 
   const isActive: boolean = restaurant.isActive ?? false;
-
-  const [printerBrand, setPrinterBrand] = React.useState<string>('Epson ePOS (TM-m30)');
-
-  React.useEffect(() => {
-    if (restaurant._id) {
-      getPosPrinterConfig(restaurant._id).then((cfg) => {
-        setPrinterBrand(getBrandName(cfg.brand));
-      });
-    }
-  }, [restaurant._id]);
 
   return (
     <View style={styles.card}>
@@ -98,14 +87,6 @@ export const RestaurantCard: React.FC<RestaurantCardProps> = ({
             <Text style={styles.infoText}>{restaurant.email}</Text>
           </View>
         ) : null}
-
-        {/* Configured POS Thermal Printer Brand */}
-        <View style={styles.printerRow}>
-          <Printer size={13} color={Colors.primary} style={styles.icon} />
-          <Text style={styles.printerText}>
-            POS Printer: <Text style={styles.printerBrandName}>{printerBrand}</Text>
-          </Text>
-        </View>
       </View>
 
       <View style={styles.divider} />
@@ -222,26 +203,6 @@ const styles = StyleSheet.create({
     color: Colors.textMuted,
     fontSize: 13,
     flex: 1,
-  },
-  printerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: Colors.cardSurface,
-    paddingVertical: 5,
-    paddingHorizontal: 8,
-    borderRadius: 6,
-    marginTop: 2,
-    borderWidth: 1,
-    borderColor: Colors.cardBorder,
-  },
-  printerText: {
-    fontSize: 12,
-    color: Colors.textMuted,
-    flex: 1,
-  },
-  printerBrandName: {
-    color: Colors.primary,
-    fontWeight: '700',
   },
   footer: {
     flexDirection: 'row',

@@ -17,6 +17,7 @@ import { Colors } from '../../constants/colors';
 import { restaurantService } from '../../services/restaurant.service';
 import { orderService } from '../../services/order.service';
 import { userService } from '../../services/user.service';
+import { restaurantOwnerService } from '../../services/restaurant-owner.service';
 import { Restaurant, Order } from '../../types';
 import {
   Store,
@@ -31,6 +32,7 @@ import {
   Truck,
   Megaphone,
   Settings,
+  Sparkles,
 } from 'lucide-react-native';
 import { useAuth } from '../../context/AuthContext';
 
@@ -44,6 +46,8 @@ export default function DashboardScreen() {
   const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [totalUsersCount, setTotalUsersCount] = useState(0);
+  const [tablesCount, setTablesCount] = useState(0);
+  const [activeSlotsCount, setActiveSlotsCount] = useState(0);
 
   const [ownerStats, setOwnerStats] = useState({
     totalOrders: 0,
@@ -75,9 +79,10 @@ export default function DashboardScreen() {
           setTotalUsersCount(userRes.totalUsers || userList.length);
         }
       } else {
-        const [statsRes, orderRes] = await Promise.all([
+        const [statsRes, orderRes, tablesRes] = await Promise.all([
           orderService.getRestaurantStats(),
           orderService.getAllOrders({ limit: 10 }),
+          restaurantOwnerService.getTables(),
         ]);
 
         if (statsRes.success && statsRes.data) {
@@ -92,6 +97,14 @@ export default function DashboardScreen() {
         const ownerOrderList = orderRes.data || orderRes.orders;
         if (orderRes.success && ownerOrderList) {
           setOrders(ownerOrderList);
+        }
+        if (tablesRes.success && tablesRes.data) {
+          setTablesCount(tablesRes.data.length);
+          const totalSlots = tablesRes.data.reduce(
+            (sum: number, t: any) => sum + (t.availableHours?.length || 0),
+            0
+          );
+          setActiveSlotsCount(totalSlots);
         }
       }
     } catch (e) {
@@ -172,24 +185,66 @@ export default function DashboardScreen() {
           </TouchableOpacity>
         ) : null}
 
-        {/* Quick Shortcut Buttons (Super Admin Only) */}
+        {/* System Control Center Grid (Super Admin Only) */}
         {isSuperAdmin && (
-          <View style={styles.shortcutRow}>
-            <TouchableOpacity
-              style={styles.shortcutCard}
-              onPress={() => router.push('/(tabs)/restaurants')}
-            >
-              <Image source={require('../../assets/store.png')} style={styles.cardIllustration} />
-              <Text style={styles.shortcutTitle}>Manage Restaurants</Text>
-            </TouchableOpacity>
+          <View style={styles.controlCenterSection}>
+            <Text style={styles.sectionHeader}>System Control Center</Text>
 
-            <TouchableOpacity
-              style={styles.shortcutCard}
-              onPress={() => router.push('/(tabs)/orders')}
-            >
-              <Image source={require('../../assets/food.png')} style={styles.cardIllustration} />
-              <Text style={styles.shortcutTitle}>Manage Orders</Text>
-            </TouchableOpacity>
+            <View style={styles.gridContainer}>
+              <TouchableOpacity
+                style={styles.gridCard}
+                onPress={() => router.push('/(tabs)/restaurants')}
+                activeOpacity={0.7}
+              >
+                <View style={styles.gridCardTextContainer}>
+                  <Text style={styles.gridTitle}>Restaurants</Text>
+                  <Text style={styles.gridSub}>
+                    {restaurants.length} store{restaurants.length !== 1 ? 's' : ''} ({activeRestaurants} active)
+                  </Text>
+                </View>
+                <Image source={require('../../assets/store.png')} style={styles.gridIllustration} />
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.gridCard}
+                onPress={() => router.push('/(tabs)/orders')}
+                activeOpacity={0.7}
+              >
+                <View style={styles.gridCardTextContainer}>
+                  <Text style={styles.gridTitle}>All Orders</Text>
+                  <Text style={styles.gridSub}>
+                    {orders.length} order{orders.length !== 1 ? 's' : ''} • £{totalRevenue.toFixed(0)}
+                  </Text>
+                </View>
+                <Image source={require('../../assets/food.png')} style={styles.gridIllustration} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.gridContainer}>
+              <TouchableOpacity
+                style={styles.gridCard}
+                onPress={() => router.push('/(tabs)/users')}
+                activeOpacity={0.7}
+              >
+                <View style={styles.gridCardTextContainer}>
+                  <Text style={styles.gridTitle}>Users & Partners</Text>
+                  <Text style={styles.gridSub}>{totalUsersCount} accounts</Text>
+                </View>
+                <Image source={require('../../assets/grocery.png')} style={styles.gridIllustration} />
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.gridCard}
+                onPress={() => router.push('/marketing')}
+                activeOpacity={0.7}
+              >
+                <View style={styles.gridCardTextContainer}>
+                  <Text style={styles.gridTitle}>Campaigns</Text>
+                  <Text style={styles.gridSub}>Promo coupons</Text>
+                </View>
+                <Image source={require('../../assets/publicity.png')} style={styles.gridIllustration} />
+              </TouchableOpacity>
+            </View>
           </View>
         )}
 
@@ -202,19 +257,29 @@ export default function DashboardScreen() {
               <TouchableOpacity
                 style={styles.gridCard}
                 onPress={() => router.push('/bookings')}
+                activeOpacity={0.7}
               >
+                <View style={styles.gridCardTextContainer}>
+                  <Text style={styles.gridTitle}>Reservations</Text>
+                  <Text style={styles.gridSub}>Bookings feed</Text>
+                </View>
                 <Image source={require('../../assets/preorder.png')} style={styles.gridIllustration} />
-                <Text style={styles.gridTitle}>Reservations</Text>
-                <Text style={styles.gridSub}>Bookings feed</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
                 style={styles.gridCard}
                 onPress={() => router.push('/tables')}
+                activeOpacity={0.7}
               >
+                <View style={styles.gridCardTextContainer}>
+                  <Text style={styles.gridTitle}>Dining Tables</Text>
+                  <Text style={styles.gridSub}>
+                    {tablesCount > 0
+                       ? `${tablesCount} table${tablesCount !== 1 ? 's' : ''} • ${activeSlotsCount} slots`
+                      : 'Configure & post tables'}
+                  </Text>
+                </View>
                 <Image source={require('../../assets/table.png')} style={styles.gridIllustration} />
-                <Text style={styles.gridTitle}>Dining Tables</Text>
-                <Text style={styles.gridSub}>Configure tables</Text>
               </TouchableOpacity>
             </View>
 
@@ -222,39 +287,25 @@ export default function DashboardScreen() {
               <TouchableOpacity
                 style={styles.gridCard}
                 onPress={() => router.push('/fleet')}
+                activeOpacity={0.7}
               >
+                <View style={styles.gridCardTextContainer}>
+                  <Text style={styles.gridTitle}>My Fleet</Text>
+                  <Text style={styles.gridSub}>Connect riders</Text>
+                </View>
                 <Image source={require('../../assets/grocery.png')} style={styles.gridIllustration} />
-                <Text style={styles.gridTitle}>My Fleet</Text>
-                <Text style={styles.gridSub}>Connect riders</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
                 style={styles.gridCard}
                 onPress={() => router.push('/marketing')}
+                activeOpacity={0.7}
               >
+                <View style={styles.gridCardTextContainer}>
+                  <Text style={styles.gridTitle}>Campaigns</Text>
+                  <Text style={styles.gridSub}>Promo coupons</Text>
+                </View>
                 <Image source={require('../../assets/publicity.png')} style={styles.gridIllustration} />
-                <Text style={styles.gridTitle}>Campaigns</Text>
-                <Text style={styles.gridSub}>Promo coupons</Text>
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.gridContainer}>
-              <TouchableOpacity
-                style={styles.gridCard}
-                onPress={() => router.push('/(tabs)/menu')}
-              >
-                <Image source={require('../../assets/spoon-and-fork.png')} style={styles.gridIllustration} />
-                <Text style={styles.gridTitle}>Menu Manager</Text>
-                <Text style={styles.gridSub}>Prices & categories</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.gridCard}
-                onPress={() => router.push('/restaurant-settings')}
-              >
-                <Image source={require('../../assets/restaurant.png')} style={styles.gridIllustration} />
-                <Text style={styles.gridTitle}>Store Config</Text>
-                <Text style={styles.gridSub}>Timings & settings</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -294,7 +345,7 @@ export default function DashboardScreen() {
               />
               <StatCard
                 title="Total Volume"
-                value={`€${totalRevenue.toFixed(0)}`}
+                value={`£${totalRevenue.toFixed(0)}`}
                 subtitle="Platform Gross Sales"
                 icon={<Image source={require('../../assets/spoon-and-fork.png')} style={styles.kpiIllustration} />}
                 accentColor="#C084FC"
@@ -315,7 +366,7 @@ export default function DashboardScreen() {
               />
               <StatCard
                 title="Total Earnings"
-                value={`€${ownerStats.totalIncome.toFixed(0)}`}
+                  value={`£${ownerStats.totalIncome.toFixed(0)}`}
                 subtitle="Restaurant Sales"
                 icon={<Image source={require('../../assets/spoon-and-fork.png')} style={styles.kpiIllustration} />}
                 accentColor="#C084FC"
@@ -333,7 +384,7 @@ export default function DashboardScreen() {
                 onPress={() => router.push('/(tabs)/orders')}
               />
               <StatCard
-                title="Cancelled Orders"
+                  title="Cancelled"
                 value={ownerStats.totalCancelled}
                 subtitle="Unfulfilled orders"
                 icon={<Image source={require('../../assets/tag.png')} style={styles.kpiIllustration} />}
@@ -420,7 +471,7 @@ export default function DashboardScreen() {
                           .map((i) => `${i.name || (i as any).itemName} x${i.quantity}`)
                           .join(', ')}
                       </Text>
-                      <Text style={styles.recentOrderPrice}>€{totalAmt.toFixed(2)}</Text>
+                      <Text style={styles.recentOrderPrice}>£{totalAmt.toFixed(2)}</Text>
                     </View>
                   </TouchableOpacity>
                 );
@@ -626,19 +677,24 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 1,
     borderColor: '#EEEEEE',
-    padding: 16,
-    alignItems: 'flex-start',
-  },
-  iconContainer: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    alignItems: 'center',
+    padding: 14,
+    minHeight: 88,
+    position: 'relative',
+    overflow: 'hidden',
     justifyContent: 'center',
-    marginBottom: 10,
+    shadowColor: '#000',
+    shadowOpacity: 0.02,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 1,
+  },
+  gridCardTextContainer: {
+    flex: 1,
+    paddingRight: 40,
+    zIndex: 2,
   },
   gridTitle: {
-    fontSize: 13,
+    fontSize: 13.5,
     fontWeight: '800',
     color: Colors.text,
     letterSpacing: -0.1,
@@ -647,7 +703,8 @@ const styles = StyleSheet.create({
     fontSize: 10.5,
     color: Colors.textSubtle,
     fontWeight: '600',
-    marginTop: 2,
+    marginTop: 3,
+    lineHeight: 14,
   },
   // Redesign additions: illustrations & hero
   heroCard: {
@@ -709,10 +766,14 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   gridIllustration: {
-    width: 36,
-    height: 36,
+    position: 'absolute',
+    bottom: -6,
+    right: -6,
+    width: 52,
+    height: 52,
     resizeMode: 'contain',
-    marginBottom: 10,
+    opacity: 0.85,
+    zIndex: 1,
   },
   kpiIllustration: {
     width: 22,

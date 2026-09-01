@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Order } from '../types';
 import { Colors } from '../constants/colors';
 import { StatusBadge } from './StatusBadge';
-import { ShoppingBag, Store, User, Bike, ChevronRight } from 'lucide-react-native';
+import { ShoppingBag, Store, User, Bike, ChevronRight, CheckCircle2, X } from 'lucide-react-native';
 
 interface OrderCardProps {
   order: Order;
@@ -46,6 +46,25 @@ export const OrderCard: React.FC<OrderCardProps> = ({ order, onPress, onAssignDe
       onPress={() => onPress(order)}
       style={styles.card}
     >
+      {/* Watermark Stamp Overlay */}
+      {order.status === 'delivered' && (
+        <View style={styles.stampOverlay} pointerEvents="none">
+          <View style={[styles.stampBox, styles.stampSuccess]}>
+            <CheckCircle2 size={12} color="#10B981" style={{ marginRight: 3 }} />
+            <Text style={[styles.stampText, styles.stampSuccessText]}>SUCCESS</Text>
+          </View>
+        </View>
+      )}
+
+      {order.status === 'cancelled' && (
+        <View style={styles.stampOverlay} pointerEvents="none">
+          <View style={[styles.stampBox, styles.stampCancelled]}>
+            <X size={12} color="#EF4444" style={{ marginRight: 3 }} />
+            <Text style={[styles.stampText, styles.stampCancelledText]}>CANCELLED</Text>
+          </View>
+        </View>
+      )}
+
       <View style={styles.header}>
         <View style={styles.orderIdBox}>
           <ShoppingBag size={14} color={Colors.primary} />
@@ -243,5 +262,47 @@ const styles = StyleSheet.create({
     fontSize: 10,
     marginTop: 6,
     textAlign: 'right',
+  },
+
+  /* Watermark Stamp Styles */
+  stampOverlay: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 10,
+  },
+  stampBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    transform: [{ rotate: '-12deg' }],
+  },
+  stampSuccess: {
+    borderColor: '#10B981',
+    backgroundColor: 'rgba(16, 185, 129, 0.12)',
+  },
+  stampCancelled: {
+    borderColor: '#EF4444',
+    backgroundColor: 'rgba(239, 68, 68, 0.12)',
+  },
+  stampText: {
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+  },
+  stampSuccessText: {
+    color: '#10B981',
+  },
+  stampCancelledText: {
+    color: '#EF4444',
   },
 });
