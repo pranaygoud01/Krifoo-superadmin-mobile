@@ -345,9 +345,9 @@ export function buildEscPosReceipt(order: Partial<Order> & any, config: PosPrint
     }
     const priceStr = formatMoney(itemPrice);
 
-    builder.bold(true);
+    builder.bold(true).setSize(1, 2);
     builder.threeColumn(qtyStr, name, priceStr);
-    builder.bold(false);
+    builder.setSize(1, 1).bold(false);
 
     // Variants & Add-ons
     const optionsList: string[] = [];
@@ -428,8 +428,7 @@ export function buildEscPosReceipt(order: Partial<Order> & any, config: PosPrint
 
   // 5. FOOTER
   builder.alignCenter();
-  builder.line('\nThank you for ordering with Krifoo!');
-  builder.line('www.krifoo.co.uk');
+  builder.line('\nThank you for your order!');
 
   // Cash drawer if enabled
   if (config.openCashDrawer && (paymentMethod.includes('CASH') || paymentStatus.includes('CASH'))) {

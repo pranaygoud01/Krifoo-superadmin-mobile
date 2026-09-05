@@ -257,25 +257,29 @@ export function generateThermalReceiptHtml(order: Partial<Order> & any): string 
       display: flex;
       justify-content: space-between;
       align-items: flex-start;
-      margin-bottom: 6px;
-      font-size: 14px;
+      margin-bottom: 7px;
+      font-size: 18px;
     }
     .item-name-qty {
-      font-weight: 800;
+      font-size: 18px;
+      font-weight: 900;
       flex: 1;
       padding-right: 8px;
       color: #000000;
+      line-height: 1.25;
     }
     .item-price {
-      font-weight: 800;
+      font-size: 18px;
+      font-weight: 900;
       white-space: nowrap;
       text-align: right;
       color: #000000;
     }
     .item-addon {
-      font-size: 11px;
-      color: #555555;
-      margin-top: 1px;
+      font-size: 14px;
+      font-weight: 600;
+      color: #333333;
+      margin-top: 2px;
       padding-left: 14px;
     }
 
@@ -565,6 +569,35 @@ const THERMAL_80MM_WIDTH_POINTS = 227;
 // Cache to prevent duplicate prints when Socket and Push Notification arrive simultaneously
 const recentPrints = new Map<string, number>();
 
+export interface PrintJobReport {
+  orderId: string;
+  orderNumber: string;
+  orderStatus: string;
+  customerName: string;
+  totalAmount: string;
+  itemCount: number;
+  trigger: 'manual_click' | 'auto_print';
+  brand: string;
+  connectionType: string;
+  targetAddress: string;
+  driverUsed: 'sunmi_aidl' | 'epson_epos' | 'network_escpos' | 'system_spooler' | 'none';
+  driverLabel: string;
+  copies: number;
+  success: boolean;
+  durationMs: number;
+  timestamp: string;
+  error?: string;
+}
+
+let lastPrintJobReport: PrintJobReport | null = null;
+
+/**
+ * Get report for the most recent print action
+ */
+export function getLastPrintJobReport(): PrintJobReport | null {
+  return lastPrintJobReport;
+}
+
 /**
  * Print an order on the restaurant's configured thermal POS printer
  * - SUNMI / Flipdish: Uses direct Sunmi AIDL SDK
@@ -575,13 +608,48 @@ const recentPrints = new Map<string, number>();
  * @param isManual True if initiated by direct user tap (bypasses auto-print check & debounce)
  */
 export async function printThermalReceipt(order: Partial<Order> & any, isManual: boolean = false): Promise<boolean> {
+  const startTime = Date.now();
+  const orderNum = String(order.orderNumber || (order._id ? `#${order._id.slice(-5).toUpperCase()}` : '#00000'));
+  const orderId = String(order._id || order.id || orderNum);
+  const orderStatus = String(order.status || 'unknown');
+  const customerName = order.customerDetails?.name || order.customerId?.fullName || order.userId?.fullName || 'Customer';
+  const totalAmount = order.pricing?.total ?? order.pricing?.totalAmount ?? order.totalAmount ?? order.totalPrice ?? 0;
+  const items = Array.isArray(order.orderedItems) ? order.orderedItems : (Array.isArray(order.items) ? order.items : []);
+  const itemCount = items.length;
+
+  let driverUsed: 'sunmi_aidl' | 'epson_epos' | 'network_escpos' | 'system_spooler' | 'none' = 'none';
+  let driverLabel = 'None';
+  let success = false;
+  let printError: string | undefined;
+
+  console.log(`[PRINT INITIATE] Order #${orderNum} | Trigger: ${isManual ? 'MANUAL USER CLICK' : 'AUTO-PRINT'} | Stage: "${orderStatus}" | Total: £${Number(totalAmount).toFixed(2)} | Items: ${itemCount}`);
+
   try {
     const restId = typeof order.restaurantId === 'object' ? order.restaurantId?._id : (order.restaurantId || order.restaurant);
     const config = await getPosPrinterConfig(restId ? String(restId) : undefined);
 
     // If auto-print is disabled and this was not a manual user click, skip
     if (!config.autoPrint && !isManual) {
-      console.log('[Print] Auto-print is disabled in POS settings, skipping.');
+      console.log(`[PRINT SKIPPED] Auto-print is disabled for restaurant in POS settings. Order: #${orderNum}`);
+      lastPrintJobReport = {
+        orderId,
+        orderNumber: orderNum,
+        orderStatus,
+        customerName,
+        totalAmount: `£${Number(totalAmount).toFixed(2)}`,
+        itemCount,
+        trigger: 'auto_print',
+        brand: config.brand,
+        connectionType: config.connectionType,
+        targetAddress: config.connectionType === 'network' ? `${config.ipAddress}:${config.port}` : config.connectionType,
+        driverUsed: 'none',
+        driverLabel: 'Auto-print disabled',
+        copies: 0,
+        success: false,
+        durationMs: Date.now() - startTime,
+        timestamp: new Date().toISOString(),
+        error: 'Auto-print disabled in settings',
+      };
       return false;
     }
 
@@ -592,7 +660,7 @@ export async function printThermalReceipt(order: Partial<Order> & any, isManual:
     if (!isManual && orderKey) {
       const lastPrinted = recentPrints.get(orderKey);
       if (lastPrinted && now - lastPrinted < 20000) {
-        console.log(`[Print] Skipping duplicate auto-print for order ${orderKey} (already printed ${Math.round((now - lastPrinted)/1000)}s ago)`);
+        console.log(`[PRINT SKIPPED] Duplicate auto-print for order #${orderNum} (printed ${Math.round((now - lastPrinted)/1000)}s ago)`);
         return true;
       }
       recentPrints.set(orderKey, now);
@@ -601,49 +669,61 @@ export async function printThermalReceipt(order: Partial<Order> & any, isManual:
       }
     }
 
-    console.log(`[Print] Dispatching print job for order ${order.orderNumber || order._id} using brand: ${config.brand.toUpperCase()} (${config.connectionType})`);
-
     const copies = Math.max(1, config.copies || 1);
-    let success = false;
+    const targetAddr = config.connectionType === 'network' ? `${config.ipAddress}:${config.port}` : config.connectionType;
+
+    console.log(`[PRINT HARDWARE] Brand: ${config.brand.toUpperCase()} (${config.connectionType} @ ${targetAddr}) | Copies: ${copies}`);
 
     for (let copy = 1; copy <= copies; copy++) {
       if (copy > 1) {
-        console.log(`[Print] Printing copy ${copy} of ${copies}...`);
+        console.log(`[PRINT] Printing copy ${copy} of ${copies}...`);
       }
 
       // 1. Built-in Sunmi / Flipdish POS hardware
       if (config.connectionType === 'builtin' || config.brand === 'sunmi' || config.brand === 'flipdish') {
         const hasSunmi = await isSunmiAvailable();
         if (hasSunmi) {
+          console.log(`[PRINT ATTEMPT] Trying Sunmi AIDL Native Hardware (Copy ${copy}/${copies})...`);
           const res = await printSunmiOrderReceipt(order);
           if (res) {
+            driverUsed = 'sunmi_aidl';
+            driverLabel = 'Sunmi POS AIDL Native Printer';
             success = true;
             continue;
           }
+        } else {
+          console.log(`[PRINT ATTEMPT] Sunmi hardware not present on device.`);
         }
       }
 
       // 2. Epson ePOS XML SDK (Epson TM-m30, TM-T88, TM-T20, TM-T82)
       if (config.brand === 'epson') {
+        console.log(`[PRINT ATTEMPT] Trying Epson ePOS-XML SDK at ${targetAddr} (Copy ${copy}/${copies})...`);
         const epsonRes = await printEpsonOrderReceipt(order, config);
         if (epsonRes) {
+          driverUsed = 'epson_epos';
+          driverLabel = `Epson ePOS-XML (${targetAddr})`;
           success = true;
           continue;
         }
-        console.warn('[Print] Epson ePOS XML print returned false, attempting network ESC/POS stream...');
+        console.warn('[PRINT WARNING] Epson ePOS XML returned false, falling back to network stream...');
       }
 
       // 3. Network ESC/POS (Star, RetailZ, Citizen, Bixolon, Munbyn, Xprinter, Generic)
       if (config.connectionType === 'network' || ['epson', 'star', 'retailz', 'citizen', 'bixolon', 'munbyn_xprinter', 'generic_network'].includes(config.brand)) {
+        console.log(`[PRINT ATTEMPT] Trying Network ESC/POS stream at ${targetAddr} (Copy ${copy}/${copies})...`);
         const res = await printNetworkOrderReceipt(order, config);
         if (res) {
+          driverUsed = 'network_escpos';
+          driverLabel = `Network ESC/POS (${config.brand.toUpperCase()} @ ${targetAddr})`;
           success = true;
           continue;
         }
-        console.warn('[Print] Network ESC/POS print returned false, falling back to system print...');
+        console.warn('[PRINT WARNING] Network ESC/POS returned false, falling back to system spooler...');
       }
 
-      // 3. Fallback: System Spooler / AirPrint
+      // 4. Fallback: System Spooler / AirPrint / PDF (80mm)
+      console.log(`[PRINT ATTEMPT] Dispatching to System Print Spooler (PDF / AirPrint 80mm)...`);
       try {
         const html = generateThermalReceiptHtml(order);
         const file = await Print.printToFileAsync({
@@ -654,21 +734,99 @@ export async function printThermalReceipt(order: Partial<Order> & any, isManual:
         await Print.printAsync({
           uri: file.uri,
         });
+        driverUsed = 'system_spooler';
+        driverLabel = 'System Print Spooler (AirPrint / 80mm PDF)';
         success = true;
-      } catch (fallbackErr) {
-        console.warn('[Print] System print fallback error:', fallbackErr);
-        const html = generateThermalReceiptHtml(order);
-        await Print.printAsync({
-          html,
-          width: THERMAL_80MM_WIDTH_POINTS,
-        });
-        success = true;
+      } catch (fallbackErr: any) {
+        console.warn('[PRINT FALLBACK] PrintToFileAsync failed, trying direct printAsync:', fallbackErr);
+        try {
+          const html = generateThermalReceiptHtml(order);
+          await Print.printAsync({
+            html,
+            width: THERMAL_80MM_WIDTH_POINTS,
+          });
+          driverUsed = 'system_spooler';
+          driverLabel = 'System Print Spooler (Direct 80mm)';
+          success = true;
+        } catch (directErr: any) {
+          printError = directErr?.message || String(directErr);
+          console.error('[PRINT ERROR] System spooler failed:', directErr);
+          success = false;
+        }
       }
     }
 
+    const durationMs = Date.now() - startTime;
+    lastPrintJobReport = {
+      orderId,
+      orderNumber: orderNum,
+      orderStatus,
+      customerName,
+      totalAmount: `£${Number(totalAmount).toFixed(2)}`,
+      itemCount,
+      trigger: isManual ? 'manual_click' : 'auto_print',
+      brand: config.brand,
+      connectionType: config.connectionType,
+      targetAddress: targetAddr,
+      driverUsed,
+      driverLabel,
+      copies,
+      success,
+      durationMs,
+      timestamp: new Date().toISOString(),
+      error: printError,
+    };
+
+    console.log(`
+┌────────────────────────────────────────────────────────┐
+│               🖨️  ACTUAL PRINT STATUS REPORT            │
+├───────────────────┬────────────────────────────────────┤
+│ Order Number      │ #${orderNum}
+│ Order Stage       │ ${orderStatus.toUpperCase()}
+│ Trigger Source    │ ${isManual ? 'MANUAL USER CLICK' : 'AUTO-PRINT'}
+│ Customer          │ ${customerName}
+│ Order Total       │ £${Number(totalAmount).toFixed(2)} (${itemCount} items)
+│ Configured Brand  │ ${config.brand.toUpperCase()} (${config.connectionType})
+│ Target Address    │ ${targetAddr}
+│ Driver Executed   │ ${driverLabel}
+│ Copies Printed    │ ${copies} copy/copies
+│ Elapsed Time      │ ${durationMs}ms
+│ Final Result      │ ${success ? '✅ SUCCESS (PRINTED)' : '❌ FAILED'}
+└───────────────────┴────────────────────────────────────┘`);
+
     return success;
-  } catch (error) {
-    console.error('[Print] Failed printing thermal receipt:', error);
+  } catch (error: any) {
+    const durationMs = Date.now() - startTime;
+    const errMessage = error?.message || String(error);
+    lastPrintJobReport = {
+      orderId,
+      orderNumber: orderNum,
+      orderStatus,
+      customerName,
+      totalAmount: `£${Number(totalAmount).toFixed(2)}`,
+      itemCount,
+      trigger: isManual ? 'manual_click' : 'auto_print',
+      brand: 'unknown',
+      connectionType: 'unknown',
+      targetAddress: 'unknown',
+      driverUsed: 'none',
+      driverLabel: 'Error Failed',
+      copies: 1,
+      success: false,
+      durationMs,
+      timestamp: new Date().toISOString(),
+      error: errMessage,
+    };
+
+    console.error(`
+┌────────────────────────────────────────────────────────┐
+│           ❌ ACTUAL PRINT STATUS REPORT: FAILED        │
+├───────────────────┬────────────────────────────────────┤
+│ Order Number      │ #${orderNum}
+│ Order Stage       │ ${orderStatus.toUpperCase()}
+│ Error Details     │ ${errMessage}
+│ Elapsed Time      │ ${durationMs}ms
+└───────────────────┴────────────────────────────────────┘`);
     return false;
   }
 }

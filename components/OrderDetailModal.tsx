@@ -6,7 +6,8 @@ import { StatusBadge } from './StatusBadge';
 import { X, Store, User, MapPin, Bike, CreditCard, Phone, ShoppingBag, UtensilsCrossed, Tag, Receipt, CheckCircle2, Printer, Banknote, ChevronDown, ChevronUp, Check } from 'lucide-react-native';
 import { Linking } from 'react-native';
 import { orderService } from '../services/order.service';
-import { printThermalReceipt } from '../services/thermal-print.service';
+import { printThermalReceipt, getLastPrintJobReport } from '../services/thermal-print.service';
+import { useToast } from '../context/ToastContext';
 
 interface OrderDetailModalProps {
   visible: boolean;
@@ -27,15 +28,39 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
   const [loadingStatus, setLoadingStatus] = React.useState(false);
   const [fetchedOrder, setFetchedOrder] = React.useState<Order | null>(null);
   const [loading, setLoading] = React.useState(false);
+  const { showToast } = useToast();
   const [printing, setPrinting] = React.useState(false);
 
   const handlePrint = async () => {
     if (!order) return;
+    const orderNum = order.orderNumber || order._id?.slice(-5).toUpperCase() || 'Order';
+    const orderStatus = order.status;
+    console.log(`\n[PRINT CLICK] User tapped "Print Receipt" inside OrderDetailModal for #${orderNum} | Stage: "${orderStatus}"`);
+
     setPrinting(true);
     try {
-      await printThermalReceipt(order, true);
-    } catch (e) {
-      console.error('[OrderDetailModal] Print failed:', e);
+      showToast({ title: 'Printing Receipt...', message: `Sending #${orderNum} to printer...`, type: 'info' });
+      const success = await printThermalReceipt(order, true);
+      const report = getLastPrintJobReport();
+
+      console.log(`[PRINT CLICK RESULT] Modal Order #${orderNum} | Result: ${success ? '✅ SUCCESS' : '❌ FAILED'} | Driver: ${report?.driverLabel || 'Unknown'} | Time: ${report?.durationMs || 0}ms`);
+
+      if (success) {
+        showToast({
+          title: 'Print Success ✅',
+          message: `Receipt printed via ${report?.driverLabel || 'printer'}.`,
+          type: 'success',
+        });
+      } else {
+        showToast({
+          title: 'Print Notice',
+          message: report?.error || 'Receipt print cancelled or printer unavailable.',
+          type: 'info',
+        });
+      }
+    } catch (e: any) {
+      console.error(`[PRINT CLICK ERROR] Modal Order #${orderNum} print failed:`, e);
+      showToast({ title: 'Print Error ❌', message: e?.message || 'Failed to print receipt.', type: 'error' });
     } finally {
       setPrinting(false);
     }
@@ -114,33 +139,39 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
     : undefined;
 
   const formatAddress = () => {
-    const addr = order.deliveryAddress;
+    const addr: any = order.deliveryAddress;
     if (!addr) {
-      if (typeof order.customerDetails?.address === 'string' && order.customerDetails.address.trim()) {
-        return order.customerDetails.address.trim();
+      const custAddr: any = order.customerDetails?.address;
+      if (typeof custAddr === 'string' && custAddr.trim()) {
+        return custAddr.trim();
       }
       return 'Self Pickup';
     }
     if (typeof addr === 'string') return addr.trim() || 'Self Pickup';
-    if (addr.formattedAddress && addr.formattedAddress.trim()) return addr.formattedAddress.trim();
+    if (addr.formattedAddress && typeof addr.formattedAddress === 'string' && addr.formattedAddress.trim()) return addr.formattedAddress.trim();
 
     const parts = [
-      (addr as any).houseNumber || (addr as any).flatNumber || (addr as any).doorNo,
+      addr.houseNumber || addr.flatNumber || addr.doorNo,
       addr.addressLine1,
       addr.addressLine2,
       addr.street,
-      (addr as any).landmark,
+      addr.landmark,
       addr.area,
       addr.city,
-      addr.postalCode || addr.postcode || (addr as any).zipCode,
+      addr.postalCode || addr.postcode || addr.zipCode,
     ].filter(Boolean);
 
-    return parts.length > 0 ? parts.join(', ') : ((addr as any).fullAddress || (addr as any).address || 'Self Pickup');
+    return parts.length > 0 ? parts.join(', ') : (addr.fullAddress || addr.address || 'Self Pickup');
   };
 
   const addressText = formatAddress();
 
-  const orderedItemsList = order.orderedItems || [];
+  const orderedItemsList =
+    (Array.isArray(order.orderedItems) && order.orderedItems.length > 0)
+      ? order.orderedItems
+      : (Array.isArray((order as any).items) && (order as any).items.length > 0)
+      ? (order as any).items
+      : [];
 
   return (
     <Modal visible={visible} animationType="slide" transparent={true} onRequestClose={onClose}>
@@ -296,11 +327,36 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
                 <Receipt size={16} color={Colors.primary} />
                 <Text style={styles.cardTitle}>Ordered Items</Text>
               </View>
-              {orderedItemsList.map((item, idx) => {
-                const itemName = item.name || (item as any).itemName || 'Item';
-                const itemPrice = item.price || (item as any).basePrice || 0;
-                const itemQty = item.quantity || 1;
-                const itemTotal = (item as any).itemTotal || itemPrice * itemQty;
+              {orderedItemsList.map((item: any, idx: number) => {
+                const itemName =
+                  item.name ||
+                  (item as any).itemName ||
+                  (item as any).title ||
+                  (item as any).dishName ||
+                  (item as any).productName ||
+                  (item as any).menuItemId?.name ||
+                  (item as any).itemId?.name ||
+                  'Item';
+                const itemQty = Number(item.quantity || (item as any).qty || 1);
+
+                let itemTotal = 0;
+                if (item.itemTotal !== undefined && item.itemTotal !== null && !isNaN(Number(item.itemTotal)) && Number(item.itemTotal) > 0) {
+                  itemTotal = Number(item.itemTotal);
+                } else if ((item as any).totalPrice !== undefined && (item as any).totalPrice !== null && !isNaN(Number((item as any).totalPrice)) && Number((item as any).totalPrice) > 0) {
+                  itemTotal = Number((item as any).totalPrice);
+                } else {
+                  const unitPrice = Number(
+                    item.price ??
+                    (item as any).basePrice ??
+                    (item as any).unitPrice ??
+                    (item as any).menuItemId?.price ??
+                    (item as any).menuItemId?.basePrice ??
+                    (item as any).itemId?.price ??
+                    (item as any).itemId?.basePrice ??
+                    0
+                  );
+                  itemTotal = unitPrice * itemQty;
+                }
 
                 return (
                   <View key={idx} style={styles.itemRow}>
@@ -477,7 +533,7 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
                   ) : (
                     <>
                       <Printer size={18} color="#FFFFFF" />
-                      <Text style={styles.printReceiptBtnText}>Print Thermal Receipt</Text>
+                      <Text style={styles.printReceiptBtnText}>Print Receipt</Text>
                     </>
                   )}
                 </TouchableOpacity>
@@ -804,11 +860,6 @@ const styles = StyleSheet.create({
     color: '#EF4444',
     fontSize: 14,
     fontWeight: '700',
-  },
-  headerSub: {
-    color: Colors.textMuted,
-    fontSize: 11,
-    marginTop: 2,
   },
   customerRow: {
     flexDirection: 'row',

@@ -155,7 +155,7 @@ export function buildOrderEscPosBytes(order: Partial<Order> & any, config: PosPr
     const qty = `${item.quantity || 1}x`;
     const name = item.itemName || item.name || 'Item';
     const price = `£${Number(item.itemTotal || item.basePrice || 0).toFixed(2)}`;
-    builder.setBold(true).threeColumn(qty, name, price, width).setBold(false);
+    builder.setTextSize(1, 2).setBold(true).threeColumn(qty, name, price, width).setTextSize(1, 1).setBold(false);
 
     if (item.selectedVariants?.length) {
       item.selectedVariants.forEach((v: any) => {
@@ -169,7 +169,7 @@ export function buildOrderEscPosBytes(order: Partial<Order> & any, config: PosPr
     .twoColumn('TOTAL:', `£${Number(order.pricing?.total || 0).toFixed(2)}`, width)
     .lineDivider(width)
     .alignCenter()
-    .text('Thank you for ordering with Krifoo!')
+    .text('Thank you for your order!')
     .newLine(3);
 
   if (config.openCashDrawerOnCashPayment && (order.paymentType === 'CASH' || order.paymentStatus === 'PAID')) {

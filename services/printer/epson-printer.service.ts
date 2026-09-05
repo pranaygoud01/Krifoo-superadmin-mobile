@@ -226,8 +226,8 @@ export function buildEpsonEposXml(order: Partial<Order> & any, config: PosPrinte
     }
     const priceStr = formatMoney(itemPrice);
 
-    xmlBody += `<text align="left" em="true">${escapeXml(formatThreeColumn(qtyStr, name, priceStr, cols))}</text>`;
-    xmlBody += `<text align="left" em="false"/>`;
+    xmlBody += `<text align="left" em="true" height="2">${escapeXml(formatThreeColumn(qtyStr, name, priceStr, cols))}</text>`;
+    xmlBody += `<text align="left" em="false" height="1"/>`;
 
     // Variants & Add-ons
     const optionsList: string[] = [];
@@ -321,7 +321,7 @@ export function buildEpsonEposXml(order: Partial<Order> & any, config: PosPrinte
   xmlBody += `<text align="left">Payment: ${escapeXml(paymentMethod)} (${escapeXml(paymentStatus)})&#10;</text>`;
 
   // 5. FOOTER
-  xmlBody += `<text align="center">&#10;Thank you for ordering with Krifoo!&#10;www.krifoo.co.uk&#10;</text>`;
+  xmlBody += `<text align="center">&#10;Thank you for your order!&#10;</text>`;
 
   // Cash drawer pulse if enabled
   if (config.openCashDrawer && (paymentMethod.includes('CASH') || paymentStatus.includes('CASH'))) {

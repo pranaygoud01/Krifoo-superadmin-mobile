@@ -9,7 +9,7 @@ import {
   ActivityIndicator,
   ScrollView,
   TouchableOpacity,
-  Dimensions,
+  useWindowDimensions,
   DeviceEventEmitter,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -37,11 +37,11 @@ import {
   List,
   MapPin,
   UtensilsCrossed,
+  Printer,
 } from 'lucide-react-native';
-import { printThermalReceipt, isAutoPrintEnabled } from '../../services/thermal-print.service';
+import { printThermalReceipt, isAutoPrintEnabled, getLastPrintJobReport } from '../../services/thermal-print.service';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const COLUMN_WIDTH = SCREEN_WIDTH * 0.72;
+const TABLET_BREAKPOINT = 768;
 
 const STATUS_TABS = [
   { id: 'all', label: 'All Orders', subtitle: 'All Statuses', statuses: [] as OrderStatus[], accentColor: '#11181C', Icon: List },
@@ -60,6 +60,67 @@ const TYPE_FILTERS = [
   { label: 'Dine In', value: 'dine_in', color: '#7C3AED', bg: '#F5F3FF', border: '#DDD6FE', Icon: UtensilsCrossed },
 ];
 
+export function getOrderItems(order: Order): any[] {
+  if (Array.isArray(order.orderedItems) && order.orderedItems.length > 0) {
+    return order.orderedItems;
+  }
+  if (Array.isArray((order as any).items) && (order as any).items.length > 0) {
+    return (order as any).items;
+  }
+  return [];
+}
+
+export function getItemName(item: any): string {
+  if (!item) return 'Item';
+  return (
+    item.name ||
+    item.itemName ||
+    item.title ||
+    item.dishName ||
+    item.productName ||
+    (typeof item.menuItemId === 'object' ? item.menuItemId?.name || item.menuItemId?.itemName : undefined) ||
+    (typeof item.itemId === 'object' ? item.itemId?.name || item.itemId?.itemName : undefined) ||
+    (typeof item.menuItem === 'object' ? item.menuItem?.name || item.menuItem?.itemName : undefined) ||
+    'Item'
+  );
+}
+
+export function getItemPrice(item: any): number {
+  if (!item) return 0;
+  const qty = Number(item.quantity || item.qty || 1);
+
+  // 1. Direct line total
+  const lineTotal = item.itemTotal ?? item.totalPrice ?? item.total;
+  if (lineTotal !== undefined && lineTotal !== null && !isNaN(Number(lineTotal)) && Number(lineTotal) > 0) {
+    return Number(lineTotal);
+  }
+
+  // 2. Unit price fields
+  const unitPrice =
+    item.price ??
+    item.basePrice ??
+    item.unitPrice ??
+    item.cost ??
+    item.rate ??
+    (typeof item.menuItemId === 'object' ? item.menuItemId?.price ?? item.menuItemId?.basePrice : undefined) ??
+    (typeof item.itemId === 'object' ? item.itemId?.price ?? item.itemId?.basePrice : undefined) ??
+    (typeof item.menuItem === 'object' ? item.menuItem?.price ?? item.menuItem?.basePrice : undefined);
+
+  if (unitPrice !== undefined && unitPrice !== null && !isNaN(Number(unitPrice)) && Number(unitPrice) > 0) {
+    return Number(unitPrice) * qty;
+  }
+
+  // 3. Customization price
+  if (item.customization) {
+    const customPrice = item.customization.price ?? item.customization.totalPrice;
+    if (customPrice !== undefined && customPrice !== null && !isNaN(Number(customPrice)) && Number(customPrice) > 0) {
+      return Number(customPrice) * qty;
+    }
+  }
+
+  return 0;
+}
+
 function getCustomerName(order: Order) {
   if (typeof order.customerId === 'object') return order.customerId?.fullName || order.customerDetails?.name || 'Customer';
   return order.customerDetails?.name || 'Customer';
@@ -76,10 +137,19 @@ function getRestaurantName(order: Order) {
 }
 
 function getTotalAmount(order: Order) {
-  return (
-    order.pricing?.totalAmount ?? order.pricing?.total ?? order.totalAmount ?? order.totalPrice ??
-    (order.orderedItems || []).reduce((acc, item) => acc + (item.price || 0) * (item.quantity || 1), 0)
-  );
+  const explicitTotal =
+    order.pricing?.totalAmount ??
+    order.pricing?.total ??
+    order.totalAmount ??
+    (order as any).totalPrice ??
+    (order as any).grandTotal;
+  if (explicitTotal !== undefined && explicitTotal !== null && !isNaN(Number(explicitTotal)) && Number(explicitTotal) > 0) {
+    return Number(explicitTotal);
+  }
+  const items = getOrderItems(order);
+  const itemsSum = items.reduce((acc, it) => acc + getItemPrice(it), 0);
+  const deliveryFee = Number(order.pricing?.deliveryFee ?? (order as any).deliveryFee ?? 0);
+  return itemsSum + deliveryFee;
 }
 
 function formatDateTime(iso: string) {
@@ -97,7 +167,7 @@ function formatPaymentLabel(order: Order) {
 function getOrderFulfillmentType(order: Order): 'delivery' | 'pickup' | 'dine_in' {
   const oType = ((order.orderType || (order as any).deliveryType || '') as string).toLowerCase();
   const notes = typeof order.notes === 'string' ? order.notes.toLowerCase() : '';
-  const addr1 = typeof order.deliveryAddress?.addressLine1 === 'string' ? order.deliveryAddress.addressLine1.toLowerCase() : '';
+  const addr1 = typeof (order.deliveryAddress as any)?.addressLine1 === 'string' ? (order.deliveryAddress as any).addressLine1.toLowerCase() : '';
 
   if (
     oType === 'dine_in' ||
@@ -140,35 +210,36 @@ function isOrderPickup(order: Order): boolean {
 }
 
 function getDeliveryAddressText(order: Order): string {
-  const addr = order.deliveryAddress;
+  const addr: any = order.deliveryAddress;
   if (!addr) {
-    if (typeof order.customerDetails?.address === 'string' && order.customerDetails.address.trim()) {
-      return order.customerDetails.address.trim();
+    const custAddr: any = order.customerDetails?.address;
+    if (typeof custAddr === 'string' && custAddr.trim()) {
+      return custAddr.trim();
     }
     return '';
   }
   if (typeof addr === 'string') return addr.trim();
 
-  if (addr.formattedAddress && addr.formattedAddress.trim()) {
+  if (addr.formattedAddress && typeof addr.formattedAddress === 'string' && addr.formattedAddress.trim()) {
     return addr.formattedAddress.trim();
   }
 
   const parts = [
-    (addr as any).houseNumber || (addr as any).flatNumber || (addr as any).doorNo,
+    addr.houseNumber || addr.flatNumber || addr.doorNo,
     addr.addressLine1,
     addr.addressLine2,
     addr.street,
-    (addr as any).landmark,
+    addr.landmark,
     addr.area,
     addr.city,
-    addr.postalCode || addr.postcode || (addr as any).zipCode,
+    addr.postalCode || addr.postcode || addr.zipCode,
   ].filter(Boolean);
 
   if (parts.length > 0) {
     return parts.join(', ');
   }
 
-  return (addr as any).fullAddress || (addr as any).address || '';
+  return addr.fullAddress || addr.address || '';
 }
 
 interface OrderCardProps {
@@ -176,9 +247,12 @@ interface OrderCardProps {
   onPress: (o: Order) => void;
   onAssignDelivery: (o: Order) => void;
   onUpdateStatus: (orderId: string, newStatus: string) => void;
+  onPrint: (o: Order) => void;
 }
 
-const OrderCardItem: React.FC<OrderCardProps> = ({ order, onPress, onAssignDelivery, onUpdateStatus }) => {
+const OrderCardItem: React.FC<OrderCardProps> = ({ order, onPress, onAssignDelivery, onUpdateStatus, onPrint }) => {
+  const { width: cardScreenWidth } = useWindowDimensions();
+  const isTablet = cardScreenWidth >= TABLET_BREAKPOINT;
   const [expanded, setExpanded] = useState(false);
   const customerName = getCustomerName(order);
   const customerPhone = getCustomerPhone(order);
@@ -186,7 +260,8 @@ const OrderCardItem: React.FC<OrderCardProps> = ({ order, onPress, onAssignDeliv
   const totalAmount = getTotalAmount(order);
   const isPaid = order.paymentStatus === 'paid' || order.paymentStatus === 'completed';
   const paymentLabel = formatPaymentLabel(order);
-  const itemCount = (order.orderedItems || []).length;
+  const orderItems = getOrderItems(order);
+  const itemCount = orderItems.length;
   const orderNum = order.orderNumber || order._id?.substring(0, 7).toUpperCase();
   const fulfillmentType = getOrderFulfillmentType(order);
   const isPickup = fulfillmentType === 'pickup';
@@ -194,235 +269,335 @@ const OrderCardItem: React.FC<OrderCardProps> = ({ order, onPress, onAssignDeliv
   const deliveryPartnerName = typeof order.assignedDeliveryPartnerId === 'object' ? order.assignedDeliveryPartnerId?.fullName : undefined;
 
   const renderCardActions = () => {
+    // 1. Delivered / Completed & Cancelled Orders
     if (order.status === 'delivered' || order.status === 'cancelled') {
-      return null;
+      return (
+        <View style={[styles.actionButtonsRow, isTablet && styles.actionButtonsRowTablet]}>
+          <TouchableOpacity
+            style={[styles.printFullBtn, isTablet && styles.printFullBtnTablet]}
+            onPress={(e: any) => {
+              e.stopPropagation?.();
+              onPrint(order);
+            }}
+            activeOpacity={0.8}
+          >
+            <Printer size={isTablet ? 15 : 13} color="#11181C" />
+            <Text style={[styles.printFullBtnText, isTablet && styles.printFullBtnTextTablet]}>Print Receipt</Text>
+          </TouchableOpacity>
+        </View>
+      );
     }
 
-    // 1. Placed (New Orders)
+    // 2. Placed (New Orders)
     if (order.status === 'placed') {
       return (
-        <View style={styles.actionButtonsRow}>
+        <View style={[styles.actionButtonsRow, isTablet && styles.actionButtonsRowTablet]}>
           <TouchableOpacity
-            style={styles.acceptBtn}
+            style={[styles.acceptBtn, isTablet && styles.acceptBtnTablet]}
             onPress={(e: any) => {
               e.stopPropagation?.();
               onUpdateStatus(order._id, 'preparing');
             }}
             activeOpacity={0.8}
           >
-            <Check size={13} color="#FFFFFF" />
-            <Text style={styles.acceptBtnText}>Accept Order</Text>
+            <Check size={isTablet ? 15 : 13} color="#FFFFFF" />
+            <Text style={[styles.acceptBtnText, isTablet && styles.acceptBtnTextTablet]}>Accept</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={styles.rejectBtn}
+            style={[styles.rejectBtn, isTablet && styles.rejectBtnTablet]}
             onPress={(e: any) => {
               e.stopPropagation?.();
               onUpdateStatus(order._id, 'cancelled');
             }}
             activeOpacity={0.8}
           >
-            <X size={13} color="#EF4444" />
-            <Text style={styles.rejectBtnText}>Reject Order</Text>
+            <X size={isTablet ? 15 : 13} color="#EF4444" />
+            <Text style={[styles.rejectBtnText, isTablet && styles.rejectBtnTextTablet]}>Reject</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.printIconBtn, isTablet && styles.printIconBtnTablet]}
+            onPress={(e: any) => {
+              e.stopPropagation?.();
+              onPrint(order);
+            }}
+            activeOpacity={0.8}
+          >
+            <Printer size={isTablet ? 16 : 14} color="#11181C" />
           </TouchableOpacity>
         </View>
       );
     }
 
-    // 2. In Kitchen / Preparing / Confirmed
+    // 3. In Kitchen / Preparing / Confirmed
     if (order.status === 'confirmed' || order.status === 'preparing') {
       if (fulfillmentType === 'dine_in') {
         // Eat-In (Dine-In) Order in Kitchen: "Ready to Serve" button -> marks served/delivered & Cancel button
         return (
-          <View style={styles.actionButtonsRow}>
+          <View style={[styles.actionButtonsRow, isTablet && styles.actionButtonsRowTablet]}>
             <TouchableOpacity
-              style={[styles.acceptBtn, { backgroundColor: '#7C3AED' }]}
+              style={[styles.acceptBtn, isTablet && styles.acceptBtnTablet, { backgroundColor: '#7C3AED' }]}
               onPress={(e: any) => {
                 e.stopPropagation?.();
                 onUpdateStatus(order._id, 'delivered');
               }}
               activeOpacity={0.8}
             >
-              <UtensilsCrossed size={13} color="#FFFFFF" />
-              <Text style={styles.acceptBtnText}>Ready to Serve</Text>
+              <UtensilsCrossed size={isTablet ? 15 : 13} color="#FFFFFF" />
+              <Text style={[styles.acceptBtnText, isTablet && styles.acceptBtnTextTablet]}>Ready to Serve</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={styles.rejectBtn}
+              style={[styles.rejectBtn, isTablet && styles.rejectBtnTablet]}
               onPress={(e: any) => {
                 e.stopPropagation?.();
                 onUpdateStatus(order._id, 'cancelled');
               }}
               activeOpacity={0.8}
             >
-              <X size={13} color="#EF4444" />
-              <Text style={styles.rejectBtnText}>Cancel Order</Text>
+              <X size={isTablet ? 15 : 13} color="#EF4444" />
+              <Text style={[styles.rejectBtnText, isTablet && styles.rejectBtnTextTablet]}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.printIconBtn, isTablet && styles.printIconBtnTablet]}
+              onPress={(e: any) => {
+                e.stopPropagation?.();
+                onPrint(order);
+              }}
+              activeOpacity={0.8}
+            >
+              <Printer size={isTablet ? 16 : 14} color="#11181C" />
             </TouchableOpacity>
           </View>
         );
       } else if (isPickup) {
         // Self Pickup in Kitchen: Show "Ready" (Ready for Pickup) -> moves to Self Pickup tab
         return (
-          <View style={styles.actionButtonsRow}>
+          <View style={[styles.actionButtonsRow, isTablet && styles.actionButtonsRowTablet]}>
             <TouchableOpacity
-              style={[styles.acceptBtn, { backgroundColor: '#FF5C39' }]}
+              style={[styles.acceptBtn, isTablet && styles.acceptBtnTablet, { backgroundColor: '#FF5C39' }]}
               onPress={(e: any) => {
                 e.stopPropagation?.();
                 onUpdateStatus(order._id, 'ready_for_pickup');
               }}
               activeOpacity={0.8}
             >
-              <Check size={13} color="#FFFFFF" />
-              <Text style={styles.acceptBtnText}>Ready for Pickup</Text>
+              <Check size={isTablet ? 15 : 13} color="#FFFFFF" />
+              <Text style={[styles.acceptBtnText, isTablet && styles.acceptBtnTextTablet]}>Ready for Pickup</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={styles.rejectBtn}
+              style={[styles.rejectBtn, isTablet && styles.rejectBtnTablet]}
               onPress={(e: any) => {
                 e.stopPropagation?.();
                 onUpdateStatus(order._id, 'cancelled');
               }}
               activeOpacity={0.8}
             >
-              <X size={13} color="#EF4444" />
-              <Text style={styles.rejectBtnText}>Cancel Order</Text>
+              <X size={isTablet ? 15 : 13} color="#EF4444" />
+              <Text style={[styles.rejectBtnText, isTablet && styles.rejectBtnTextTablet]}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.printIconBtn, isTablet && styles.printIconBtnTablet]}
+              onPress={(e: any) => {
+                e.stopPropagation?.();
+                onPrint(order);
+              }}
+              activeOpacity={0.8}
+            >
+              <Printer size={isTablet ? 16 : 14} color="#11181C" />
             </TouchableOpacity>
           </View>
         );
       } else {
         // Delivery order in kitchen: Button to assign Rider + Out for Delivery button
         return (
-          <View style={styles.actionButtonsRow}>
+          <View style={[styles.actionButtonsRow, isTablet && styles.actionButtonsRowTablet]}>
             <TouchableOpacity
-              style={styles.assignDriverIconBtn}
+              style={[styles.assignDriverIconBtn, isTablet && styles.assignDriverIconBtnTablet]}
               onPress={(e: any) => {
                 e.stopPropagation?.();
                 onAssignDelivery(order);
               }}
               activeOpacity={0.8}
             >
-              <Bike size={13} color="#FFFFFF" />
-              <Text style={styles.assignDriverText}>
+              <Bike size={isTablet ? 15 : 13} color="#FFFFFF" />
+              <Text style={[styles.assignDriverText, isTablet && styles.assignDriverTextTablet]}>
                 {deliveryPartnerName ? `Rider: ${deliveryPartnerName}` : 'Assign Rider'}
               </Text>
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={styles.outForDeliveryBtn}
+              style={[styles.outForDeliveryBtn, isTablet && styles.outForDeliveryBtnTablet]}
               onPress={(e: any) => {
                 e.stopPropagation?.();
                 onUpdateStatus(order._id, 'out_for_delivery');
               }}
               activeOpacity={0.8}
             >
-              <Truck size={13} color="#FFFFFF" />
-              <Text style={styles.outForDeliveryBtnText}>Out for Delivery</Text>
+              <Truck size={isTablet ? 15 : 13} color="#FFFFFF" />
+              <Text style={[styles.outForDeliveryBtnText, isTablet && styles.outForDeliveryBtnTextTablet]}>Out for Delivery</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.printIconBtn, isTablet && styles.printIconBtnTablet]}
+              onPress={(e: any) => {
+                e.stopPropagation?.();
+                onPrint(order);
+              }}
+              activeOpacity={0.8}
+            >
+              <Printer size={isTablet ? 16 : 14} color="#11181C" />
             </TouchableOpacity>
           </View>
         );
       }
     }
 
-    // 3. Self Pickup Orders in Ready State (Waiting in Self Pickup Tab for Customer Collection)
+    // 4. Self Pickup Orders in Ready State (Waiting in Self Pickup Tab for Customer Collection)
     if (isPickup && order.status === 'ready_for_pickup') {
       return (
-        <View style={styles.actionButtonsRow}>
+        <View style={[styles.actionButtonsRow, isTablet && styles.actionButtonsRowTablet]}>
           <TouchableOpacity
-            style={[styles.acceptBtn, { backgroundColor: '#10B981' }]}
+            style={[styles.acceptBtn, isTablet && styles.acceptBtnTablet, { backgroundColor: '#10B981' }]}
             onPress={(e: any) => {
               e.stopPropagation?.();
               onUpdateStatus(order._id, 'delivered');
             }}
             activeOpacity={0.8}
           >
-            <Check size={13} color="#FFFFFF" />
-            <Text style={styles.acceptBtnText}>Delivered</Text>
+            <Check size={isTablet ? 15 : 13} color="#FFFFFF" />
+            <Text style={[styles.acceptBtnText, isTablet && styles.acceptBtnTextTablet]}>Delivered</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={styles.rejectBtn}
+            style={[styles.rejectBtn, isTablet && styles.rejectBtnTablet]}
             onPress={(e: any) => {
               e.stopPropagation?.();
               onUpdateStatus(order._id, 'cancelled');
             }}
             activeOpacity={0.8}
           >
-            <X size={13} color="#EF4444" />
-            <Text style={styles.rejectBtnText}>Cancel Order</Text>
+            <X size={isTablet ? 15 : 13} color="#EF4444" />
+            <Text style={[styles.rejectBtnText, isTablet && styles.rejectBtnTextTablet]}>Cancel</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.printIconBtn, isTablet && styles.printIconBtnTablet]}
+            onPress={(e: any) => {
+              e.stopPropagation?.();
+              onPrint(order);
+            }}
+            activeOpacity={0.8}
+          >
+            <Printer size={isTablet ? 16 : 14} color="#11181C" />
           </TouchableOpacity>
         </View>
       );
     }
 
-    // 3. Out for Delivery
+    // 5. Out for Delivery
     if (order.status === 'out_for_delivery') {
       return (
-        <View style={styles.actionButtonsRow}>
+        <View style={[styles.actionButtonsRow, isTablet && styles.actionButtonsRowTablet]}>
           <TouchableOpacity
-            style={styles.acceptBtn}
+            style={[styles.acceptBtn, isTablet && styles.acceptBtnTablet]}
             onPress={(e: any) => {
               e.stopPropagation?.();
               onUpdateStatus(order._id, 'delivered');
             }}
             activeOpacity={0.8}
           >
-            <Check size={13} color="#FFFFFF" />
-            <Text style={styles.acceptBtnText}>Mark Delivered</Text>
+            <Check size={isTablet ? 15 : 13} color="#FFFFFF" />
+            <Text style={[styles.acceptBtnText, isTablet && styles.acceptBtnTextTablet]}>Mark Delivered</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={styles.assignDriverIconBtn}
+            style={[styles.assignDriverIconBtn, isTablet && styles.assignDriverIconBtnTablet]}
             onPress={(e: any) => {
               e.stopPropagation?.();
               onAssignDelivery(order);
             }}
             activeOpacity={0.8}
           >
-            <Bike size={13} color="#FFFFFF" />
-            <Text style={styles.assignDriverText}>
+            <Bike size={isTablet ? 15 : 13} color="#FFFFFF" />
+            <Text style={[styles.assignDriverText, isTablet && styles.assignDriverTextTablet]}>
               {deliveryPartnerName ? `Rider: ${deliveryPartnerName}` : 'Assign Rider'}
             </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.printIconBtn, isTablet && styles.printIconBtnTablet]}
+            onPress={(e: any) => {
+              e.stopPropagation?.();
+              onPrint(order);
+            }}
+            activeOpacity={0.8}
+          >
+            <Printer size={isTablet ? 16 : 14} color="#11181C" />
           </TouchableOpacity>
         </View>
       );
     }
 
-    // 4. Any other active Self Pickup order
+    // 6. Any other active Self Pickup order
     if (isPickup) {
       return (
-        <View style={styles.actionButtonsRow}>
+        <View style={[styles.actionButtonsRow, isTablet && styles.actionButtonsRowTablet]}>
           <TouchableOpacity
-            style={[styles.acceptBtn, { backgroundColor: '#10B981' }]}
+            style={[styles.acceptBtn, isTablet && styles.acceptBtnTablet, { backgroundColor: '#10B981' }]}
             onPress={(e: any) => {
               e.stopPropagation?.();
               onUpdateStatus(order._id, 'delivered');
             }}
             activeOpacity={0.8}
           >
-            <Check size={13} color="#FFFFFF" />
-            <Text style={styles.acceptBtnText}>Delivered</Text>
+            <Check size={isTablet ? 15 : 13} color="#FFFFFF" />
+            <Text style={[styles.acceptBtnText, isTablet && styles.acceptBtnTextTablet]}>Delivered</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={styles.rejectBtn}
+            style={[styles.rejectBtn, isTablet && styles.rejectBtnTablet]}
             onPress={(e: any) => {
               e.stopPropagation?.();
               onUpdateStatus(order._id, 'cancelled');
             }}
             activeOpacity={0.8}
           >
-            <X size={13} color="#EF4444" />
-            <Text style={styles.rejectBtnText}>Cancel Order</Text>
+            <X size={isTablet ? 15 : 13} color="#EF4444" />
+            <Text style={[styles.rejectBtnText, isTablet && styles.rejectBtnTextTablet]}>Cancel</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.printIconBtn, isTablet && styles.printIconBtnTablet]}
+            onPress={(e: any) => {
+              e.stopPropagation?.();
+              onPrint(order);
+            }}
+            activeOpacity={0.8}
+          >
+            <Printer size={isTablet ? 16 : 14} color="#11181C" />
           </TouchableOpacity>
         </View>
       );
     }
 
-    return null;
+    return (
+      <View style={[styles.actionButtonsRow, isTablet && styles.actionButtonsRowTablet]}>
+        <TouchableOpacity
+          style={[styles.printFullBtn, isTablet && styles.printFullBtnTablet]}
+          onPress={(e: any) => {
+            e.stopPropagation?.();
+            onPrint(order);
+          }}
+          activeOpacity={0.8}
+        >
+          <Printer size={isTablet ? 15 : 13} color="#11181C" />
+          <Text style={[styles.printFullBtnText, isTablet && styles.printFullBtnTextTablet]}>Print Receipt</Text>
+        </TouchableOpacity>
+      </View>
+    );
   };
 
   return (
-    <TouchableOpacity activeOpacity={0.88} onPress={() => onPress(order)} style={styles.kanbanCard}>
+    <TouchableOpacity activeOpacity={0.88} onPress={() => onPress(order)} style={[styles.kanbanCard, isTablet && styles.kanbanCardTablet]}>
       {/* Watermark Stamp Overlay for Completed (Success) & Cancelled Orders */}
       {order.status === 'delivered' && (
         <View style={styles.stampOverlay} pointerEvents="none">
           <View style={[styles.stampBox, styles.stampSuccess]}>
-            <CheckCircle2 size={13} color="#10B981" style={{ marginRight: 3 }} />
-            <Text style={[styles.stampText, styles.stampSuccessText]}>SUCCESS</Text>
+            <CheckCircle2 size={isTablet ? 15 : 13} color="#10B981" style={{ marginRight: 3 }} />
+            <Text style={[styles.stampText, styles.stampSuccessText, isTablet && { fontSize: 16 }]}>SUCCESS</Text>
           </View>
         </View>
       )}
@@ -430,8 +605,8 @@ const OrderCardItem: React.FC<OrderCardProps> = ({ order, onPress, onAssignDeliv
       {order.status === 'cancelled' && (
         <View style={styles.stampOverlay} pointerEvents="none">
           <View style={[styles.stampBox, styles.stampCancelled]}>
-            <X size={13} color="#EF4444" style={{ marginRight: 3 }} />
-            <Text style={[styles.stampText, styles.stampCancelledText]}>CANCELLED</Text>
+            <X size={isTablet ? 15 : 13} color="#EF4444" style={{ marginRight: 3 }} />
+            <Text style={[styles.stampText, styles.stampCancelledText, isTablet && { fontSize: 16 }]}>CANCELLED</Text>
           </View>
         </View>
       )}
@@ -439,61 +614,61 @@ const OrderCardItem: React.FC<OrderCardProps> = ({ order, onPress, onAssignDeliv
       <View style={styles.kanbanCardTop}>
         <View style={styles.kanbanOrderIdCol}>
           <View style={styles.kanbanOrderIdRow}>
-            <Text style={styles.kanbanOrderId}>#{orderNum}</Text>
-            {isPaid && <View style={styles.paidBadge}><Text style={styles.paidBadgeText}>PAID</Text></View>}
+            <Text style={[styles.kanbanOrderId, isTablet && styles.kanbanOrderIdTablet]}>#{orderNum}</Text>
+            {isPaid && <View style={styles.paidBadge}><Text style={[styles.paidBadgeText, isTablet && { fontSize: 10 }]}>PAID</Text></View>}
           </View>
-          <Text style={styles.kanbanPaymentBelowId}>{paymentLabel}</Text>
+          <Text style={[styles.kanbanPaymentBelowId, isTablet && styles.kanbanPaymentBelowIdTablet]}>{paymentLabel}</Text>
         </View>
 
         <View style={styles.kanbanAmountRow}>
-          <Text style={styles.kanbanAmount}>£{(totalAmount || 0).toFixed(2)}</Text>
-          <Text style={styles.kanbanItemCount}>{itemCount} items</Text>
+          <Text style={[styles.kanbanAmount, isTablet && styles.kanbanAmountTablet]}>£{(totalAmount || 0).toFixed(2)}</Text>
+          <Text style={[styles.kanbanItemCount, isTablet && styles.kanbanItemCountTablet]}>{itemCount} items</Text>
         </View>
       </View>
 
       <View style={styles.kanbanMeta}>
-        <Text style={styles.kanbanRestaurant} numberOfLines={1}>{restaurantName}</Text>
+        <Text style={[styles.kanbanRestaurant, isTablet && styles.kanbanRestaurantTablet]} numberOfLines={1}>{restaurantName}</Text>
       </View>
 
       <View style={styles.kanbanDivider} />
 
-      <View style={styles.kanbanCustomerRow}>
-        <View style={styles.kanbanAvatar}>
-          <Text style={styles.kanbanAvatarText}>{customerName.charAt(0).toUpperCase()}</Text>
+      <View style={[styles.kanbanCustomerRow, isTablet && styles.kanbanCustomerRowTablet]}>
+        <View style={[styles.kanbanAvatar, isTablet && styles.kanbanAvatarTablet]}>
+          <Text style={[styles.kanbanAvatarText, isTablet && styles.kanbanAvatarTextTablet]}>{customerName.charAt(0).toUpperCase()}</Text>
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={styles.kanbanCustomerName}>{customerName}</Text>
-          {customerPhone ? <Text style={styles.kanbanCustomerPhone}>{customerPhone}</Text> : null}
+          <Text style={[styles.kanbanCustomerName, isTablet && styles.kanbanCustomerNameTablet]}>{customerName}</Text>
+          {customerPhone ? <Text style={[styles.kanbanCustomerPhone, isTablet && styles.kanbanCustomerPhoneTablet]}>{customerPhone}</Text> : null}
         </View>
       </View>
 
       {fulfillmentType === 'delivery' && deliveryAddressText ? (
-        <View style={styles.kanbanAddressRow}>
-          <MapPin size={13} color="#2563EB" style={styles.addressPinIcon} />
+        <View style={[styles.kanbanAddressRow, isTablet && styles.kanbanAddressRowTablet]}>
+          <MapPin size={isTablet ? 15 : 13} color="#2563EB" style={styles.addressPinIcon} />
           <View style={{ flex: 1 }}>
-            <Text style={styles.kanbanAddressHeader}>Delivery Address:</Text>
-            <Text style={styles.kanbanAddressText} numberOfLines={2}>
+            <Text style={[styles.kanbanAddressHeader, isTablet && styles.kanbanAddressHeaderTablet]}>Delivery Address:</Text>
+            <Text style={[styles.kanbanAddressText, isTablet && styles.kanbanAddressTextTablet]} numberOfLines={2}>
               {deliveryAddressText}
             </Text>
           </View>
         </View>
       ) : null}
 
-      <View style={styles.kanbanTypeRow}>
+      <View style={[styles.kanbanTypeRow, isTablet && styles.kanbanTypeRowTablet]}>
         {fulfillmentType === 'delivery' ? (
-          <View style={styles.deliveryTag}>
-            <Bike size={12} color="#2563EB" />
-            <Text style={styles.deliveryTagText}>Delivery Order</Text>
+          <View style={[styles.deliveryTag, isTablet && { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 }]}>
+            <Bike size={isTablet ? 14 : 12} color="#2563EB" />
+            <Text style={[styles.deliveryTagText, isTablet && { fontSize: 12 }]}>Delivery Order</Text>
           </View>
         ) : fulfillmentType === 'dine_in' ? (
-          <View style={styles.dineInTag}>
-            <UtensilsCrossed size={12} color="#7C3AED" />
-            <Text style={styles.dineInTagText}>
+          <View style={[styles.dineInTag, isTablet && { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 }]}>
+            <UtensilsCrossed size={isTablet ? 14 : 12} color="#7C3AED" />
+            <Text style={[styles.dineInTagText, isTablet && { fontSize: 12 }]}>
               Eat-In (Dine In) {
                 (order as any).tableNumber
                   ? `• Table ${(order as any).tableNumber}`
-                  : order.deliveryAddress?.addressLine1?.toLowerCase().startsWith('table')
-                  ? `• ${order.deliveryAddress.addressLine1}`
+                  : (order.deliveryAddress as any)?.addressLine1?.toLowerCase().startsWith('table')
+                  ? `• ${(order.deliveryAddress as any).addressLine1}`
                   : typeof order.notes === 'string' && order.notes.includes('Table')
                   ? `• ${order.notes}`
                   : ''
@@ -501,9 +676,9 @@ const OrderCardItem: React.FC<OrderCardProps> = ({ order, onPress, onAssignDeliv
             </Text>
           </View>
         ) : (
-          <View style={styles.pickupTag}>
-            <ShoppingBag size={12} color="#EA580C" />
-            <Text style={styles.pickupTagText}>
+          <View style={[styles.pickupTag, isTablet && { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 }]}>
+            <ShoppingBag size={isTablet ? 14 : 12} color="#EA580C" />
+            <Text style={[styles.pickupTagText, isTablet && { fontSize: 12 }]}>
               {order.status === 'delivered'
                 ? 'Self Pickup (Picked Up)'
                 : order.status === 'ready_for_pickup'
@@ -515,17 +690,17 @@ const OrderCardItem: React.FC<OrderCardProps> = ({ order, onPress, onAssignDeliv
           </View>
         )}
         {deliveryPartnerName && (
-          <View style={styles.riderBadge}>
-            <Bike size={11} color="#6B7280" />
-            <Text style={styles.riderText}>{deliveryPartnerName}</Text>
+          <View style={[styles.riderBadge, isTablet && { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 }]}>
+            <Bike size={isTablet ? 13 : 11} color="#6B7280" />
+            <Text style={[styles.riderText, isTablet && { fontSize: 11 }]}>{deliveryPartnerName}</Text>
           </View>
         )}
       </View>
 
       <View style={styles.kanbanFooter}>
         <View style={styles.kanbanDateRow}>
-          <Clock size={11} color="#9BA1A6" />
-          <Text style={styles.kanbanDate}>{formatDateTime(order.createdAt)}</Text>
+          <Clock size={isTablet ? 13 : 11} color="#9BA1A6" />
+          <Text style={[styles.kanbanDate, isTablet && { fontSize: 11 }]}>{formatDateTime(order.createdAt)}</Text>
         </View>
         <View
           style={[
@@ -540,6 +715,7 @@ const OrderCardItem: React.FC<OrderCardProps> = ({ order, onPress, onAssignDeliv
           <Text
             style={[
               styles.orderTypeText,
+              isTablet && { fontSize: 10 },
               fulfillmentType === 'delivery'
                 ? { color: '#2563EB' }
                 : fulfillmentType === 'dine_in'
@@ -552,24 +728,37 @@ const OrderCardItem: React.FC<OrderCardProps> = ({ order, onPress, onAssignDeliv
         </View>
       </View>
 
-      <TouchableOpacity style={styles.viewItemsBtn} onPress={() => setExpanded(!expanded)} activeOpacity={0.7}>
-        <Text style={styles.viewItemsBtnText}>VIEW ITEMS & NOTES</Text>
-        {expanded ? <ChevronUp size={13} color="#9BA1A6" /> : <ChevronDown size={13} color="#9BA1A6" />}
+      <TouchableOpacity style={[styles.viewItemsBtn, isTablet && { marginTop: 12, paddingTop: 10 }]} onPress={() => setExpanded(!expanded)} activeOpacity={0.7}>
+        <Text style={[styles.viewItemsBtnText, isTablet && { fontSize: 11 }]}>VIEW ITEMS & NOTES ({itemCount})</Text>
+        {expanded ? <ChevronUp size={isTablet ? 15 : 13} color="#9BA1A6" /> : <ChevronDown size={isTablet ? 15 : 13} color="#9BA1A6" />}
       </TouchableOpacity>
 
       {expanded && (
         <View style={styles.itemsList}>
-          {(order.orderedItems || []).map((item, idx) => (
-            <View key={idx} style={styles.itemRow}>
-              <Text style={styles.itemQty}>{item.quantity}x</Text>
-              <Text style={styles.itemName} numberOfLines={1}>{item.name || (item as any).itemName}</Text>
-              <Text style={styles.itemPrice}>£{((item.price || 0) * item.quantity).toFixed(2)}</Text>
-            </View>
-          ))}
+          {orderItems.map((item: any, idx: number) => {
+            const itemName = getItemName(item);
+            const itemQty = Number(item.quantity || item.qty || 1);
+            const itemTotalPrice = getItemPrice(item);
+            return (
+              <View key={idx} style={styles.itemRow}>
+                <Text style={[styles.itemQty, isTablet && { fontSize: 12.5 }]}>{itemQty}x</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.itemName, isTablet && { fontSize: 12.5 }]} numberOfLines={1}>{itemName}</Text>
+                  {item.customization?.size ? (
+                    <Text style={[styles.itemMeta, isTablet && { fontSize: 11 }]}>Size: {item.customization.size}</Text>
+                  ) : null}
+                  {item.customization?.addOns && item.customization.addOns.length > 0 ? (
+                    <Text style={[styles.itemMeta, isTablet && { fontSize: 11 }]}>+{item.customization.addOns.join(', ')}</Text>
+                  ) : null}
+                </View>
+                <Text style={[styles.itemPrice, isTablet && { fontSize: 12.5 }]}>£{itemTotalPrice.toFixed(2)}</Text>
+              </View>
+            );
+          })}
           {order.notes ? (
             <View style={styles.noteRow}>
-              <Text style={styles.noteLabel}>Note: </Text>
-              <Text style={styles.noteText}>{order.notes}</Text>
+              <Text style={[styles.noteLabel, isTablet && { fontSize: 12 }]}>Note: </Text>
+              <Text style={[styles.noteText, isTablet && { fontSize: 12 }]}>{order.notes}</Text>
             </View>
           ) : null}
         </View>
@@ -581,6 +770,22 @@ const OrderCardItem: React.FC<OrderCardProps> = ({ order, onPress, onAssignDeliv
 };
 
 export default function OrdersScreen() {
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const isTablet = windowWidth >= TABLET_BREAKPOINT;
+
+  // Tablet & responsive column layout:
+  // On tablet screens (>= 768px in portrait or landscape):
+  // Each order column/card occupies approximately 50% of the available screen width (2 columns per view row),
+  // accounting for horizontal padding on both sides (16 * 2 = 32) and column gap (16) = 48px total.
+  // On phones (< 768px): 75% of screen width to show single focused column with adjacent peek.
+  const boardHorizontalPadding = isTablet ? 16 : 12;
+  const boardColumnGap = isTablet ? 16 : 12;
+  const columnWidth = isTablet
+    ? Math.floor((windowWidth - (boardHorizontalPadding * 2 + boardColumnGap)) / 2)
+    : Math.round(windowWidth * 0.75);
+  const snapInterval = columnWidth + boardColumnGap;
+  const columnMaxHeight = Math.max(420, windowHeight - (isTablet ? 190 : 210));
+
   const { showToast } = useToast();
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
@@ -598,7 +803,7 @@ export default function OrdersScreen() {
     try {
       if (!isRefresh) setLoading(true);
       const res = await orderService.getAllOrders({ page: 1, limit: 200 });
-      const orderList = res.data || res.orders;
+      const orderList = res.data || (res as any).orders;
       if (res.success && orderList) setOrders(orderList);
     } catch (e) {
       console.error('Failed fetching orders:', e);
@@ -734,6 +939,47 @@ export default function OrdersScreen() {
       fetchOrders(true);
     } else {
       showToast({ title: 'Error', message: res.message || 'Failed to assign.', type: 'error' });
+    }
+  };
+
+  const handlePrintOrder = async (order: Order) => {
+    const orderNum = order.orderNumber || order._id?.slice(-5).toUpperCase() || 'Order';
+    const orderStatus = order.status;
+    console.log(`\n[PRINT CLICK] User tapped "Print Receipt" on Order #${orderNum} | Stage: "${orderStatus}" | ID: ${order._id}`);
+
+    try {
+      showToast({ title: 'Printing Receipt...', message: `Sending #${orderNum} (${orderStatus}) to printer...`, type: 'info' });
+
+      let orderToPrint: any = order;
+      if (!orderToPrint?.orderedItems?.length && !(orderToPrint as any)?.items?.length) {
+        console.log(`[PRINT CLICK] Order items missing in card view, fetching full details for #${orderNum}...`);
+        const fullRes = await orderService.getOrderById(order._id);
+        if (fullRes.success && fullRes.data) {
+          orderToPrint = fullRes.data;
+        }
+      }
+
+      const success = await printThermalReceipt(orderToPrint, true);
+      const report = getLastPrintJobReport();
+
+      console.log(`[PRINT CLICK RESULT] Order #${orderNum} | Result: ${success ? '✅ SUCCESS' : '❌ FAILED'} | Driver: ${report?.driverLabel || 'Unknown'} | Time: ${report?.durationMs || 0}ms`);
+
+      if (success) {
+        showToast({
+          title: 'Print Success ✅',
+          message: `Receipt printed via ${report?.driverLabel || 'printer'}.`,
+          type: 'success',
+        });
+      } else {
+        showToast({
+          title: 'Print Status Notice',
+          message: report?.error || 'Printer not ready or print cancelled.',
+          type: 'info',
+        });
+      }
+    } catch (err: any) {
+      console.error(`[PRINT CLICK ERROR] Order #${orderNum} failed:`, err);
+      showToast({ title: 'Print Error ❌', message: err?.message || 'Failed to print receipt.', type: 'error' });
     }
   };
 
@@ -886,27 +1132,28 @@ export default function OrdersScreen() {
           </View>
         ) : (
           <FlatList
-                data={activeTabOrders}
-                keyExtractor={(item) => item._id}
-                contentContainerStyle={styles.tabOrdersList}
-                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#FF5C39" colors={['#FF5C39']} />}
-                renderItem={({ item }) => (
-                  <OrderCardItem
-                    order={item}
-                    onPress={(o) => { setSelectedOrder(o); setDetailModalVisible(true); }}
-                    onAssignDelivery={(o) => { setSelectedOrder(o); setAssignModalVisible(true); }}
-                    onUpdateStatus={handleUpdateStatus}
-                  />
-                )}
+            data={activeTabOrders}
+            keyExtractor={(item) => item._id}
+            contentContainerStyle={[styles.tabOrdersList, isTablet && styles.tabOrdersListTablet]}
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#FF5C39" colors={['#FF5C39']} />}
+            renderItem={({ item }) => (
+              <OrderCardItem
+                order={item}
+                onPress={(o) => { setSelectedOrder(o); setDetailModalVisible(true); }}
+                onAssignDelivery={(o) => { setSelectedOrder(o); setAssignModalVisible(true); }}
+                onUpdateStatus={handleUpdateStatus}
+                onPrint={handlePrintOrder}
               />
+            )}
+          />
         )
       ) : (
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.kanbanBoard}
+          contentContainerStyle={[styles.kanbanBoard, isTablet && styles.kanbanBoardTablet]}
           decelerationRate="fast"
-          snapToInterval={COLUMN_WIDTH + 12}
+          snapToInterval={snapInterval}
           snapToAlignment="start"
         >
           {STATUS_TABS.filter((c) => c.id !== 'all').map((col) => {
@@ -917,47 +1164,55 @@ export default function OrdersScreen() {
               : filteredOrders.filter((o) => col.statuses.includes(o.status));
             const { Icon, accentColor, label, subtitle } = col;
             return (
-              <View key={col.id} style={[styles.kanbanColumn, { width: COLUMN_WIDTH }]}>
-                <View style={[styles.kanbanColumnHeader, { borderLeftColor: accentColor }]}>
+              <View
+                key={col.id}
+                style={[
+                  styles.kanbanColumn,
+                  isTablet && styles.kanbanColumnTablet,
+                  { width: columnWidth, maxHeight: columnMaxHeight },
+                ]}
+              >
+                <View style={[styles.kanbanColumnHeader, isTablet && styles.kanbanColumnHeaderTablet, { borderLeftColor: accentColor }]}>
                   <View style={styles.kanbanColumnHeaderLeft}>
-                    <Icon size={16} color={accentColor} />
+                    <Icon size={isTablet ? 18 : 16} color={accentColor} />
                     <View style={{ marginLeft: 8 }}>
-                      <Text style={styles.kanbanColumnTitle}>{label}</Text>
-                      <Text style={styles.kanbanColumnSubtitle}>{subtitle}</Text>
+                      <Text style={[styles.kanbanColumnTitle, isTablet && styles.kanbanColumnTitleTablet]}>{label}</Text>
+                      <Text style={[styles.kanbanColumnSubtitle, isTablet && styles.kanbanColumnSubtitleTablet]}>{subtitle}</Text>
                     </View>
                   </View>
-                  <View style={[styles.kanbanBadge, { backgroundColor: accentColor }]}>
-                    <Text style={styles.kanbanBadgeText}>{ordersInCol.length}</Text>
+                  <View style={[styles.kanbanBadge, isTablet && styles.kanbanBadgeTablet, { backgroundColor: accentColor }]}>
+                    <Text style={[styles.kanbanBadgeText, isTablet && styles.kanbanBadgeTextTablet]}>{ordersInCol.length}</Text>
                   </View>
                 </View>
                 {loading ? (
                   <View style={styles.columnCenter}><ActivityIndicator size="small" color={accentColor} /></View>
                 ) : ordersInCol.length === 0 ? (
                   <View style={styles.columnCenter}>
-                    <Icon size={36} color="#EEEEEE" />
-                    <Text style={styles.emptyColumnText}>No orders in {label.toLowerCase()}</Text>
+                    <Icon size={isTablet ? 42 : 36} color="#EEEEEE" />
+                    <Text style={[styles.emptyColumnText, isTablet && { fontSize: 13 }]}>No orders in {label.toLowerCase()}</Text>
                   </View>
                 ) : (
                   <FlatList
-                        data={ordersInCol}
-                        keyExtractor={(item) => item._id}
-                        showsVerticalScrollIndicator={false}
-                        contentContainerStyle={styles.kanbanCardList}
-                        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={accentColor} colors={[accentColor]} />}
-                        renderItem={({ item }) => (
-                          <OrderCardItem
-                            order={item}
-                            onPress={(o) => { setSelectedOrder(o); setDetailModalVisible(true); }}
-                            onAssignDelivery={(o) => { setSelectedOrder(o); setAssignModalVisible(true); }}
-                            onUpdateStatus={handleUpdateStatus}
-                          />
-                        )}
+                    data={ordersInCol}
+                    keyExtractor={(item) => item._id}
+                    showsVerticalScrollIndicator={false}
+                    contentContainerStyle={[styles.kanbanCardList, isTablet && styles.kanbanCardListTablet]}
+                    refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={accentColor} colors={[accentColor]} />}
+                    renderItem={({ item }) => (
+                      <OrderCardItem
+                        order={item}
+                        onPress={(o) => { setSelectedOrder(o); setDetailModalVisible(true); }}
+                        onAssignDelivery={(o) => { setSelectedOrder(o); setAssignModalVisible(true); }}
+                        onUpdateStatus={handleUpdateStatus}
+                        onPrint={handlePrintOrder}
                       />
+                    )}
+                  />
                 )}
               </View>
             );
           })}
-          </ScrollView>
+        </ScrollView>
       )}
 
       <OrderDetailModal
@@ -1182,6 +1437,38 @@ const styles = StyleSheet.create({
   outForDeliveryBtnText: { color: '#FFFFFF', fontSize: 12, fontWeight: '700' },
   assignDriverIconBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, backgroundColor: '#FF5C39', borderRadius: 8, paddingVertical: 8 },
   assignDriverText: { color: '#FFFFFF', fontSize: 12, fontWeight: '700' },
+  printIconBtn: {
+    width: 36,
+    height: 34,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  printFullBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 8,
+    paddingVertical: 8,
+  },
+  printFullBtnText: {
+    color: '#0F172A',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  itemMeta: {
+    fontSize: 10,
+    color: '#94A3B8',
+    marginTop: 1,
+  },
 
   /* Watermark Stamp Styles */
   stampOverlay: {
@@ -1223,5 +1510,147 @@ const styles = StyleSheet.create({
   },
   stampCancelledText: {
     color: '#EF4444',
+  },
+
+  /* Tablet Responsive Layout Enhancements (width >= 768px) */
+  kanbanBoardTablet: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 110,
+    gap: 16,
+  },
+  kanbanColumnTablet: {
+    borderRadius: 16,
+    borderWidth: 1.5,
+  },
+  kanbanColumnHeaderTablet: {
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderLeftWidth: 5,
+  },
+  kanbanColumnTitleTablet: {
+    fontSize: 15,
+  },
+  kanbanColumnSubtitleTablet: {
+    fontSize: 11,
+  },
+  kanbanBadgeTablet: {
+    minWidth: 28,
+    height: 28,
+    borderRadius: 14,
+  },
+  kanbanBadgeTextTablet: {
+    fontSize: 13,
+  },
+  kanbanCardListTablet: {
+    padding: 12,
+    gap: 12,
+  },
+  kanbanCardTablet: {
+    padding: 16,
+    borderRadius: 12,
+    borderWidth: 1.5,
+  },
+  kanbanOrderIdTablet: {
+    fontSize: 15,
+  },
+  kanbanPaymentBelowIdTablet: {
+    fontSize: 12,
+  },
+  kanbanAmountTablet: {
+    fontSize: 17,
+  },
+  kanbanItemCountTablet: {
+    fontSize: 11,
+  },
+  kanbanRestaurantTablet: {
+    fontSize: 12.5,
+  },
+  kanbanCustomerRowTablet: {
+    marginBottom: 8,
+    gap: 10,
+  },
+  kanbanAvatarTablet: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+  },
+  kanbanAvatarTextTablet: {
+    fontSize: 13,
+  },
+  kanbanCustomerNameTablet: {
+    fontSize: 14.5,
+  },
+  kanbanCustomerPhoneTablet: {
+    fontSize: 12,
+  },
+  kanbanAddressRowTablet: {
+    paddingHorizontal: 11,
+    paddingVertical: 9,
+    marginBottom: 10,
+    gap: 8,
+    borderRadius: 9,
+  },
+  kanbanAddressHeaderTablet: {
+    fontSize: 11,
+  },
+  kanbanAddressTextTablet: {
+    fontSize: 12.5,
+    lineHeight: 18,
+  },
+  kanbanTypeRowTablet: {
+    marginBottom: 10,
+    gap: 8,
+  },
+  actionButtonsRowTablet: {
+    gap: 10,
+    marginTop: 12,
+  },
+  acceptBtnTablet: {
+    paddingVertical: 10,
+    borderRadius: 9,
+  },
+  acceptBtnTextTablet: {
+    fontSize: 13,
+  },
+  rejectBtnTablet: {
+    paddingVertical: 10,
+    borderRadius: 9,
+  },
+  rejectBtnTextTablet: {
+    fontSize: 13,
+  },
+  outForDeliveryBtnTablet: {
+    paddingVertical: 10,
+    borderRadius: 9,
+  },
+  outForDeliveryBtnTextTablet: {
+    fontSize: 13,
+  },
+  assignDriverIconBtnTablet: {
+    paddingVertical: 10,
+    borderRadius: 9,
+  },
+  assignDriverTextTablet: {
+    fontSize: 13,
+  },
+  printFullBtnTablet: {
+    paddingVertical: 10,
+    borderRadius: 9,
+  },
+  printFullBtnTextTablet: {
+    fontSize: 13,
+  },
+  printIconBtnTablet: {
+    width: 42,
+    height: 40,
+    borderRadius: 9,
+  },
+  tabOrdersListTablet: {
+    maxWidth: 860,
+    width: '100%',
+    alignSelf: 'center',
+    padding: 20,
+    gap: 14,
   },
 });

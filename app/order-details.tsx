@@ -32,7 +32,7 @@ import {
   ChevronDown,
   ChevronUp,
 } from 'lucide-react-native';
-import { printThermalReceipt, isAutoPrintEnabled } from '../services/thermal-print.service';
+import { printThermalReceipt, isAutoPrintEnabled, getLastPrintJobReport } from '../services/thermal-print.service';
 
 const STATUS_DROPDOWN_OPTIONS = [
   { label: 'Placed', sub: 'New Order Received', value: 'placed', icon: '📦' },
@@ -58,17 +58,34 @@ export default function OrderDetailsScreen() {
 
   const handlePrintReceipt = async () => {
     if (!order) return;
+    const orderNum = order.orderNumber || order._id?.slice(-5).toUpperCase() || 'Order';
+    const orderStatus = order.status;
+    console.log(`\n[PRINT CLICK] User tapped "Print Receipt" on Order Details Screen for #${orderNum} | Stage: "${orderStatus}"`);
+
     setPrinting(true);
     try {
-      showToast({ title: 'Printing', message: 'Sending receipt to thermal printer...', type: 'info' });
+      showToast({ title: 'Printing Receipt...', message: `Sending receipt for #${orderNum} to printer...`, type: 'info' });
       const success = await printThermalReceipt(order, true);
+      const report = getLastPrintJobReport();
+
+      console.log(`[PRINT CLICK RESULT] Details Screen Order #${orderNum} | Result: ${success ? '✅ SUCCESS' : '❌ FAILED'} | Driver: ${report?.driverLabel || 'Unknown'} | Time: ${report?.durationMs || 0}ms`);
+
       if (success) {
-        showToast({ title: 'Success', message: 'Receipt printed successfully.', type: 'success' });
+        showToast({
+          title: 'Print Success ✅',
+          message: `Receipt printed via ${report?.driverLabel || 'printer'}.`,
+          type: 'success',
+        });
       } else {
-        showToast({ title: 'Print Cancelled', message: 'Receipt print cancelled or printer unavailable.', type: 'warning' });
+        showToast({
+          title: 'Print Notice',
+          message: report?.error || 'Receipt print cancelled or printer unavailable.',
+          type: 'warning',
+        });
       }
-    } catch (e) {
-      showToast({ title: 'Print Error', message: 'Failed to print receipt.', type: 'error' });
+    } catch (e: any) {
+      console.error(`[PRINT CLICK ERROR] Details Screen Order #${orderNum} failed:`, e);
+      showToast({ title: 'Print Error ❌', message: e?.message || 'Failed to print receipt.', type: 'error' });
     } finally {
       setPrinting(false);
     }
@@ -156,7 +173,7 @@ export default function OrderDetailsScreen() {
   const handleOpenInMaps = () => {
     if (!order) return;
     let url = '';
-    const coords = order.deliveryAddress?.coordinates?.coordinates;
+    const coords = (order.deliveryAddress as any)?.coordinates?.coordinates;
 
     if (coords && coords.length === 2) {
       const longitude = coords[0];
@@ -250,6 +267,20 @@ export default function OrderDetailsScreen() {
         title={`Order #${order.orderNumber || order._id?.substring(0, 8)}`}
         subtitle="Super Admin Full Order View"
         showBackButton={true}
+        rightElement={
+          <TouchableOpacity
+            style={{ padding: 8 }}
+            onPress={handlePrintReceipt}
+            disabled={printing}
+            activeOpacity={0.7}
+          >
+            {printing ? (
+              <ActivityIndicator size="small" color="#FF5C39" />
+            ) : (
+              <Printer size={20} color="#FF5C39" />
+            )}
+          </TouchableOpacity>
+        }
       />
 
       <ScrollView style={styles.scrollBody} showsVerticalScrollIndicator={false}>
@@ -581,6 +612,22 @@ export default function OrderDetailsScreen() {
             </Text>
           </TouchableOpacity>
         )}
+
+        {/* Print Receipt Button */}
+        <TouchableOpacity
+          style={styles.printCardBtn}
+          onPress={handlePrintReceipt}
+          activeOpacity={0.8}
+        >
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Printer size={18} color="#FFFFFF" />
+            <Text style={styles.printCardBtnText}>Print Receipt</Text>
+          </View>
+          <View style={styles.thermalBadge}>
+            <Text style={styles.thermalBadgeText}>Thermal / 80mm</Text>
+          </View>
+        </TouchableOpacity>
+
         {/* Bottom Spacer */}
         <View style={{ height: 40 }} />
       </ScrollView>

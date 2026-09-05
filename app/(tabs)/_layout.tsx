@@ -3,7 +3,18 @@ import { Tabs } from 'expo-router';
 import { Colors } from '../../constants/colors';
 import { Home, Store, Receipt, Users, Menu as MenuIcon, Settings } from 'lucide-react-native';
 import { StatusBar } from 'expo-status-bar';
-import { TouchableOpacity, StyleSheet, View, Text, Platform, LayoutAnimation, UIManager, Animated } from 'react-native';
+import {
+  TouchableOpacity,
+  StyleSheet,
+  View,
+  Text,
+  Platform,
+  LayoutAnimation,
+  UIManager,
+  Animated,
+  useWindowDimensions,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { useAuth } from '../../context/AuthContext';
 
@@ -19,6 +30,10 @@ interface TabButtonProps {
   label: string;
   onPress: () => void;
   renderIcon: () => React.ReactNode;
+  itemHeight: number;
+  fontSize: number;
+  iconGap: number;
+  activeFlex: number;
 }
 
 const TabButton: React.FC<TabButtonProps> = ({
@@ -27,6 +42,10 @@ const TabButton: React.FC<TabButtonProps> = ({
   label,
   onPress,
   renderIcon,
+  itemHeight,
+  fontSize,
+  iconGap,
+  activeFlex,
 }) => {
   const animation = React.useRef(new Animated.Value(isFocused ? 1 : 0)).current;
 
@@ -55,22 +74,30 @@ const TabButton: React.FC<TabButtonProps> = ({
       activeOpacity={0.8}
       style={[
         styles.tabItem,
-        isFocused ? styles.tabItemActive : styles.tabItemInactive,
+        { height: itemHeight, borderRadius: itemHeight / 2 },
+        isFocused ? [styles.tabItemActive, { flex: activeFlex }] : styles.tabItemInactive,
       ]}
     >
       <Animated.View
         style={[
           styles.pillBackground,
           {
+            borderRadius: itemHeight / 2,
             opacity,
             transform: [{ scale }],
           },
         ]}
       />
-      <View style={styles.tabContent}>
+      <View style={[styles.tabContent, { gap: iconGap }]}>
         {renderIcon()}
         {isFocused && (
-          <Text style={styles.tabLabel}>{label}</Text>
+          <Text
+            style={[styles.tabLabel, { fontSize }]}
+            numberOfLines={1}
+            ellipsizeMode="tail"
+          >
+            {label}
+          </Text>
         )}
       </View>
     </TouchableOpacity>
@@ -79,10 +106,62 @@ const TabButton: React.FC<TabButtonProps> = ({
 
 function AdminTabBar({ state, descriptors, navigation }: any) {
   const { user } = useAuth();
+  const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
+
   const isSuperAdmin = user?.userType === 'super_admin';
 
+  // Responsive device classifications
+  const isTablet = width >= 768;
+  const isSmallDevice = width < 360;
+
+  // Dynamic bottom margin respecting safe area insets:
+  // On devices with notches/home indicators (iOS) or edge-to-edge navigation bars (Android gesture or 3-button),
+  // insets.bottom > 0. We float cleanly above the system UI.
+  // On devices with hardware buttons / zero inset, we provide comfortable breathing room.
+  const bottomMargin = insets.bottom > 0
+    ? insets.bottom + (Platform.OS === 'ios' ? 8 : 10)
+    : (Platform.OS === 'ios' ? 18 : 14);
+
+  // Responsive sizing
+  const tabBarHeight = isTablet ? 60 : (isSmallDevice ? 52 : 56);
+  const tabItemHeight = isTablet ? 50 : (isSmallDevice ? 44 : 48);
+  const iconSize = isTablet ? 22 : (isSmallDevice ? 18 : 20);
+  const fontSize = isTablet ? 13 : (isSmallDevice ? 10.5 : 12);
+  const iconGap = isSmallDevice ? 5 : 7;
+
+  // Horizontal margins:
+  // On tablets, center floating dock up to max 560dp
+  // On small phones, give 12dp side margin so 5 tabs fit comfortably
+  // On standard phones, give 16dp side margin
+  const horizontalMargin = isTablet
+    ? Math.max(24, Math.round((width - 560) / 2))
+    : (isSmallDevice ? 12 : 16);
+
+  // Filter visible tabs to compute active expansion flex accurately
+  const visibleRoutes = state.routes.filter((route: any) => {
+    if (isSuperAdmin && route.name === 'menu') return false;
+    if (!isSuperAdmin && (route.name === 'restaurants' || route.name === 'users')) return false;
+    return true;
+  });
+  const totalTabs = visibleRoutes.length;
+  const activeFlex = isSmallDevice
+    ? (totalTabs >= 5 ? 1.35 : 1.5)
+    : (totalTabs >= 5 ? 1.45 : 1.6);
+
   return (
-    <View style={styles.tabBar}>
+    <View
+      style={[
+        styles.tabBar,
+        {
+          bottom: bottomMargin,
+          left: horizontalMargin,
+          right: horizontalMargin,
+          height: tabBarHeight,
+          borderRadius: tabBarHeight / 2,
+        },
+      ]}
+    >
       {state.routes.map((route: any) => {
         // Dynamically hide tabs based on user role
         if (isSuperAdmin && route.name === 'menu') {
@@ -118,20 +197,20 @@ function AdminTabBar({ state, descriptors, navigation }: any) {
         const color = isFocused ? '#FF5C39' : '#687076';
 
         const renderIcon = () => {
-          const size = 20;
+          const stroke = isFocused ? 2.2 : 1.8;
           switch (route.name) {
             case 'index':
-              return <Home size={size} color={color} strokeWidth={isFocused ? 2.2 : 1.8} />;
+              return <Home size={iconSize} color={color} strokeWidth={stroke} />;
             case 'restaurants':
-              return <Store size={size} color={color} strokeWidth={isFocused ? 2.2 : 1.8} />;
+              return <Store size={iconSize} color={color} strokeWidth={stroke} />;
             case 'orders':
-              return <Receipt size={size} color={color} strokeWidth={isFocused ? 2.2 : 1.8} />;
+              return <Receipt size={iconSize} color={color} strokeWidth={stroke} />;
             case 'users':
-              return <Users size={size} color={color} strokeWidth={isFocused ? 2.2 : 1.8} />;
+              return <Users size={iconSize} color={color} strokeWidth={stroke} />;
             case 'menu':
-              return <MenuIcon size={size} color={color} strokeWidth={isFocused ? 2.2 : 1.8} />;
+              return <MenuIcon size={iconSize} color={color} strokeWidth={stroke} />;
             case 'settings':
-              return <Settings size={size} color={color} strokeWidth={isFocused ? 2.2 : 1.8} />;
+              return <Settings size={iconSize} color={color} strokeWidth={stroke} />;
             default:
               return null;
           }
@@ -145,6 +224,10 @@ function AdminTabBar({ state, descriptors, navigation }: any) {
             label={label}
             onPress={onPress}
             renderIcon={renderIcon}
+            itemHeight={tabItemHeight}
+            fontSize={fontSize}
+            iconGap={iconGap}
+            activeFlex={activeFlex}
           />
         );
       })}
@@ -206,13 +289,8 @@ export default function TabLayout() {
 const styles = StyleSheet.create({
   tabBar: {
     position: 'absolute',
-    bottom: Platform.OS === 'ios' ? 28 : 20,
-    left: 20,
-    right: 20,
-    height: 56,
     flexDirection: 'row',
     backgroundColor: 'rgba(255, 255, 255, 0.96)',
-    borderRadius: 28,
     alignItems: 'center',
     paddingHorizontal: 4,
     borderWidth: 1,
@@ -222,10 +300,9 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.08,
     shadowRadius: 12,
     elevation: 8,
+    zIndex: 100,
   },
   tabItem: {
-    height: 48,
-    borderRadius: 24,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -234,22 +311,19 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
   },
   tabItemActive: {
-    flex: 1.6, // active tab expands to fill remaining space beautifully
     marginHorizontal: 2,
   },
   pillBackground: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: '#FFF0EC', // soft brand orange background matching colors.ts
-    borderRadius: 24,
   },
   tabContent: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
+    paddingHorizontal: 4,
   },
   tabLabel: {
-    fontSize: 12,
     fontWeight: '800',
     color: '#FF5C39',
   },

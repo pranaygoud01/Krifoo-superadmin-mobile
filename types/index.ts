@@ -1,5 +1,5 @@
 export type VerificationStatus = 'pending' | 'approved' | 'rejected';
-export type OrderStatus = 'placed' | 'confirmed' | 'preparing' | 'out_for_delivery' | 'delivered' | 'cancelled';
+export type OrderStatus = 'placed' | 'confirmed' | 'preparing' | 'ready_for_pickup' | 'out_for_delivery' | 'delivered' | 'cancelled';
 export type UserType = 'customer' | 'delivery_partner' | 'super_admin' | 'owner';
 
 export interface SuperAdminUser {
@@ -73,6 +73,7 @@ export interface OrderItem {
 export interface Order {
   _id: string;
   orderNumber?: string;
+  orderType?: 'delivery' | 'pickup' | 'dine_in' | string;
   restaurantId: {
     _id: string;
     restaurantName: string;
@@ -89,6 +90,7 @@ export interface Order {
     name?: string;
     phoneNumber?: string;
     email?: string;
+    address?: any;
   };
   assignedDeliveryPartnerId?: {
     _id: string;
@@ -121,11 +123,17 @@ export interface Order {
   paymentStatus?: 'pending' | 'paid' | 'completed' | 'failed' | 'refunded';
   deliveryAddress?: {
     addressLine1?: string;
+    addressLine2?: string;
+    street?: string;
+    area?: string;
     city?: string;
     landmark?: string;
+    postalCode?: string;
+    postcode?: string;
     formattedAddress?: string;
     coordinates?: any;
-  };
+    [key: string]: any;
+  } | any;
   notes?: string;
   createdAt: string;
   updatedAt?: string;
@@ -138,6 +146,7 @@ export interface Order {
   totalPrice?: number;
   deliveryFee?: number;
   taxAmount?: number;
+  [key: string]: any;
 }
 
 export interface UserAccount {

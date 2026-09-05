@@ -317,7 +317,7 @@ export async function printSunmiOrderReceipt(order: Partial<Order> & any): Promi
       }
       const priceStr = formatMoney(itemPrice);
 
-      sunmi.setFontSize(22);
+      sunmi.setFontSize(28);
       sunmi.setFontWeight(true);
       sunmi.printColumnsString([qtyStr, name, priceStr], [6, 32, 10], [AlignValue.LEFT, AlignValue.LEFT, AlignValue.RIGHT]);
       sunmi.setFontWeight(false);
@@ -379,7 +379,7 @@ export async function printSunmiOrderReceipt(order: Partial<Order> & any): Promi
       }
 
       if (optionsList.length > 0) {
-        sunmi.setFontSize(18);
+        sunmi.setFontSize(22);
         optionsList.forEach((optStr) => {
           sunmi.printerText(`    + ${optStr}\n`);
         });
@@ -388,7 +388,7 @@ export async function printSunmiOrderReceipt(order: Partial<Order> & any): Promi
       // Item instructions / special notes
       const itemNote = item.instructions || item.specialInstructions || item.note || '';
       if (itemNote) {
-        sunmi.setFontSize(18);
+        sunmi.setFontSize(22);
         sunmi.printerText(`    * Note: ${itemNote}\n`);
       }
     });
@@ -445,8 +445,7 @@ export async function printSunmiOrderReceipt(order: Partial<Order> & any): Promi
     // ==========================================
     sunmi.setAlignment(AlignValue.CENTER);
     sunmi.setFontSize(20);
-    sunmi.printerText('\nThank you for ordering with Krifoo!\n');
-    sunmi.printerText('www.krifoo.co.uk\n');
+    sunmi.printerText('\nThank you for your order!\n');
 
     // Feed paper lines so the print clears the cutter blade
     sunmi.lineWrap(4);
