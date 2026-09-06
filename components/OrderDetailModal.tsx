@@ -272,13 +272,51 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
               </View>
             )}
 
-            {/* Restaurant Card */}
+            {/* Restaurant & Source Card */}
             <View style={styles.card}>
               <View style={styles.cardHeader}>
                 <Store size={16} color={Colors.primary} />
-                <Text style={styles.cardTitle}>Restaurant Details</Text>
+                <Text style={styles.cardTitle}>Restaurant & Channel</Text>
               </View>
               <Text style={styles.infoName}>{restaurantName}</Text>
+              
+              <View style={{ marginTop: 8, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                {(() => {
+                  const source = (order.orderSource || '').toLowerCase();
+                  const rawDomain = (order.sourceDomain || '').trim();
+                  const restExt = typeof order.restaurantId === 'object' ? (order.restaurantId as any)?.externalWebsiteSettings : undefined;
+                  const restCustomDomain = (restExt?.customDomain || restExt?.domain || '').trim();
+                  const restSubdomain = restExt?.subdomain ? `${restExt.subdomain}.krifoo.com` : '';
+                  const fallbackExtDomain = restCustomDomain || restSubdomain;
+
+                  const isMarketplace = rawDomain.toLowerCase().includes('krifoo.co.uk') || (!rawDomain && source === 'krifoo');
+                  const isExt = !isMarketplace && (source === 'external' || Boolean(rawDomain));
+                  
+                  let domainUrl = 'krifoo.co.uk';
+                  if (isExt) {
+                    domainUrl = rawDomain && rawDomain !== 'External Website' && rawDomain !== 'External Web'
+                      ? rawDomain
+                      : (fallbackExtDomain || 'swaadcambridge.co.uk');
+                  }
+
+                  if (isExt) {
+                    return (
+                      <View style={{ backgroundColor: '#FEF3C7', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6, borderWidth: 1, borderColor: '#FDE68A' }}>
+                        <Text style={{ fontSize: 13, fontWeight: '700', color: '#B45309' }}>
+                          🌐 {domainUrl}
+                        </Text>
+                      </View>
+                    );
+                  }
+                  return (
+                    <View style={{ backgroundColor: '#EFF6FF', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6, borderWidth: 1, borderColor: '#DBEAFE' }}>
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#2563EB' }}>
+                        📱 krifoo.co.uk
+                      </Text>
+                    </View>
+                  );
+                })()}
+              </View>
             </View>
 
             {/* Customer & Location */}
@@ -401,6 +439,15 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
                   <Text style={styles.priceLabel}>Handling & Tax:</Text>
                   <Text style={styles.priceVal}>
                     £{(order.pricing?.handlingCharge || order.pricing?.tax || order.taxAmount || 0).toFixed(2)}
+                  </Text>
+                </View>
+              ) : null}
+
+              {(order.pricing?.onlinePaymentFee) ? (
+                <View style={styles.priceRow}>
+                  <Text style={styles.priceLabel}>Online Card Fee (2.5%):</Text>
+                  <Text style={styles.priceVal}>
+                    £{(order.pricing?.onlinePaymentFee || 0).toFixed(2)}
                   </Text>
                 </View>
               ) : null}

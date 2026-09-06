@@ -136,6 +136,57 @@ function getRestaurantName(order: Order) {
   return 'Restaurant';
 }
 
+export function getOrderSourceDetails(order: Order): {
+  isExternal: boolean;
+  domainUrl: string;
+} {
+  const source = (order.orderSource || '').toLowerCase();
+  const rawDomain = (order.sourceDomain || '').trim();
+  const restExt = typeof order.restaurantId === 'object' ? (order.restaurantId as any)?.externalWebsiteSettings : undefined;
+  const restCustomDomain = (restExt?.customDomain || restExt?.domain || '').trim();
+  const restSubdomain = restExt?.subdomain ? `${restExt.subdomain}.krifoo.com` : '';
+  const fallbackExtDomain = restCustomDomain || restSubdomain;
+
+  // 1. Explicit krifoo marketplace check
+  if (
+    rawDomain.toLowerCase().includes('krifoo.co.uk') ||
+    (!rawDomain && source === 'krifoo')
+  ) {
+    return {
+      isExternal: false,
+      domainUrl: 'krifoo.co.uk',
+    };
+  }
+
+  // 2. Explicit external check
+  if (
+    source === 'external' ||
+    (rawDomain && !rawDomain.toLowerCase().includes('krifoo.co.uk'))
+  ) {
+    let finalDomain = rawDomain;
+    if (!finalDomain || finalDomain === 'External Website' || finalDomain === 'External Web') {
+      finalDomain = fallbackExtDomain || 'swaadcambridge.co.uk';
+    }
+    return {
+      isExternal: true,
+      domainUrl: finalDomain,
+    };
+  }
+
+  // 3. Fallback: restaurant has custom domain/website configuration
+  if (fallbackExtDomain && source === 'external') {
+    return {
+      isExternal: true,
+      domainUrl: fallbackExtDomain,
+    };
+  }
+
+  return {
+    isExternal: false,
+    domainUrl: 'krifoo.co.uk',
+  };
+}
+
 function getTotalAmount(order: Order) {
   const explicitTotal =
     order.pricing?.totalAmount ??
@@ -267,6 +318,7 @@ const OrderCardItem: React.FC<OrderCardProps> = ({ order, onPress, onAssignDeliv
   const isPickup = fulfillmentType === 'pickup';
   const deliveryAddressText = getDeliveryAddressText(order);
   const deliveryPartnerName = typeof order.assignedDeliveryPartnerId === 'object' ? order.assignedDeliveryPartnerId?.fullName : undefined;
+  const sourceDetails = getOrderSourceDetails(order);
 
   const renderCardActions = () => {
     // 1. Delivered / Completed & Cancelled Orders
@@ -626,8 +678,19 @@ const OrderCardItem: React.FC<OrderCardProps> = ({ order, onPress, onAssignDeliv
         </View>
       </View>
 
-      <View style={styles.kanbanMeta}>
+      <View style={styles.kanbanRestaurantRow}>
         <Text style={[styles.kanbanRestaurant, isTablet && styles.kanbanRestaurantTablet]} numberOfLines={1}>{restaurantName}</Text>
+      </View>
+
+      <View style={[styles.sourceBadgeContainer, isTablet && styles.sourceBadgeContainerTablet]}>
+        <View style={[sourceDetails.isExternal ? styles.sourceBadgeExternal : styles.sourceBadgeKrifoo, isTablet && (sourceDetails.isExternal ? styles.sourceBadgeExternalTablet : styles.sourceBadgeKrifooTablet)]}>
+          <Text
+            style={[sourceDetails.isExternal ? styles.sourceBadgeTextExternal : styles.sourceBadgeTextKrifoo, isTablet && (sourceDetails.isExternal ? styles.sourceBadgeTextExternalTablet : styles.sourceBadgeTextKrifooTablet)]}
+            numberOfLines={1}
+          >
+            {sourceDetails.isExternal ? `🌐 ${sourceDetails.domainUrl}` : '📱 krifoo.co.uk'}
+          </Text>
+        </View>
       </View>
 
       <View style={styles.kanbanDivider} />
@@ -792,6 +855,7 @@ export default function OrdersScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState<string>('all');
+  const [sourceFilter, setSourceFilter] = useState<'all' | 'krifoo' | 'external'>('all');
   const [activeTab, setActiveTab] = useState<string>('all');
   const [viewMode, setViewMode] = useState<'tabs' | 'board'>('tabs');
 
@@ -853,20 +917,29 @@ export default function OrdersScreen() {
 
   const filteredOrders = useMemo(() => {
     return orders.filter((order) => {
+      const sourceDetails = getOrderSourceDetails(order);
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
         const idMatch = order._id?.toLowerCase().includes(q) || order.orderNumber?.toLowerCase().includes(q);
         const restMatch = getRestaurantName(order).toLowerCase().includes(q);
         const custMatch = getCustomerName(order).toLowerCase().includes(q);
-        if (!idMatch && !restMatch && !custMatch) return false;
+        const domainMatch = sourceDetails.domainUrl.toLowerCase().includes(q);
+        if (!idMatch && !restMatch && !custMatch && !domainMatch) return false;
       }
       const fType = getOrderFulfillmentType(order);
       if (typeFilter !== 'all' && fType !== typeFilter) {
         return false;
       }
+      const isExt = sourceDetails.isExternal;
+      if (sourceFilter === 'external' && !isExt) {
+        return false;
+      }
+      if (sourceFilter === 'krifoo' && isExt) {
+        return false;
+      }
       return true;
     });
-  }, [orders, searchQuery, typeFilter]);
+  }, [orders, searchQuery, typeFilter, sourceFilter]);
 
   const tabCounts = useMemo(() => {
     const counts: Record<string, number> = {
@@ -1039,6 +1112,28 @@ export default function OrdersScreen() {
           />
         </View>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.typeFilters}>
+          {[
+            { label: 'All Channels', value: 'all', icon: '🌐' },
+            { label: 'Marketplace', value: 'krifoo', icon: '📱' },
+            { label: 'External Web', value: 'external', icon: '💻' },
+          ].map((sf) => (
+            <TouchableOpacity
+              key={sf.value}
+              style={[
+                styles.sourceFilterChip,
+                sourceFilter === sf.value && styles.sourceFilterChipActive
+              ]}
+              onPress={() => setSourceFilter(sf.value as any)}
+              activeOpacity={0.7}
+            >
+              <Text style={{ fontSize: 11, marginRight: 4 }}>{sf.icon}</Text>
+              <Text style={[styles.sourceFilterChipText, sourceFilter === sf.value && styles.sourceFilterChipTextActive]}>
+                {sf.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={[styles.typeFilters, { marginTop: 6 }]}>
           {TYPE_FILTERS.map((f) => {
             const isSelected = typeFilter === f.value;
             const { Icon } = f;
@@ -1352,8 +1447,7 @@ const styles = StyleSheet.create({
   kanbanAmountRow: { alignItems: 'flex-end' },
   kanbanAmount: { fontSize: 15, fontWeight: '800', color: '#11181C' },
   kanbanItemCount: { fontSize: 10, color: '#9BA1A6', marginTop: 1 },
-  kanbanMeta: { flexDirection: 'row', alignItems: 'center', marginTop: 6, gap: 4 },
-  kanbanRestaurant: { fontSize: 11, color: '#FF5C39', fontWeight: '600', flex: 1 },
+
   kanbanDivider: { height: 1, backgroundColor: '#F5F5F5', marginVertical: 10 },
   kanbanCustomerRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
   kanbanAvatar: { width: 28, height: 28, borderRadius: 14, backgroundColor: '#F0F0F0', alignItems: 'center', justifyContent: 'center' },
@@ -1652,5 +1746,98 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     padding: 20,
     gap: 14,
+  },
+  kanbanRestaurantRow: {
+    marginTop: 6,
+  },
+  kanbanRestaurant: {
+    fontSize: 12,
+    color: '#FF5C39',
+    fontWeight: '700',
+  },
+  kanbanRestaurantTablet: {
+    fontSize: 13.5,
+  },
+  sourceBadgeContainer: {
+    marginTop: 5,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  sourceBadgeContainerTablet: {
+    marginTop: 6,
+  },
+  sourceBadgeExternal: {
+    backgroundColor: '#FEF3C7',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    maxWidth: '100%',
+  },
+  sourceBadgeExternalTablet: {
+    paddingHorizontal: 10,
+    paddingVertical: 4.5,
+    borderRadius: 7,
+  },
+  sourceBadgeTextExternal: {
+    color: '#B45309',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  sourceBadgeTextExternalTablet: {
+    fontSize: 12,
+  },
+  sourceBadgeKrifoo: {
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#DBEAFE',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    maxWidth: '100%',
+  },
+  sourceBadgeKrifooTablet: {
+    paddingHorizontal: 10,
+    paddingVertical: 4.5,
+    borderRadius: 7,
+  },
+  sourceBadgeTextKrifoo: {
+    color: '#2563EB',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  sourceBadgeTextKrifooTablet: {
+    fontSize: 12,
+  },
+  sourceFilterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 16,
+    backgroundColor: Colors.cardSurface,
+    borderWidth: 1,
+    borderColor: Colors.cardBorder,
+    marginRight: 6,
+  },
+  sourceFilterChipActive: {
+    backgroundColor: Colors.primary,
+    borderColor: Colors.primary,
+  },
+  sourceFilterChipText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: Colors.textMuted,
+  },
+  sourceFilterChipTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '700',
   },
 });

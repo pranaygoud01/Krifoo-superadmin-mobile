@@ -10,6 +10,8 @@ import {
   Linking,
   ActivityIndicator,
   Switch,
+  Alert,
+  Modal,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Header } from '../components/Header';
@@ -18,7 +20,7 @@ import { ConfirmModal } from '../components/ConfirmModal';
 import { Colors } from '../constants/colors';
 import { restaurantService } from '../services/restaurant.service';
 import { useToast } from '../context/ToastContext';
-import { Restaurant, VerificationStatus } from '../types';
+import { Restaurant, VerificationStatus, ExternalDeliverySettings, ExternalWebsiteSettings, ExternalDistanceTier } from '../types';
 import {
   FileText,
   CheckCircle,
@@ -29,6 +31,14 @@ import {
   Phone,
   User,
   Info,
+  Globe,
+  Truck,
+  Percent,
+  Save,
+  Plus,
+  Trash2,
+  Edit2,
+  X,
 } from 'lucide-react-native';
 
 export default function RestaurantDetailsScreen() {
@@ -41,7 +51,39 @@ export default function RestaurantDetailsScreen() {
   const [loading, setLoading] = useState(true);
   const [remarks, setRemarks] = useState('');
   const [updating, setUpdating] = useState(false);
+  const [savingSettings, setSavingSettings] = useState(false);
   const [deactivateModalVisible, setDeactivateModalVisible] = useState(false);
+
+  // Editable Form States
+  const [commissionRate, setCommissionRate] = useState('10');
+  const [defaultDeliveryTime, setDefaultDeliveryTime] = useState('30');
+  const [handlingFee, setHandlingFee] = useState('0');
+
+  // External Website Form States
+  const [extDomain, setExtDomain] = useState('');
+  const [extBrandName, setExtBrandName] = useState('');
+  const [extPrimaryColor, setExtPrimaryColor] = useState('#E11D48');
+  const [extSecondaryColor, setExtSecondaryColor] = useState('#4F46E5');
+  const [extHeroBanner, setExtHeroBanner] = useState('');
+  const [extLogoUrl, setExtLogoUrl] = useState('');
+  const [extPublished, setExtPublished] = useState(true);
+
+  // External Delivery Form States
+  const [extDeliveryEnabled, setExtDeliveryEnabled] = useState(false);
+  const [extChargeType, setExtChargeType] = useState<'tiered' | 'fixed' | 'per_mile'>('tiered');
+  const [extFixedCharge, setExtFixedCharge] = useState('0');
+  const [extFreeThreshold, setExtFreeThreshold] = useState('');
+  const [extPerMile, setExtPerMile] = useState('0');
+  const [extBaseDist, setExtBaseDist] = useState('0');
+  const [extBaseCharge, setExtBaseCharge] = useState('0');
+  const [extMaxRadius, setExtMaxRadius] = useState('10');
+  const [extDistanceTiers, setExtDistanceTiers] = useState<ExternalDistanceTier[]>([]);
+
+  // Distance Tier Modal States
+  const [tierModalVisible, setTierModalVisible] = useState(false);
+  const [tierMaxDist, setTierMaxDist] = useState('');
+  const [tierCharge, setTierCharge] = useState('');
+  const [editingTierIndex, setEditingTierIndex] = useState<number | null>(null);
 
   const fetchRestaurantDetail = async () => {
     if (!restaurantId) return;
@@ -49,8 +91,34 @@ export default function RestaurantDetailsScreen() {
       setLoading(true);
       const res = await restaurantService.getRestaurantById(restaurantId);
       if (res.success && res.data) {
-        setRestaurant(res.data);
-        setRemarks(res.data.verificationRemarks || '');
+        const r = res.data;
+        setRestaurant(r);
+        setRemarks(r.verificationRemarks || '');
+        setCommissionRate(String(r.commissionRate ?? 10));
+        setDefaultDeliveryTime(String(r.defaultDeliveryTime ?? 30));
+        setHandlingFee(String(r.handlingChargesPercentage ?? 0));
+
+        // Populate External Website
+        const ws = r.externalWebsiteSettings;
+        setExtDomain(ws?.domain || '');
+        setExtBrandName(ws?.brandName || '');
+        setExtPrimaryColor(ws?.primaryColor || '#E11D48');
+        setExtSecondaryColor(ws?.secondaryColor || '#4F46E5');
+        setExtHeroBanner(ws?.heroBannerUrl || '');
+        setExtLogoUrl(ws?.logoUrl || '');
+        setExtPublished(ws?.isPublished ?? true);
+
+        // Populate External Delivery
+        const eds = r.externalDeliverySettings;
+        setExtDeliveryEnabled(eds?.enabled ?? false);
+        setExtChargeType(eds?.deliveryChargeType || 'tiered');
+        setExtFixedCharge(String(eds?.fixedCharge ?? 0));
+        setExtFreeThreshold(eds?.freeDeliveryOverOrderValue != null ? String(eds.freeDeliveryOverOrderValue) : '');
+        setExtPerMile(String(eds?.chargePerMile ?? 0));
+        setExtBaseDist(String(eds?.baseDeliveryDistance ?? 0));
+        setExtBaseCharge(String(eds?.baseDeliveryCharge ?? 0));
+        setExtMaxRadius(String(eds?.maxDeliveryRadius ?? 10));
+        setExtDistanceTiers(Array.isArray(eds?.distanceTiers) ? eds.distanceTiers : []);
       } else {
         showToast({ title: 'Error', message: 'Restaurant details not found.', type: 'error' });
       }
@@ -77,7 +145,6 @@ export default function RestaurantDetailsScreen() {
           message: `Restaurant verification set to: ${newStatus.toUpperCase()}`,
           type: 'success',
         });
-        // Reload details
         await fetchRestaurantDetail();
       } else {
         showToast({ title: 'Error', message: res.message || 'Failed to update verification status.', type: 'error' });
@@ -91,11 +158,9 @@ export default function RestaurantDetailsScreen() {
 
   const handleToggleActive = async (value: boolean) => {
     if (!restaurant) return;
-    // If deactivating (value is false), prompt for confirmation
     if (!value) {
       setDeactivateModalVisible(true);
     } else {
-      // Activating directly
       await performToggleActive(true);
     }
   };
@@ -117,6 +182,73 @@ export default function RestaurantDetailsScreen() {
     } catch (e) {
       showToast({ title: 'Error', message: 'Failed to change active status.', type: 'error' });
     }
+  };
+
+  const handleSaveSettings = async () => {
+    if (!restaurant) return;
+    setSavingSettings(true);
+    try {
+      const payload: Partial<Restaurant> = {
+        commissionRate: parseFloat(commissionRate) || 0,
+        defaultDeliveryTime: parseInt(defaultDeliveryTime, 10) || 30,
+        handlingChargesPercentage: parseFloat(handlingFee) || 0,
+        externalWebsiteSettings: {
+          domain: extDomain.trim() || undefined,
+          brandName: extBrandName.trim() || undefined,
+          primaryColor: extPrimaryColor.trim() || '#E11D48',
+          secondaryColor: extSecondaryColor.trim() || '#4F46E5',
+          heroBannerUrl: extHeroBanner.trim() || undefined,
+          logoUrl: extLogoUrl.trim() || undefined,
+          isPublished: extPublished,
+        },
+        externalDeliverySettings: {
+          enabled: extDeliveryEnabled,
+          deliveryChargeType: extChargeType,
+          fixedCharge: parseFloat(extFixedCharge) || 0,
+          freeDeliveryOverOrderValue: extFreeThreshold.trim() ? parseFloat(extFreeThreshold) : null,
+          chargePerMile: parseFloat(extPerMile) || 0,
+          baseDeliveryDistance: parseFloat(extBaseDist) || 0,
+          baseDeliveryCharge: parseFloat(extBaseCharge) || 0,
+          maxDeliveryRadius: parseFloat(extMaxRadius) || 10,
+          distanceTiers: extDistanceTiers,
+        },
+      };
+
+      const res = await restaurantService.updateRestaurantDetails(restaurant._id, payload);
+      if (res.success) {
+        showToast({ title: 'Saved', message: 'Restaurant settings and rates saved successfully.', type: 'success' });
+        fetchRestaurantDetail();
+      } else {
+        showToast({ title: 'Error', message: res.message || 'Failed to save settings.', type: 'error' });
+      }
+    } catch (e: any) {
+      showToast({ title: 'Error', message: e.message || 'Error occurred while saving.', type: 'error' });
+    } finally {
+      setSavingSettings(false);
+    }
+  };
+
+  const handleSaveTier = () => {
+    const maxD = parseFloat(tierMaxDist);
+    const ch = parseFloat(tierCharge);
+    if (isNaN(maxD) || maxD < 0 || isNaN(ch) || ch < 0) {
+      showToast({ title: 'Validation', message: 'Enter valid distance and charge numbers.', type: 'error' });
+      return;
+    }
+
+    if (editingTierIndex !== null) {
+      const updated = [...extDistanceTiers];
+      updated[editingTierIndex] = { maxDistance: maxD, charge: ch };
+      setExtDistanceTiers(updated.sort((a, b) => a.maxDistance - b.maxDistance));
+    } else {
+      const updated = [...extDistanceTiers, { maxDistance: maxD, charge: ch }];
+      setExtDistanceTiers(updated.sort((a, b) => a.maxDistance - b.maxDistance));
+    }
+    setTierModalVisible(false);
+  };
+
+  const handleDeleteTier = (index: number) => {
+    setExtDistanceTiers(extDistanceTiers.filter((_, idx) => idx !== index));
   };
 
   if (loading) {
@@ -142,7 +274,6 @@ export default function RestaurantDetailsScreen() {
     );
   }
 
-  // Address Parsing
   const addr = typeof restaurant.address === 'object' && restaurant.address !== null ? restaurant.address : null;
   const showFullLocation = addr !== null;
   const displayAddress = addr
@@ -156,7 +287,22 @@ export default function RestaurantDetailsScreen() {
 
   return (
     <View style={styles.container}>
-      <Header title="Verify Restaurant" showBackButton={true} />
+      <Header
+        title="Restaurant Details"
+        showBackButton={true}
+        rightAction={
+          <TouchableOpacity style={styles.saveHeaderBtn} onPress={handleSaveSettings} disabled={savingSettings}>
+            {savingSettings ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <>
+                <Save size={15} color="#FFFFFF" />
+                <Text style={styles.saveHeaderBtnText}>Save</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        }
+      />
 
       <ScrollView style={styles.scrollBody} showsVerticalScrollIndicator={false}>
         {/* Banner & Brand Card */}
@@ -181,6 +327,277 @@ export default function RestaurantDetailsScreen() {
           </View>
         </View>
 
+        {/* Commercial & Rate Settings Card */}
+        <View style={styles.sectionCard}>
+          <View style={styles.titleRow}>
+            <Percent size={18} color={Colors.primary} />
+            <Text style={styles.sectionTitle}>Commercial & Operations</Text>
+          </View>
+
+          <View style={styles.formRow}>
+            <View style={[styles.inputGroup, { flex: 1, marginRight: 8 }]}>
+              <Text style={styles.inputLabel}>Commission Rate (%)</Text>
+              <TextInput
+                style={styles.textInput}
+                keyboardType="numeric"
+                value={commissionRate}
+                onChangeText={setCommissionRate}
+              />
+            </View>
+            <View style={[styles.inputGroup, { flex: 1 }]}>
+              <Text style={styles.inputLabel}>Default Prep Time (Mins)</Text>
+              <TextInput
+                style={styles.textInput}
+                keyboardType="numeric"
+                value={defaultDeliveryTime}
+                onChangeText={setDefaultDeliveryTime}
+              />
+            </View>
+          </View>
+        </View>
+
+        {/* External Website Configuration Card */}
+        <View style={styles.sectionCard}>
+          <View style={[styles.titleRow, { justifyContent: 'space-between' }]}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Globe size={18} color={Colors.primary} />
+              <Text style={styles.sectionTitle}>External Website & Branding</Text>
+            </View>
+            <TouchableOpacity
+              onPress={() =>
+                router.push({
+                  pathname: '/external-website-settings',
+                  params: { restaurantId: restaurant._id },
+                })
+              }
+              style={{ paddingVertical: 4, paddingHorizontal: 8, backgroundColor: Colors.primaryLight, borderRadius: 6 }}
+            >
+              <Text style={{ fontSize: 11, fontWeight: '700', color: Colors.primary }}>Studio UI →</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>Custom Domain / Hostname</Text>
+            <TextInput
+              style={styles.textInput}
+              placeholder="e.g. swaadcambridge.co.uk"
+              placeholderTextColor={Colors.textSubtle}
+              autoCapitalize="none"
+              value={extDomain}
+              onChangeText={setExtDomain}
+            />
+          </View>
+
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>Brand Display Name</Text>
+            <TextInput
+              style={styles.textInput}
+              placeholder="e.g. Swaad Cambridge"
+              placeholderTextColor={Colors.textSubtle}
+              value={extBrandName}
+              onChangeText={setExtBrandName}
+            />
+          </View>
+
+          <View style={styles.formRow}>
+            <View style={[styles.inputGroup, { flex: 1, marginRight: 8 }]}>
+              <Text style={styles.inputLabel}>Primary Color</Text>
+              <TextInput
+                style={styles.textInput}
+                placeholder="#E11D48"
+                placeholderTextColor={Colors.textSubtle}
+                value={extPrimaryColor}
+                onChangeText={setExtPrimaryColor}
+              />
+            </View>
+            <View style={[styles.inputGroup, { flex: 1 }]}>
+              <Text style={styles.inputLabel}>Secondary Color</Text>
+              <TextInput
+                style={styles.textInput}
+                placeholder="#4F46E5"
+                placeholderTextColor={Colors.textSubtle}
+                value={extSecondaryColor}
+                onChangeText={setExtSecondaryColor}
+              />
+            </View>
+          </View>
+
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>Hero Banner Image URL</Text>
+            <TextInput
+              style={styles.textInput}
+              placeholder="https://..."
+              placeholderTextColor={Colors.textSubtle}
+              value={extHeroBanner}
+              onChangeText={setExtHeroBanner}
+            />
+          </View>
+
+          <View style={styles.switchRow}>
+            <Text style={styles.switchLabel}>External Website Published</Text>
+            <Switch
+              value={extPublished}
+              onValueChange={setExtPublished}
+              trackColor={{ false: '#334155', true: '#10B981' }}
+              thumbColor={extPublished ? '#FFFFFF' : '#94A3B8'}
+            />
+          </View>
+        </View>
+
+        {/* External Delivery Settings Card */}
+        <View style={styles.sectionCard}>
+          <View style={styles.titleRow}>
+            <Truck size={18} color={Colors.primary} />
+            <Text style={styles.sectionTitle}>External Delivery Configuration</Text>
+          </View>
+
+          <View style={styles.switchRow}>
+            <Text style={styles.switchLabel}>Enable Custom External Delivery Charges</Text>
+            <Switch
+              value={extDeliveryEnabled}
+              onValueChange={setExtDeliveryEnabled}
+              trackColor={{ false: '#334155', true: '#10B981' }}
+              thumbColor={extDeliveryEnabled ? '#FFFFFF' : '#94A3B8'}
+            />
+          </View>
+
+          {extDeliveryEnabled && (
+            <View style={{ gap: 12, marginTop: 12 }}>
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Delivery Charge Type</Text>
+                <View style={styles.typeSelectorRow}>
+                  {(['tiered', 'fixed', 'per_mile'] as const).map((t) => (
+                    <TouchableOpacity
+                      key={t}
+                      style={[styles.typeOption, extChargeType === t && styles.activeTypeOption]}
+                      onPress={() => setExtChargeType(t)}
+                    >
+                      <Text style={[styles.typeOptionText, extChargeType === t && styles.activeTypeOptionText]}>
+                        {t === 'tiered' ? 'Tiered' : t === 'fixed' ? 'Fixed' : 'Per Mile'}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+
+              <View style={styles.formRow}>
+                <View style={[styles.inputGroup, { flex: 1, marginRight: 8 }]}>
+                  <Text style={styles.inputLabel}>Max Delivery Radius (Miles)</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    keyboardType="numeric"
+                    value={extMaxRadius}
+                    onChangeText={setExtMaxRadius}
+                  />
+                </View>
+                <View style={[styles.inputGroup, { flex: 1 }]}>
+                  <Text style={styles.inputLabel}>Free Delivery Over (£)</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    placeholder="e.g. 30"
+                    placeholderTextColor={Colors.textSubtle}
+                    keyboardType="numeric"
+                    value={extFreeThreshold}
+                    onChangeText={setExtFreeThreshold}
+                  />
+                </View>
+              </View>
+
+              {extChargeType === 'fixed' && (
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>Fixed Delivery Charge (£)</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    keyboardType="numeric"
+                    value={extFixedCharge}
+                    onChangeText={setExtFixedCharge}
+                  />
+                </View>
+              )}
+
+              {extChargeType === 'per_mile' && (
+                <View style={styles.formRow}>
+                  <View style={[styles.inputGroup, { flex: 1, marginRight: 8 }]}>
+                    <Text style={styles.inputLabel}>Base Charge (£)</Text>
+                    <TextInput
+                      style={styles.textInput}
+                      keyboardType="numeric"
+                      value={extBaseCharge}
+                      onChangeText={setExtBaseCharge}
+                    />
+                  </View>
+                  <View style={[styles.inputGroup, { flex: 1, marginRight: 8 }]}>
+                    <Text style={styles.inputLabel}>Base Distance (Mi)</Text>
+                    <TextInput
+                      style={styles.textInput}
+                      keyboardType="numeric"
+                      value={extBaseDist}
+                      onChangeText={setExtBaseDist}
+                    />
+                  </View>
+                  <View style={[styles.inputGroup, { flex: 1 }]}>
+                    <Text style={styles.inputLabel}>£ / Addl Mile</Text>
+                    <TextInput
+                      style={styles.textInput}
+                      keyboardType="numeric"
+                      value={extPerMile}
+                      onChangeText={setExtPerMile}
+                    />
+                  </View>
+                </View>
+              )}
+
+              {extChargeType === 'tiered' && (
+                <View style={{ gap: 8, marginTop: 4 }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Text style={styles.inputLabel}>Distance Tiers</Text>
+                    <TouchableOpacity
+                      style={styles.addTierBtn}
+                      onPress={() => {
+                        setEditingTierIndex(null);
+                        setTierMaxDist('');
+                        setTierCharge('');
+                        setTierModalVisible(true);
+                      }}
+                    >
+                      <Plus size={14} color={Colors.primary} />
+                      <Text style={styles.addTierBtnText}>Add Tier</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {extDistanceTiers.length === 0 ? (
+                    <Text style={styles.noTiersText}>No custom distance tiers added yet.</Text>
+                  ) : (
+                    extDistanceTiers.map((tier, idx) => (
+                      <View key={idx} style={styles.tierRowItem}>
+                        <Text style={styles.tierRowText}>
+                          Up to <Text style={{ fontWeight: '700' }}>{tier.maxDistance} Mi</Text>
+                        </Text>
+                        <Text style={styles.tierRowCharge}>£{Number(tier.charge).toFixed(2)}</Text>
+                        <View style={{ flexDirection: 'row', gap: 6 }}>
+                          <TouchableOpacity
+                            onPress={() => {
+                              setEditingTierIndex(idx);
+                              setTierMaxDist(String(tier.maxDistance));
+                              setTierCharge(String(tier.charge));
+                              setTierModalVisible(true);
+                            }}
+                          >
+                            <Edit2 size={15} color={Colors.primary} />
+                          </TouchableOpacity>
+                          <TouchableOpacity onPress={() => handleDeleteTier(idx)}>
+                            <Trash2 size={15} color={Colors.danger} />
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    ))
+                  )}
+                </View>
+              )}
+            </View>
+          )}
+        </View>
+
         {/* Contact Info Card */}
         <View style={styles.sectionCard}>
           <Text style={styles.sectionTitle}>Contact Profile</Text>
@@ -200,7 +617,7 @@ export default function RestaurantDetailsScreen() {
           )}
         </View>
 
-        {/* FULL LOCATION DETAIL CARD */}
+        {/* Location Details Card */}
         <View style={styles.sectionCard}>
           <View style={styles.titleRow}>
             <MapPin size={18} color={Colors.primary} />
@@ -227,22 +644,10 @@ export default function RestaurantDetailsScreen() {
                   <Text style={styles.locationValue}>{addr.street}</Text>
                 </View>
               )}
-              {addr?.area && (
-                <View style={styles.locationFieldRow}>
-                  <Text style={styles.locationLabel}>Area/Neighborhood:</Text>
-                  <Text style={styles.locationValue}>{addr.area}</Text>
-                </View>
-              )}
               {addr?.city && (
                 <View style={styles.locationFieldRow}>
                   <Text style={styles.locationLabel}>City:</Text>
                   <Text style={styles.locationValue}>{addr.city}</Text>
-                </View>
-              )}
-              {addr?.landmark && (
-                <View style={styles.locationFieldRow}>
-                  <Text style={styles.locationLabel}>Landmark:</Text>
-                  <Text style={styles.locationValue}>{addr.landmark}</Text>
                 </View>
               )}
               {addr?.pincode && (
@@ -251,53 +656,14 @@ export default function RestaurantDetailsScreen() {
                   <Text style={styles.locationValue}>{addr.pincode}</Text>
                 </View>
               )}
-
-              {/* Coordinates display */}
-              {addr?.coordinates?.coordinates && (
-                <View style={[styles.locationFieldRow, styles.coordsRow]}>
-                  <Text style={styles.locationLabel}>Coordinates:</Text>
-                  <Text style={styles.coordsValue}>
-                    Lng: {addr.coordinates.coordinates[0]?.toFixed(6)}, Lat:{' '}
-                    {addr.coordinates.coordinates[1]?.toFixed(6)}
-                  </Text>
-                </View>
-              )}
             </View>
           ) : (
             <View style={styles.locationFields}>
               <View style={styles.locationFieldRow}>
-                <Text style={styles.locationLabel}>Address Text:</Text>
+                <Text style={styles.locationLabel}>Address:</Text>
                 <Text style={styles.locationValue}>{displayAddress}</Text>
               </View>
             </View>
-          )}
-        </View>
-
-        {/* Submitted Documents Card */}
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>Verification Documents</Text>
-          {restaurant.documents && restaurant.documents.length > 0 ? (
-            restaurant.documents.map((doc, idx) => (
-              <View key={idx} style={styles.docItem}>
-                <FileText size={20} color={Colors.primary} />
-                <View style={styles.docInfo}>
-                  <Text style={styles.docType}>{doc.docType || `Document ${idx + 1}`}</Text>
-                  <Text style={styles.docStatus}>Status: {doc.status?.toUpperCase() || 'PENDING'}</Text>
-                </View>
-                {doc.docUrl ? (
-                  <TouchableOpacity
-                    onPress={() => Linking.openURL(doc.docUrl)}
-                    style={styles.viewDocBtn}
-                  >
-                    <Text style={styles.viewDocText}>View File</Text>
-                  </TouchableOpacity>
-                ) : (
-                  <Text style={styles.noDocText}>No attachment</Text>
-                )}
-              </View>
-            ))
-          ) : (
-            <Text style={styles.emptyDocText}>No verification documents submitted in profile.</Text>
           )}
         </View>
 
@@ -306,19 +672,13 @@ export default function RestaurantDetailsScreen() {
           <Text style={styles.sectionTitle}>Verification Feedback & Remarks</Text>
           <TextInput
             style={styles.remarksInput}
-            placeholder="Type verification remarks, reasons for rejection, or general feedback here..."
+            placeholder="Type verification remarks or reasons for rejection here..."
             placeholderTextColor={Colors.textSubtle}
             multiline={true}
             numberOfLines={4}
             value={remarks}
             onChangeText={setRemarks}
           />
-          {restaurant.verificationRemarks ? (
-            <View style={styles.previousRemarksBox}>
-              <Text style={styles.previousRemarksLabel}>Active feedback history:</Text>
-              <Text style={styles.previousRemarksText}>{restaurant.verificationRemarks}</Text>
-            </View>
-          ) : null}
         </View>
 
         {/* Global Active Status Switch */}
@@ -374,6 +734,52 @@ export default function RestaurantDetailsScreen() {
         </TouchableOpacity>
       </View>
 
+      {/* Tier Modal */}
+      <Modal visible={tierModalVisible} transparent={true} animationType="slide" onRequestClose={() => setTierModalVisible(false)}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalBox}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>{editingTierIndex !== null ? 'Edit Tier' : 'Add Distance Tier'}</Text>
+              <TouchableOpacity onPress={() => setTierModalVisible(false)}>
+                <X size={20} color={Colors.textSubtle} />
+              </TouchableOpacity>
+            </View>
+            <View style={{ padding: 16, gap: 12 }}>
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Max Distance (Miles) *</Text>
+                <TextInput
+                  style={styles.textInput}
+                  keyboardType="numeric"
+                  placeholder="e.g. 3"
+                  placeholderTextColor={Colors.textSubtle}
+                  value={tierMaxDist}
+                  onChangeText={setTierMaxDist}
+                />
+              </View>
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Delivery Charge (£) *</Text>
+                <TextInput
+                  style={styles.textInput}
+                  keyboardType="numeric"
+                  placeholder="e.g. 2.50"
+                  placeholderTextColor={Colors.textSubtle}
+                  value={tierCharge}
+                  onChangeText={setTierCharge}
+                />
+              </View>
+            </View>
+            <View style={styles.modalFooter}>
+              <TouchableOpacity style={styles.cancelBtn} onPress={() => setTierModalVisible(false)}>
+                <Text style={styles.cancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.submitBtn} onPress={handleSaveTier}>
+                <Text style={styles.submitBtnText}>Save</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       {/* Deactivate Confirm Modal */}
       <ConfirmModal
         visible={deactivateModalVisible}
@@ -395,6 +801,20 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.background,
+  },
+  saveHeaderBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: Colors.primary,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  saveHeaderBtnText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 13,
   },
   centerBox: {
     flex: 1,
@@ -426,8 +846,8 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   bannerImage: {
-    width: 80,
-    height: 80,
+    width: 72,
+    height: 72,
     borderRadius: 14,
   },
   imagePlaceholder: {
@@ -437,7 +857,7 @@ const styles = StyleSheet.create({
   },
   placeholderText: {
     color: Colors.text,
-    fontSize: 32,
+    fontSize: 28,
     fontWeight: '800',
   },
   bannerInfo: {
@@ -446,7 +866,7 @@ const styles = StyleSheet.create({
   },
   restaurantName: {
     color: Colors.text,
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: '800',
     marginBottom: 4,
   },
@@ -454,11 +874,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    marginBottom: 8,
+    marginBottom: 6,
   },
   ownerText: {
     color: Colors.textMuted,
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '500',
   },
   badgeWrap: {
@@ -476,8 +896,8 @@ const styles = StyleSheet.create({
   titleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    marginBottom: 12,
+    gap: 8,
+    marginBottom: 14,
   },
   sectionTitle: {
     color: Colors.primary,
@@ -486,96 +906,136 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 0.6,
   },
+  formRow: {
+    flexDirection: 'row',
+  },
+  inputGroup: {
+    marginBottom: 12,
+    gap: 6,
+  },
+  inputLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Colors.textMuted,
+  },
+  textInput: {
+    backgroundColor: Colors.cardSurface,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.cardBorder,
+    paddingHorizontal: 12,
+    height: 40,
+    color: Colors.text,
+    fontSize: 13,
+  },
+  switchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 4,
+  },
+  switchLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: Colors.text,
+  },
+  typeSelectorRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  typeOption: {
+    flex: 1,
+    height: 38,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: 8,
+    backgroundColor: Colors.cardSurface,
+    borderWidth: 1,
+    borderColor: Colors.cardBorder,
+  },
+  activeTypeOption: {
+    backgroundColor: Colors.primary,
+    borderColor: Colors.primary,
+  },
+  typeOptionText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Colors.textMuted,
+  },
+  activeTypeOptionText: {
+    color: '#FFFFFF',
+  },
+  addTierBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    backgroundColor: Colors.cardSurface,
+  },
+  addTierBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Colors.primary,
+  },
+  noTiersText: {
+    fontSize: 12,
+    color: Colors.textMuted,
+    fontStyle: 'italic',
+  },
+  tierRowItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: Colors.cardSurface,
+    padding: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.cardBorder,
+  },
+  tierRowText: {
+    fontSize: 13,
+    color: Colors.text,
+  },
+  tierRowCharge: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: Colors.primary,
+  },
   detailRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    paddingVertical: 10,
+    paddingVertical: 8,
     borderBottomWidth: 1,
     borderBottomColor: Colors.cardBorder,
   },
   detailVal: {
     color: Colors.text,
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '500',
   },
   locationFields: {
-    gap: 10,
-    marginTop: 4,
+    gap: 8,
   },
   locationFieldRow: {
     flexDirection: 'row',
     borderBottomWidth: 1,
     borderBottomColor: Colors.cardBorder,
-    paddingVertical: 8,
+    paddingVertical: 6,
   },
   locationLabel: {
     color: Colors.textSubtle,
-    width: 120,
-    fontSize: 13,
+    width: 110,
+    fontSize: 12,
     fontWeight: '600',
   },
   locationValue: {
     color: Colors.text,
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '500',
     flex: 1,
-  },
-  coordsRow: {
-    borderBottomWidth: 0,
-    backgroundColor: Colors.cardSurface,
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    marginTop: 4,
-  },
-  coordsValue: {
-    color: Colors.primary,
-    fontSize: 13,
-    fontWeight: '700',
-    flex: 1,
-  },
-  docItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.cardBorder,
-  },
-  docInfo: {
-    flex: 1,
-    marginLeft: 10,
-  },
-  docType: {
-    color: Colors.text,
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  docStatus: {
-    color: Colors.textMuted,
-    fontSize: 11,
-    marginTop: 1,
-  },
-  viewDocBtn: {
-    backgroundColor: Colors.primary,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-  },
-  viewDocText: {
-    color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  noDocText: {
-    color: Colors.textSubtle,
-    fontSize: 12,
-  },
-  emptyDocText: {
-    color: Colors.textMuted,
-    fontSize: 13,
-    fontStyle: 'italic',
-    textAlign: 'center',
-    paddingVertical: 10,
   },
   remarksInput: {
     backgroundColor: Colors.cardSurface,
@@ -586,27 +1046,7 @@ const styles = StyleSheet.create({
     padding: 12,
     fontSize: 13,
     textAlignVertical: 'top',
-    height: 90,
-  },
-  previousRemarksBox: {
-    marginTop: 12,
-    padding: 10,
-    backgroundColor: '#FFFBEB',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#FEF3C7',
-  },
-  previousRemarksLabel: {
-    color: Colors.warning,
-    fontSize: 11,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-  },
-  previousRemarksText: {
-    color: Colors.text,
-    fontSize: 13,
-    marginTop: 2,
-    fontWeight: '500',
+    height: 80,
   },
   activeStatusCard: {
     backgroundColor: Colors.card,
@@ -617,7 +1057,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 30,
+    marginBottom: 20,
   },
   activeStatusHeader: {
     flex: 1,
@@ -673,5 +1113,67 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '700',
     fontSize: 13,
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 16,
+  },
+  modalBox: {
+    backgroundColor: Colors.card,
+    borderRadius: 16,
+    width: '100%',
+    maxWidth: 420,
+    borderWidth: 1,
+    borderColor: Colors.cardBorder,
+    overflow: 'hidden',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.cardBorder,
+  },
+  modalTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: Colors.text,
+  },
+  modalFooter: {
+    flexDirection: 'row',
+    padding: 16,
+    gap: 10,
+    borderTopWidth: 1,
+    borderTopColor: Colors.cardBorder,
+  },
+  cancelBtn: {
+    flex: 1,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: 8,
+    backgroundColor: Colors.cardSurface,
+  },
+  cancelBtnText: {
+    color: Colors.textMuted,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  submitBtn: {
+    flex: 1,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: 8,
+    backgroundColor: Colors.primary,
+  },
+  submitBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
   },
 });

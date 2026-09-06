@@ -397,12 +397,27 @@ export function buildEscPosReceipt(order: Partial<Order> & any, config: PosPrint
     builder.twoColumn('Delivery Fee:', formatMoney(deliveryFee));
   }
 
-  const serviceFee = order.pricing?.serviceFee !== undefined ? order.pricing.serviceFee : (order.pricing?.handlingCharge !== undefined ? order.pricing.handlingCharge : order.serviceFee);
+  const onlinePaymentFee = order.pricing?.onlinePaymentFee !== undefined ? order.pricing.onlinePaymentFee : (order.onlinePaymentFee !== undefined ? order.onlinePaymentFee : ((order.pricing as any)?.cardFee || (order.pricing as any)?.paymentFee));
+  if (onlinePaymentFee !== undefined && onlinePaymentFee > 0) {
+    builder.twoColumn('Online Payment Fee:', formatMoney(onlinePaymentFee));
+  }
+
+  const handlingCharge = order.pricing?.handlingCharge !== undefined ? order.pricing.handlingCharge : order.handlingCharge;
+  if (handlingCharge !== undefined && handlingCharge > 0) {
+    builder.twoColumn('Handling Charge:', formatMoney(handlingCharge));
+  }
+
+  const serviceFee = order.pricing?.serviceFee !== undefined ? order.pricing.serviceFee : (order.pricing?.platformFee !== undefined ? order.pricing.platformFee : (order.serviceFee || order.platformFee));
   if (serviceFee !== undefined && serviceFee > 0) {
     builder.twoColumn('Service Fee:', formatMoney(serviceFee));
   }
 
-  const discount = order.pricing?.discount !== undefined ? order.pricing.discount : order.discount;
+  const tax = order.pricing?.tax !== undefined ? order.pricing.tax : (order.pricing?.vat !== undefined ? order.pricing.vat : (order.tax || order.vat));
+  if (tax !== undefined && tax > 0) {
+    builder.twoColumn('Tax / VAT:', formatMoney(tax));
+  }
+
+  const discount = order.pricing?.discount !== undefined ? order.pricing.discount : (order.pricing?.discountAmount !== undefined ? order.pricing.discountAmount : order.discount);
   if (discount !== undefined && discount > 0) {
     builder.twoColumn('Discount:', `-${formatMoney(discount)}`);
   }
@@ -415,7 +430,7 @@ export function buildEscPosReceipt(order: Partial<Order> & any, config: PosPrint
   builder.divider();
 
   // TOTAL
-  const grandTotal = order.pricing?.total !== undefined ? order.pricing.total : (order.totalAmount || order.total || subtotal);
+  const grandTotal = order.pricing?.total !== undefined ? order.pricing.total : (order.pricing?.totalAmount !== undefined ? order.pricing.totalAmount : (order.totalAmount || order.total || subtotal));
   builder.bold(true).setSize(2, 2);
   builder.twoColumn('TOTAL:', formatMoney(grandTotal));
   builder.setSize(1, 1).bold(false);

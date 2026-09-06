@@ -79,7 +79,17 @@ export const restaurantOwnerService = {
   },
 
   // --- Timings & Settings Profile ---
-  async getRestaurantTimings(): Promise<{ success: boolean; data?: any[]; message?: string }> {
+  async getRestaurantTimings(): Promise<{
+    success: boolean;
+    data?: {
+      timings: any[];
+      hasCustomDeliveryTimings: boolean;
+      deliveryTimings: any[];
+      hasCustomExternalDeliveryTimings: boolean;
+      externalDeliveryTimings: any[];
+    };
+    message?: string;
+  }> {
     return apiRequest('/api/restaurants/timings', { method: 'GET' });
   },
   async getRestaurantProfile(): Promise<{ success: boolean; data?: any; message?: string }> {
@@ -97,10 +107,11 @@ export const restaurantOwnerService = {
       body: payload,
     });
   },
-  async updateRestaurantTimings(timings: any[]): Promise<{ success: boolean; message?: string }> {
+  async updateRestaurantTimings(payload: any): Promise<{ success: boolean; message?: string }> {
+    const body = Array.isArray(payload) ? { timings: payload } : payload;
     return apiRequest('/api/restaurants/timings', {
       method: 'PUT',
-      body: { timings },
+      body,
     });
   },
   async syncStripeAccount(): Promise<{ success: boolean; message?: string }> {

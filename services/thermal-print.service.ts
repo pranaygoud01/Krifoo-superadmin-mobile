@@ -147,11 +147,15 @@ export function generateThermalReceiptHtml(order: Partial<Order> & any): string 
 
   // Financials
   const pricing = order.pricing || {};
-  const subtotal = pricing.subtotal ?? order.totalAmount ?? order.totalPrice ?? 0;
-  const processingFee = pricing.handlingCharge ?? pricing.platformFee ?? 0;
-  const deliveryFee = pricing.deliveryFee ?? order.deliveryFee ?? 0;
-  const discount = pricing.discount ?? pricing.discountAmount ?? 0;
-  const total = pricing.total ?? pricing.totalAmount ?? (subtotal + processingFee + deliveryFee - discount);
+  const subtotal = Number(pricing.subtotal ?? (order as any).subtotal ?? order.totalAmount ?? order.totalPrice ?? 0);
+  const deliveryFee = Number(pricing.deliveryFee ?? (order as any).deliveryFee ?? 0);
+  const onlinePaymentFee = Number(pricing.onlinePaymentFee ?? (order as any).onlinePaymentFee ?? (pricing as any).cardFee ?? (pricing as any).paymentFee ?? 0);
+  const handlingCharge = Number(pricing.handlingCharge ?? (order as any).handlingCharge ?? 0);
+  const platformFee = Number(pricing.platformFee ?? (order as any).platformFee ?? (pricing as any).serviceFee ?? (order as any).serviceFee ?? 0);
+  const tax = Number(pricing.tax ?? pricing.vat ?? (order as any).tax ?? (order as any).vat ?? 0);
+  const tip = Number(pricing.tip ?? (order as any).tip ?? 0);
+  const discount = Number(pricing.discount ?? pricing.discountAmount ?? (order as any).discountAmount ?? 0);
+  const total = Number(pricing.total ?? pricing.totalAmount ?? order.totalAmount ?? (order as any).totalPrice ?? (subtotal + deliveryFee + onlinePaymentFee + handlingCharge + platformFee + tax + tip - discount));
 
   const paymentType = order.paymentType || 'Card';
   const paymentStatus = (order.paymentStatus || 'Paid').toUpperCase();
@@ -476,20 +480,56 @@ export function generateThermalReceiptHtml(order: Partial<Order> & any): string 
       <span>${formatMoney(subtotal > 0 ? subtotal : total)}</span>
     </div>
     ${
-      processingFee > 0
-        ? `
-    <div class="summary-row">
-      <span>Processing Fee</span>
-      <span>${formatMoney(processingFee)}</span>
-    </div>`
-        : ''
-    }
-    ${
       deliveryFee > 0
         ? `
     <div class="summary-row">
       <span>Delivery Fee</span>
       <span>${formatMoney(deliveryFee)}</span>
+    </div>`
+        : ''
+    }
+    ${
+      onlinePaymentFee > 0
+        ? `
+    <div class="summary-row">
+      <span>Online Payment Fee</span>
+      <span>${formatMoney(onlinePaymentFee)}</span>
+    </div>`
+        : ''
+    }
+    ${
+      handlingCharge > 0
+        ? `
+    <div class="summary-row">
+      <span>Handling Charge</span>
+      <span>${formatMoney(handlingCharge)}</span>
+    </div>`
+        : ''
+    }
+    ${
+      platformFee > 0
+        ? `
+    <div class="summary-row">
+      <span>Platform / Service Fee</span>
+      <span>${formatMoney(platformFee)}</span>
+    </div>`
+        : ''
+    }
+    ${
+      tax > 0
+        ? `
+    <div class="summary-row">
+      <span>Tax / VAT</span>
+      <span>${formatMoney(tax)}</span>
+    </div>`
+        : ''
+    }
+    ${
+      tip > 0
+        ? `
+    <div class="summary-row">
+      <span>Driver Tip</span>
+      <span>${formatMoney(tip)}</span>
     </div>`
         : ''
     }

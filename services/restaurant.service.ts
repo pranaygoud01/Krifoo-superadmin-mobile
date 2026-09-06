@@ -32,6 +32,17 @@ export const restaurantService = {
     return res;
   },
 
+  async updateRestaurantDetails(
+    id: string,
+    data: Partial<Restaurant>
+  ): Promise<{ success: boolean; message?: string; data?: Restaurant }> {
+    const res = await apiRequest(`/api/admin/restaurants/${id}`, {
+      method: 'PUT',
+      body: data,
+    });
+    return res;
+  },
+
   async verifyRestaurant(
     id: string,
     verificationStatus: VerificationStatus,
@@ -63,5 +74,37 @@ export const restaurantService = {
       method: 'DELETE',
     });
     return res;
+  },
+
+  async getRestaurantTimings(restaurantId: string): Promise<{
+    success: boolean;
+    data?: {
+      timings: any[];
+      hasCustomDeliveryTimings: boolean;
+      deliveryTimings: any[];
+      hasCustomExternalDeliveryTimings: boolean;
+      externalDeliveryTimings: any[];
+    };
+    message?: string;
+  }> {
+    return apiRequest(`/api/admin/restaurants/${restaurantId}/timings`, {
+      method: 'GET',
+    });
+  },
+
+  async updateRestaurantTimings(
+    restaurantId: string,
+    payload: {
+      timings: any[];
+      hasCustomDeliveryTimings?: boolean;
+      deliveryTimings?: any[];
+      hasCustomExternalDeliveryTimings?: boolean;
+      externalDeliveryTimings?: any[];
+    }
+  ): Promise<{ success: boolean; message?: string; data?: any }> {
+    return apiRequest(`/api/admin/restaurants/${restaurantId}/timings`, {
+      method: 'PUT',
+      body: payload,
+    });
   },
 };

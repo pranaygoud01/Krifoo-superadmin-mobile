@@ -41,6 +41,10 @@ export default function AddEditMenuScreen() {
     isFood: true,
     itemType: 'veg' as 'veg' | 'non-veg' | 'egg',
     basePrice: '',
+    deliveryPrice: '',
+    collectionPrice: '',
+    eatInPrice: '',
+    stock: '',
     discountPercentage: '0',
     pricingType: 'fixed' as 'fixed' | 'weight' | 'portion',
     weightUnit: 'gm' as 'gm' | 'kg' | 'ml' | 'l' | 'pcs' | 'pack',
@@ -115,6 +119,10 @@ export default function AddEditMenuScreen() {
             isFood: item.isFood !== false,
             itemType: (item.itemType || 'veg') as any,
             basePrice: String(item.basePrice ?? item.price ?? '0'),
+            deliveryPrice: item.deliveryPrice != null ? String(item.deliveryPrice) : '',
+            collectionPrice: item.collectionPrice != null ? String(item.collectionPrice) : '',
+            eatInPrice: item.eatInPrice != null ? String(item.eatInPrice) : '',
+            stock: item.stock != null ? String(item.stock) : '',
             discountPercentage: String(item.discountPercentage ?? '0'),
             pricingType: (item.pricingType || 'fixed') as any,
             weightUnit: (item.weightUnit || 'gm') as any,
@@ -294,6 +302,12 @@ export default function AddEditMenuScreen() {
 
       if (f.pricingType === 'fixed') {
         uploadData.append('basePrice', f.basePrice);
+        if (f.deliveryPrice.trim()) uploadData.append('deliveryPrice', f.deliveryPrice.trim());
+        if (f.collectionPrice.trim()) uploadData.append('collectionPrice', f.collectionPrice.trim());
+        if (f.eatInPrice.trim()) uploadData.append('eatInPrice', f.eatInPrice.trim());
+      }
+      if (f.stock.trim()) {
+        uploadData.append('stock', f.stock.trim());
       } else if (f.pricingType === 'weight') {
         const cleanedWeightVariants = weightVariants
           .map((wv) => ({
@@ -500,13 +514,57 @@ export default function AddEditMenuScreen() {
               {formState.pricingType === 'fixed' ? (
                 <View style={styles.subSection}>
                   <View style={styles.inputGroup}>
-                    <Text style={styles.label}>Base Price (€) *</Text>
+                    <Text style={styles.label}>Base Price (£) *</Text>
                     <TextInput
                       style={styles.input}
                       keyboardType="numeric"
                       placeholder="e.g. 9.99"
                       value={formState.basePrice}
                       onChangeText={(val) => handleChange('basePrice', val)}
+                    />
+                  </View>
+
+                  <View style={{ flexDirection: 'row', gap: 8 }}>
+                    <View style={[styles.inputGroup, { flex: 1 }]}>
+                      <Text style={styles.label}>Delivery Price (£)</Text>
+                      <TextInput
+                        style={styles.input}
+                        keyboardType="numeric"
+                        placeholder="Optional"
+                        value={formState.deliveryPrice}
+                        onChangeText={(val) => handleChange('deliveryPrice', val)}
+                      />
+                    </View>
+                    <View style={[styles.inputGroup, { flex: 1 }]}>
+                      <Text style={styles.label}>Collection Price (£)</Text>
+                      <TextInput
+                        style={styles.input}
+                        keyboardType="numeric"
+                        placeholder="Optional"
+                        value={formState.collectionPrice}
+                        onChangeText={(val) => handleChange('collectionPrice', val)}
+                      />
+                    </View>
+                    <View style={[styles.inputGroup, { flex: 1 }]}>
+                      <Text style={styles.label}>Eat-in Price (£)</Text>
+                      <TextInput
+                        style={styles.input}
+                        keyboardType="numeric"
+                        placeholder="Optional"
+                        value={formState.eatInPrice}
+                        onChangeText={(val) => handleChange('eatInPrice', val)}
+                      />
+                    </View>
+                  </View>
+
+                  <View style={styles.inputGroup}>
+                    <Text style={styles.label}>Inventory Stock Count</Text>
+                    <TextInput
+                      style={styles.input}
+                      keyboardType="numeric"
+                      placeholder="Leave empty for unlimited stock"
+                      value={formState.stock}
+                      onChangeText={(val) => handleChange('stock', val)}
                     />
                   </View>
 

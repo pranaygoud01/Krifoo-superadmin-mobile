@@ -407,12 +407,27 @@ export async function printSunmiOrderReceipt(order: Partial<Order> & any): Promi
       sunmi.printColumnsString(['Delivery Fee:', formatMoney(deliveryFee)], [32, 16], [AlignValue.LEFT, AlignValue.RIGHT]);
     }
 
-    const serviceFee = order.pricing?.serviceFee !== undefined ? order.pricing.serviceFee : (order.pricing?.handlingCharge !== undefined ? order.pricing.handlingCharge : order.serviceFee);
+    const onlinePaymentFee = order.pricing?.onlinePaymentFee !== undefined ? order.pricing.onlinePaymentFee : (order.onlinePaymentFee !== undefined ? order.onlinePaymentFee : ((order.pricing as any)?.cardFee || (order.pricing as any)?.paymentFee));
+    if (onlinePaymentFee !== undefined && onlinePaymentFee > 0) {
+      sunmi.printColumnsString(['Online Payment Fee:', formatMoney(onlinePaymentFee)], [32, 16], [AlignValue.LEFT, AlignValue.RIGHT]);
+    }
+
+    const handlingCharge = order.pricing?.handlingCharge !== undefined ? order.pricing.handlingCharge : order.handlingCharge;
+    if (handlingCharge !== undefined && handlingCharge > 0) {
+      sunmi.printColumnsString(['Handling Charge:', formatMoney(handlingCharge)], [32, 16], [AlignValue.LEFT, AlignValue.RIGHT]);
+    }
+
+    const serviceFee = order.pricing?.serviceFee !== undefined ? order.pricing.serviceFee : (order.pricing?.platformFee !== undefined ? order.pricing.platformFee : (order.serviceFee || order.platformFee));
     if (serviceFee !== undefined && serviceFee > 0) {
       sunmi.printColumnsString(['Service Fee:', formatMoney(serviceFee)], [32, 16], [AlignValue.LEFT, AlignValue.RIGHT]);
     }
 
-    const discount = order.pricing?.discount !== undefined ? order.pricing.discount : order.discount;
+    const tax = order.pricing?.tax !== undefined ? order.pricing.tax : (order.pricing?.vat !== undefined ? order.pricing.vat : (order.tax || order.vat));
+    if (tax !== undefined && tax > 0) {
+      sunmi.printColumnsString(['Tax / VAT:', formatMoney(tax)], [32, 16], [AlignValue.LEFT, AlignValue.RIGHT]);
+    }
+
+    const discount = order.pricing?.discount !== undefined ? order.pricing.discount : (order.pricing?.discountAmount !== undefined ? order.pricing.discountAmount : order.discount);
     if (discount !== undefined && discount > 0) {
       sunmi.printColumnsString(['Discount:', `-${formatMoney(discount)}`], [32, 16], [AlignValue.LEFT, AlignValue.RIGHT]);
     }
@@ -425,7 +440,7 @@ export async function printSunmiOrderReceipt(order: Partial<Order> & any): Promi
     sunmi.printerText('------------------------------------------------\n');
 
     // TOTAL AMOUNT (Double Size)
-    const grandTotal = order.pricing?.total !== undefined ? order.pricing.total : (order.totalAmount || order.total || subtotal);
+    const grandTotal = order.pricing?.total !== undefined ? order.pricing.total : (order.pricing?.totalAmount !== undefined ? order.pricing.totalAmount : (order.totalAmount || order.total || subtotal));
     sunmi.setFontSize(28);
     sunmi.setFontWeight(true);
     sunmi.printColumnsString(['TOTAL:', formatMoney(grandTotal)], [24, 24], [AlignValue.LEFT, AlignValue.RIGHT]);

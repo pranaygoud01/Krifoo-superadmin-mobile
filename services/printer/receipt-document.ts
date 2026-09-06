@@ -200,9 +200,15 @@ export function buildReceiptDocument(order: Partial<Order> & any, config?: Parti
   commands.push({ type: 'line' });
 
   // 6. Pricing Totals
-  const subtotal = Number(order.pricing?.subtotal ?? 0);
+  const subtotal = Number(order.pricing?.subtotal ?? (order as any).subtotal ?? order.totalAmount ?? 0);
   const deliveryFee = Number(order.pricing?.deliveryFee ?? (order as any).deliveryFee ?? 0);
-  const total = Number(order.pricing?.total ?? order.pricing?.totalAmount ?? order.totalAmount ?? 0);
+  const onlinePaymentFee = Number(order.pricing?.onlinePaymentFee ?? (order as any).onlinePaymentFee ?? (order.pricing as any)?.cardFee ?? (order.pricing as any)?.paymentFee ?? 0);
+  const handlingCharge = Number(order.pricing?.handlingCharge ?? (order as any).handlingCharge ?? 0);
+  const platformFee = Number(order.pricing?.platformFee ?? (order as any).platformFee ?? (order.pricing as any)?.serviceFee ?? (order as any).serviceFee ?? 0);
+  const tax = Number(order.pricing?.tax ?? order.pricing?.vat ?? (order as any).tax ?? (order as any).vat ?? 0);
+  const tip = Number(order.pricing?.tip ?? (order as any).tip ?? 0);
+  const discount = Number(order.pricing?.discount ?? order.pricing?.discountAmount ?? (order as any).discountAmount ?? 0);
+  const total = Number(order.pricing?.total ?? order.pricing?.totalAmount ?? order.totalAmount ?? (subtotal + deliveryFee + onlinePaymentFee + handlingCharge + platformFee + tax + tip - discount));
 
   const formatSummaryRow = (label: string, value: string) => {
     const spaces = Math.max(1, cols - label.length - value.length);
@@ -214,6 +220,24 @@ export function buildReceiptDocument(order: Partial<Order> & any, config?: Parti
   }
   if (deliveryFee > 0) {
     commands.push({ type: 'text', value: formatSummaryRow('Delivery Fee:', formatMoney(deliveryFee)), align: 'left' });
+  }
+  if (onlinePaymentFee > 0) {
+    commands.push({ type: 'text', value: formatSummaryRow('Online Payment Fee:', formatMoney(onlinePaymentFee)), align: 'left' });
+  }
+  if (handlingCharge > 0) {
+    commands.push({ type: 'text', value: formatSummaryRow('Handling Charge:', formatMoney(handlingCharge)), align: 'left' });
+  }
+  if (platformFee > 0) {
+    commands.push({ type: 'text', value: formatSummaryRow('Service / Platform Fee:', formatMoney(platformFee)), align: 'left' });
+  }
+  if (tax > 0) {
+    commands.push({ type: 'text', value: formatSummaryRow('Tax / VAT:', formatMoney(tax)), align: 'left' });
+  }
+  if (tip > 0) {
+    commands.push({ type: 'text', value: formatSummaryRow('Driver Tip:', formatMoney(tip)), align: 'left' });
+  }
+  if (discount > 0) {
+    commands.push({ type: 'text', value: formatSummaryRow('Discount:', `-${formatMoney(discount)}`), align: 'left' });
   }
 
   commands.push({ type: 'line' });

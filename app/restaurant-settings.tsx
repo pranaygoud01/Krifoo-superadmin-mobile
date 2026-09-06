@@ -5,9 +5,9 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  ActivityIndicator,
   Switch,
   Alert,
+  useWindowDimensions,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Header } from '../components/Header';
@@ -27,9 +27,8 @@ import {
   Shield,
   ChevronRight,
   LogOut,
+  Globe,
 } from 'lucide-react-native';
-
-import { useWindowDimensions } from 'react-native';
 
 export default function RestaurantSettingsScreen() {
   const router = useRouter();
@@ -47,6 +46,7 @@ export default function RestaurantSettingsScreen() {
     isActive: true,
     type: 'food_delivery_and_dining',
     stripeStatus: 'pending',
+    hasExternalWebsite: false,
   });
 
   const loadStoreSummary = async () => {
@@ -62,6 +62,7 @@ export default function RestaurantSettingsScreen() {
           isActive: r.isActive ?? true,
           type: r.restaurantType || 'food_delivery_and_dining',
           stripeStatus: r.stripeAccountStatus || 'pending',
+          hasExternalWebsite: Boolean(r.externalWebsiteSettings?.domain),
         });
       }
     } catch (e) {
@@ -107,11 +108,11 @@ export default function RestaurantSettingsScreen() {
         showBackButton={true}
         rightElement={
           <TouchableOpacity
-            style={{ padding: 8, marginRight: 4 }}
+            style={styles.headerLogoutBtn}
             onPress={() => setLogoutModalVisible(true)}
             activeOpacity={0.7}
           >
-            <LogOut size={22} color={Colors.danger} />
+            <LogOut size={18} color={Colors.danger} />
           </TouchableOpacity>
         }
       />
@@ -127,207 +128,244 @@ export default function RestaurantSettingsScreen() {
           <RestaurantSettingsSkeleton />
         </ScrollView>
       ) : (
-          <ScrollView
-            contentContainerStyle={[
-              styles.scrollContent,
-              { paddingHorizontal: isTablet ? 24 : 16, maxWidth: 840, alignSelf: 'center', width: '100%' },
-            ]}
-            showsVerticalScrollIndicator={false}
-          >
-            {/* Store Summary Banner */}
-            <View style={styles.storeBannerCard}>
-              <View style={styles.storeBannerBadge}>
-                <Store size={24} color={Colors.primary} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.bannerStoreName}>{storeSummary.name}</Text>
-                <Text style={styles.bannerStoreSub}>
-                  {storeSummary.city ? `${storeSummary.city} · ` : ''}
-                  {storeSummary.type === 'food_delivery_and_dining'
-                    ? 'Food & Dining'
-                    : storeSummary.type === 'food_delivery'
-                      ? 'Delivery Only'
-                      : 'Retail Store'}
+        <ScrollView
+          contentContainerStyle={[
+            styles.scrollContent,
+            { paddingHorizontal: isTablet ? 24 : 16, maxWidth: 840, alignSelf: 'center', width: '100%' },
+          ]}
+          showsVerticalScrollIndicator={false}
+        >
+          {/* Store Summary Banner */}
+          <View style={styles.storeBannerCard}>
+            <View style={styles.storeBannerBadge}>
+              <Store size={22} color={Colors.primary} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.bannerStoreName}>{storeSummary.name}</Text>
+              <Text style={styles.bannerStoreSub}>
+                {storeSummary.city ? `${storeSummary.city} · ` : ''}
+                {storeSummary.type === 'food_delivery_and_dining'
+                  ? 'Food & Dining'
+                  : storeSummary.type === 'food_delivery'
+                  ? 'Delivery Only'
+                  : 'Retail Store'}
+              </Text>
+            </View>
+            <View style={styles.statusToggleContainer}>
+              <View
+                style={[
+                  styles.statusBadge,
+                  storeSummary.isActive ? styles.statusActive : styles.statusInactive,
+                ]}
+              >
+                <Text style={styles.statusBadgeText}>
+                  {storeSummary.isActive ? 'ONLINE' : 'OFFLINE'}
                 </Text>
-            </View>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <View style={[styles.statusBadge, storeSummary.isActive ? styles.statusActive : styles.statusInactive]}>
-                  <Text style={styles.statusBadgeText}>{storeSummary.isActive ? 'ONLINE' : 'OFFLINE'}</Text>
-                </View>
-                <Switch
-                  value={storeSummary.isActive}
-                  disabled={togglingActive}
-                  onValueChange={handleToggleStoreActive}
-                  trackColor={{ true: Colors.primaryLight, false: Colors.cardBorder }}
-                  thumbColor={storeSummary.isActive ? Colors.primary : Colors.textSubtle}
-                />
               </View>
+              <Switch
+                value={storeSummary.isActive}
+                disabled={togglingActive}
+                onValueChange={handleToggleStoreActive}
+                trackColor={{ true: Colors.primaryLight, false: Colors.cardBorder }}
+                thumbColor={storeSummary.isActive ? Colors.primary : Colors.textSubtle}
+              />
             </View>
+          </View>
 
-            <Text style={styles.menuSectionTitle}>SETTINGS & PREFERENCES</Text>
-
-            {/* 1. Store & Restaurant Profile */}
+          {/* SECTION 1: STORE & CHANNELS */}
+          <Text style={styles.sectionHeader}>STOREFRONT & ONLINE CHANNELS</Text>
+          <View style={styles.cardGroup}>
+            {/* Store & Restaurant Profile */}
             <TouchableOpacity
-              style={styles.menuCard}
+              style={[styles.groupItem, styles.groupItemBorder]}
               onPress={() => router.push('/store-profile')}
               activeOpacity={0.7}
             >
-              <View style={styles.iconBadge}>
-                <Store size={20} color={Colors.primary} />
+              <View style={[styles.itemIconBadge, { backgroundColor: '#F0FDF4' }]}>
+                <Store size={18} color="#16A34A" />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.menuTitle}>Store & Restaurant Profile</Text>
-                <Text style={styles.menuSub} numberOfLines={1}>
-                  Identity, owner contact, notifications & shop address
-                </Text>
+                <Text style={styles.itemTitle}>Store & Restaurant Profile</Text>
+                <Text style={styles.itemSubtitle}>Identity, contact details, shop address & notifications</Text>
               </View>
-              <ChevronRight size={20} color={Colors.textMuted} />
+              <ChevronRight size={18} color={Colors.textMuted} />
             </TouchableOpacity>
 
-            {/* 2. Acceptance & Operation Settings */}
+            {/* External Website & Online Ordering */}
             <TouchableOpacity
-              style={styles.menuCard}
+              style={styles.groupItem}
+              onPress={() =>
+                router.push({
+                  pathname: '/external-website-settings',
+                  params: { restaurantId },
+                })
+              }
+              activeOpacity={0.7}
+            >
+              <View style={[styles.itemIconBadge, { backgroundColor: '#EEF2FF' }]}>
+                <Globe size={18} color="#4F46E5" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <View style={styles.itemTitleRow}>
+                  <Text style={styles.itemTitle}>External Website & Delivery</Text>
+                  <View style={styles.newBadge}>
+                    <Text style={styles.newBadgeText}>LIVE EDITS</Text>
+                  </View>
+                </View>
+                <Text style={styles.itemSubtitle}>
+                  Custom domain, theme colors, banners & tiered delivery rates
+                </Text>
+              </View>
+              <ChevronRight size={18} color={Colors.textMuted} />
+            </TouchableOpacity>
+          </View>
+
+          {/* SECTION 2: OPERATIONS & TIMINGS */}
+          <Text style={styles.sectionHeader}>OPERATIONS & DELIVERY RULES</Text>
+          <View style={styles.cardGroup}>
+            {/* Acceptance Settings */}
+            <TouchableOpacity
+              style={[styles.groupItem, styles.groupItemBorder]}
               onPress={() => router.push('/operation-settings')}
               activeOpacity={0.7}
             >
-              <View style={styles.iconBadge}>
-                <Settings2 size={20} color={Colors.primary} />
+              <View style={[styles.itemIconBadge, { backgroundColor: '#FEF3C7' }]}>
+                <Settings2 size={18} color="#D97706" />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.menuTitle}>Acceptance Settings</Text>
-                <Text style={styles.menuSub} numberOfLines={1}>
-                  Accept Online Orders, Table Bookings, COD, Auto Approve
-                </Text>
+                <Text style={styles.itemTitle}>Acceptance Settings</Text>
+                <Text style={styles.itemSubtitle}>Online Orders, Table Bookings, COD, Auto Approve</Text>
               </View>
-              <ChevronRight size={20} color={Colors.textMuted} />
+              <ChevronRight size={18} color={Colors.textMuted} />
             </TouchableOpacity>
 
-            {/* 3. Delivery Parameters */}
+            {/* Platform Delivery Settings */}
             <TouchableOpacity
-              style={styles.menuCard}
+              style={[styles.groupItem, styles.groupItemBorder]}
               onPress={() => router.push('/delivery-settings')}
               activeOpacity={0.7}
             >
-              <View style={styles.iconBadge}>
-                <Truck size={20} color={Colors.primary} />
+              <View style={[styles.itemIconBadge, { backgroundColor: '#FEF9C3' }]}>
+                <Truck size={18} color="#CA8A04" />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.menuTitle}>Delivery Parameters</Text>
-                <Text style={styles.menuSub} numberOfLines={1}>
-                  Delivery radius, per-mile charges & handling fees
-                </Text>
+                <Text style={styles.itemTitle}>Standard Delivery Settings</Text>
+                <Text style={styles.itemSubtitle}>Free delivery radius, per-mile charges & handling fees</Text>
               </View>
-              <ChevronRight size={20} color={Colors.textMuted} />
+              <ChevronRight size={18} color={Colors.textMuted} />
             </TouchableOpacity>
 
-            {/* 4. Operational Timings */}
+            {/* Operational Timings */}
             <TouchableOpacity
-              style={styles.menuCard}
+              style={styles.groupItem}
               onPress={() => router.push('/operational-timings')}
               activeOpacity={0.7}
             >
-              <View style={styles.iconBadge}>
-                <Clock size={20} color={Colors.primary} />
+              <View style={[styles.itemIconBadge, { backgroundColor: '#F3E8FF' }]}>
+                <Clock size={18} color="#9333EA" />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.menuTitle}>Operational Timings</Text>
-                <Text style={styles.menuSub} numberOfLines={1}>
-                  Weekly operating hours & open/close schedule
-                </Text>
+                <Text style={styles.itemTitle}>Operational Timings</Text>
+                <Text style={styles.itemSubtitle}>Weekly open/close schedule & delivery operating hours</Text>
               </View>
-              <ChevronRight size={20} color={Colors.textMuted} />
+              <ChevronRight size={18} color={Colors.textMuted} />
             </TouchableOpacity>
+          </View>
 
-            {/* 5. Universal Thermal POS Printer Setup */}
+          {/* SECTION 3: HARDWARE & SOUND */}
+          <Text style={styles.sectionHeader}>POS HARDWARE & NOTIFICATIONS</Text>
+          <View style={styles.cardGroup}>
+            {/* Universal Thermal POS Printer Setup */}
             <TouchableOpacity
-              style={styles.menuCard}
+              style={[styles.groupItem, styles.groupItemBorder]}
               onPress={() => router.push({ pathname: '/printer-settings', params: { restaurantId } })}
               activeOpacity={0.7}
             >
-              <View style={styles.iconBadge}>
-                <Printer size={20} color={Colors.primary} />
+              <View style={[styles.itemIconBadge, { backgroundColor: '#E0F2FE' }]}>
+                <Printer size={18} color="#0284C7" />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.menuTitle}>Universal POS & Thermal Printing Setup</Text>
-                <Text style={styles.menuSub} numberOfLines={1}>
-                  Epson TM-m30III, SUNMI, Star Micronics & Bluetooth/LAN Printers
-                </Text>
+                <Text style={styles.itemTitle}>Thermal Printing Setup</Text>
+                <Text style={styles.itemSubtitle}>Epson TM-m30III, SUNMI, Star Micronics & LAN</Text>
               </View>
-              <ChevronRight size={20} color={Colors.textMuted} />
+              <ChevronRight size={18} color={Colors.textMuted} />
             </TouchableOpacity>
 
-            {/* 6. Order Sound & Buzz Alerts */}
+            {/* Order Sound & Buzz Alerts */}
             <TouchableOpacity
-              style={styles.menuCard}
+              style={[styles.groupItem, styles.groupItemBorder]}
               onPress={() => router.push('/sound-settings')}
               activeOpacity={0.7}
             >
-              <View style={styles.iconBadge}>
-                <Bell size={20} color={Colors.primary} />
+              <View style={[styles.itemIconBadge, { backgroundColor: '#FEE2E2' }]}>
+                <Bell size={18} color="#DC2626" />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.menuTitle}>Order Sound & Buzz Alerts</Text>
-                <Text style={styles.menuSub} numberOfLines={1}>
-                  5-second loud buzzer chime & haptic vibration alerts
-                </Text>
+                <Text style={styles.itemTitle}>Order Sound & Buzz Alerts</Text>
+                <Text style={styles.itemSubtitle}>Loud buzzer chime, duration loop & vibrations</Text>
               </View>
-              <ChevronRight size={20} color={Colors.textMuted} />
+              <ChevronRight size={18} color={Colors.textMuted} />
             </TouchableOpacity>
 
-            {/* 7. Payouts Integration */}
+            {/* Payouts Integration */}
             <TouchableOpacity
-              style={styles.menuCard}
+              style={styles.groupItem}
               onPress={() => router.push('/payout-settings')}
               activeOpacity={0.7}
             >
-              <View style={styles.iconBadge}>
-                <CreditCard size={20} color={Colors.primary} />
+              <View style={[styles.itemIconBadge, { backgroundColor: '#ECFDF5' }]}>
+                <CreditCard size={18} color="#059669" />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.menuTitle}>Payouts Integration (Stripe)</Text>
-                <Text style={styles.menuSub} numberOfLines={1}>
-                  Status: {storeSummary.stripeStatus.toUpperCase()} · Bank settlements
-                </Text>
+                <Text style={styles.itemTitle}>Payouts Integration (Stripe)</Text>
+                <Text style={styles.itemSubtitle}>Status: {storeSummary.stripeStatus.toUpperCase()} · Bank settlements</Text>
               </View>
-              <ChevronRight size={20} color={Colors.textMuted} />
+              <ChevronRight size={18} color={Colors.textMuted} />
             </TouchableOpacity>
+          </View>
 
-            <Text style={[styles.menuSectionTitle, { marginTop: 16 }]}>LEGAL & SUPPORT</Text>
-
-            {/* 8. Terms & Conditions */}
+          {/* SECTION 4: LEGAL & SUPPORT */}
+          <Text style={styles.sectionHeader}>LEGAL & SUPPORT</Text>
+          <View style={styles.cardGroup}>
             <TouchableOpacity
-              style={styles.menuCard}
+              style={[styles.groupItem, styles.groupItemBorder]}
               onPress={() => router.push('/terms-conditions')}
               activeOpacity={0.7}
             >
-              <View style={styles.iconBadge}>
-                <Shield size={20} color={Colors.primary} />
+              <View style={[styles.itemIconBadge, { backgroundColor: '#F8FAFC' }]}>
+                <Shield size={18} color={Colors.textMuted} />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.menuTitle}>Terms & Conditions</Text>
-                <Text style={styles.menuSub} numberOfLines={1}>
-                  Krifoo Admin partner service agreement
-                </Text>
+                <Text style={styles.itemTitle}>Terms & Conditions</Text>
+                <Text style={styles.itemSubtitle}>Krifoo Admin partner service agreement</Text>
               </View>
-              <ChevronRight size={20} color={Colors.textMuted} />
+              <ChevronRight size={18} color={Colors.textMuted} />
             </TouchableOpacity>
 
-            {/* 9. Privacy Policy */}
             <TouchableOpacity
-              style={styles.menuCard}
+              style={styles.groupItem}
               onPress={() => router.push('/privacy-policy')}
               activeOpacity={0.7}
             >
-              <View style={styles.iconBadge}>
-                <Shield size={20} color={Colors.primary} />
+              <View style={[styles.itemIconBadge, { backgroundColor: '#F8FAFC' }]}>
+                <Shield size={18} color={Colors.textMuted} />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.menuTitle}>Privacy Policy</Text>
-                <Text style={styles.menuSub} numberOfLines={1}>
-                  Partner data protection & guidelines
-                </Text>
+                <Text style={styles.itemTitle}>Privacy Policy</Text>
+                <Text style={styles.itemSubtitle}>Partner data protection & guidelines</Text>
               </View>
-              <ChevronRight size={20} color={Colors.textMuted} />
+              <ChevronRight size={18} color={Colors.textMuted} />
+            </TouchableOpacity>
+          </View>
+
+          {/* Logout Button */}
+          <TouchableOpacity
+            style={styles.logoutCard}
+            onPress={() => setLogoutModalVisible(true)}
+            activeOpacity={0.7}
+          >
+            <LogOut size={18} color={Colors.danger} />
+            <Text style={styles.logoutCardText}>Log Out from Store Portal</Text>
           </TouchableOpacity>
         </ScrollView>
       )}
@@ -338,7 +376,7 @@ export default function RestaurantSettingsScreen() {
         message="Are you sure you want to log out?"
         confirmText="Logout"
         cancelText="Cancel"
-        isDanger={true}
+        isDestructive={true}
         onConfirm={handleLogoutConfirm}
         onClose={() => setLogoutModalVisible(false)}
       />
@@ -351,15 +389,9 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.background,
   },
-  centerBox: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  loadingText: {
-    marginTop: 12,
-    fontSize: 14,
-    color: Colors.textMuted,
+  headerLogoutBtn: {
+    padding: 8,
+    marginRight: 4,
   },
   scrollContent: {
     padding: 16,
@@ -383,11 +415,9 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.primaryLight,
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: Colors.primary,
   },
   bannerStoreName: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '800',
     color: Colors.text,
   },
@@ -396,10 +426,15 @@ const styles = StyleSheet.create({
     color: Colors.textMuted,
     marginTop: 2,
   },
+  statusToggleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   statusBadge: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
     borderWidth: 1,
   },
   statusActive: {
@@ -411,47 +446,90 @@ const styles = StyleSheet.create({
     borderColor: '#FCA5A5',
   },
   statusBadgeText: {
-    fontSize: 10,
+    fontSize: 9.5,
     fontWeight: '800',
     color: '#065F46',
   },
-  menuSectionTitle: {
+  sectionHeader: {
     fontSize: 11,
     fontWeight: '800',
     color: Colors.textSubtle,
-    letterSpacing: 0.5,
-    marginBottom: 10,
+    letterSpacing: 0.6,
+    marginBottom: 8,
     marginLeft: 4,
   },
-  menuCard: {
+  cardGroup: {
     backgroundColor: Colors.cardSurface,
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 10,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: Colors.cardBorder,
+    marginBottom: 20,
+    overflow: 'hidden',
+  },
+  groupItem: {
     flexDirection: 'row',
     alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 13,
     gap: 12,
   },
-  iconBadge: {
-    width: 40,
-    height: 40,
+  groupItemBorder: {
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.cardBorder,
+  },
+  itemIconBadge: {
+    width: 38,
+    height: 38,
     borderRadius: 10,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: Colors.primaryLight,
-    borderWidth: 1,
-    borderColor: Colors.primary,
   },
-  menuTitle: {
-    fontSize: 14,
-    fontWeight: '800',
+  itemTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  itemTitle: {
+    fontSize: 13.5,
+    fontWeight: '700',
     color: Colors.text,
   },
-  menuSub: {
+  itemSubtitle: {
     fontSize: 11,
     color: Colors.textMuted,
     marginTop: 2,
+    lineHeight: 15,
+  },
+  newBadge: {
+    backgroundColor: '#EEF2FF',
+    borderColor: '#C7D2FE',
+    borderWidth: 1,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    marginRight: 6,
+  },
+  newBadgeText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#4F46E5',
+    letterSpacing: 0.3,
+  },
+  logoutCard: {
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    borderRadius: 14,
+    paddingVertical: 14,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 16,
+  },
+  logoutCardText: {
+    fontSize: 13.5,
+    fontWeight: '700',
+    color: Colors.danger,
   },
 });

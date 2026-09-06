@@ -8,6 +8,7 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   useWindowDimensions,
+  Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Header } from '../components/Header';
@@ -16,34 +17,30 @@ import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { Colors } from '../constants/colors';
 import { getApiBaseUrl, setApiBaseUrl } from '../services/api';
-import { settingsService } from '../services/settings.service';
-import { Category, DeliveryChargeTier } from '../types';
 import {
   ShieldCheck,
   Server,
   LogOut,
   Grid,
   Truck,
-  Plus,
-  Edit2,
-  Trash2,
-  X,
-  Check,
   Bell,
   Printer,
   Monitor,
   ChevronRight,
-  ChevronDown,
-  ChevronUp,
   Shield,
   Layers,
+  Globe,
+  Check,
+  Smartphone,
+  Edit3,
+  Clock,
+  Sliders,
 } from 'lucide-react-native';
 import {
   getSavedOrientation,
   applyOrientation,
   AppOrientation,
 } from '../services/orientation.service';
-import { RestaurantSettingsSkeleton } from '../components/Skeleton';
 import RestaurantSettingsScreen from './restaurant-settings';
 
 export default function SettingsScreen() {
@@ -53,74 +50,36 @@ export default function SettingsScreen() {
   const { width } = useWindowDimensions();
   const isTablet = width >= 768;
 
+  // If logged in as restaurant owner, render store-specific settings
   if (user && user.userType !== 'super_admin') {
     return <RestaurantSettingsScreen />;
   }
 
   const [apiUrl, setApiUrl] = useState('');
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [deliveryCharges, setDeliveryCharges] = useState<DeliveryChargeTier[]>([]);
-  const [loading, setLoading] = useState(false);
-
-  // Confirm Modal States
-  const [deleteTierModalVisible, setDeleteTierModalVisible] = useState(false);
-  const [selectedTierToDelete, setSelectedTierToDelete] = useState<{ id: string; distance: number } | null>(null);
+  const [editingApiUrl, setEditingApiUrl] = useState(false);
+  const [tempApiUrl, setTempApiUrl] = useState('');
   const [logoutModalVisible, setLogoutModalVisible] = useState(false);
-
-  // Expandable sections
-  const [showCategories, setShowCategories] = useState(false);
-  const [showDeliveryCharges, setShowDeliveryCharges] = useState(false);
-  const [showApiConfig, setShowApiConfig] = useState(false);
-  const [showOrientationConfig, setShowOrientationConfig] = useState(false);
-
-  // Delivery charge editing / adding states
-  const [editingTierId, setEditingTierId] = useState<string | null>(null);
-  const [editMaxDistance, setEditMaxDistance] = useState('');
-  const [editCharge, setEditCharge] = useState('');
-
-  const [isAddingTier, setIsAddingTier] = useState(false);
-  const [newMaxDistance, setNewMaxDistance] = useState('');
-  const [newCharge, setNewCharge] = useState('');
-  const [submittingTier, setSubmittingTier] = useState(false);
   const [appOrientation, setAppOrientation] = useState<AppOrientation>('portrait');
   const [isChangingOrientation, setIsChangingOrientation] = useState(false);
 
   useEffect(() => {
-    getApiBaseUrl().then(setApiUrl);
+    getApiBaseUrl().then((url) => {
+      setApiUrl(url);
+      setTempApiUrl(url);
+    });
     getSavedOrientation().then(setAppOrientation);
-    loadGlobalConfig();
   }, []);
 
-  const loadGlobalConfig = async () => {
-    setLoading(true);
-    try {
-      const [catRes, chargeRes] = await Promise.all([
-        settingsService.getCategories(),
-        settingsService.getDeliveryCharges(),
-      ]);
-
-      if (catRes.success && catRes.data) {
-        setCategories(catRes.data);
-      }
-      if (chargeRes.success && chargeRes.data) {
-        setDeliveryCharges(chargeRes.data);
-      }
-    } catch (e) {
-      console.error('Failed loading categories/delivery charges:', e);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handleSaveApiUrl = async () => {
-    if (!apiUrl.trim()) return;
-    await setApiBaseUrl(apiUrl.trim());
+    if (!tempApiUrl.trim()) return;
+    await setApiBaseUrl(tempApiUrl.trim());
+    setApiUrl(tempApiUrl.trim());
+    setEditingApiUrl(false);
     showToast({ title: 'Saved', message: 'API Base URL updated successfully.', type: 'success' });
-    setShowApiConfig(false);
   };
 
   const handleSetOrientation = async (mode: AppOrientation) => {
-    if (isChangingOrientation) return;
+    if (isChangingOrientation || mode === appOrientation) return;
     setIsChangingOrientation(true);
     try {
       setAppOrientation(mode);
@@ -144,104 +103,6 @@ export default function SettingsScreen() {
     }
   };
 
-  // --- Delivery Charge Actions ---
-  const handleStartEditTier = (tier: DeliveryChargeTier) => {
-    setEditingTierId(tier._id);
-    setEditMaxDistance(tier.maxDistance.toString());
-    setEditCharge(tier.charge.toString());
-  };
-
-  const handleSaveEditTier = async (tierId: string) => {
-    const dist = parseFloat(editMaxDistance);
-    const fee = parseFloat(editCharge);
-
-    if (isNaN(dist) || dist <= 0) {
-      showToast({ title: 'Invalid Input', message: 'Max distance must be a valid positive number.', type: 'warning' });
-      return;
-    }
-    if (isNaN(fee) || fee < 0) {
-      showToast({ title: 'Invalid Input', message: 'Delivery charge must be a valid positive number.', type: 'warning' });
-      return;
-    }
-
-    setSubmittingTier(true);
-    try {
-      const res = await settingsService.updateDeliveryCharge(tierId, {
-        maxDistance: dist,
-        charge: fee,
-      });
-
-      if (res.success) {
-        showToast({ title: 'Success', message: 'Delivery charge tier updated.', type: 'success' });
-        setEditingTierId(null);
-        loadGlobalConfig();
-      } else {
-        showToast({ title: 'Error', message: res.message || 'Failed to update delivery charge.', type: 'error' });
-      }
-    } catch {
-      showToast({ title: 'Error', message: 'An error occurred while updating delivery charge tier.', type: 'error' });
-    } finally {
-      setSubmittingTier(false);
-    }
-  };
-
-  const handleCreateTier = async () => {
-    const dist = parseFloat(newMaxDistance);
-    const fee = parseFloat(newCharge);
-
-    if (isNaN(dist) || dist <= 0) {
-      showToast({ title: 'Invalid Input', message: 'Max distance must be a valid positive number.', type: 'warning' });
-      return;
-    }
-    if (isNaN(fee) || fee < 0) {
-      showToast({ title: 'Invalid Input', message: 'Delivery charge must be a valid positive number.', type: 'warning' });
-      return;
-    }
-
-    setSubmittingTier(true);
-    try {
-      const res = await settingsService.createDeliveryCharge(dist, fee);
-      if (res.success) {
-        showToast({ title: 'Success', message: 'New delivery charge tier added.', type: 'success' });
-        setIsAddingTier(false);
-        setNewMaxDistance('');
-        setNewCharge('');
-        loadGlobalConfig();
-      } else {
-        showToast({ title: 'Error', message: res.message || 'Failed to create delivery charge tier.', type: 'error' });
-      }
-    } catch {
-      showToast({ title: 'Error', message: 'An error occurred while creating delivery charge tier.', type: 'error' });
-    } finally {
-      setSubmittingTier(false);
-    }
-  };
-
-  const handleDeleteTier = (tierId: string, maxDistance: number) => {
-    setSelectedTierToDelete({ id: tierId, distance: maxDistance });
-    setDeleteTierModalVisible(true);
-  };
-
-  const handleDeleteTierConfirm = async () => {
-    if (!selectedTierToDelete) return;
-    const { id: tierId } = selectedTierToDelete;
-    setSubmittingTier(true);
-    try {
-      const res = await settingsService.deleteDeliveryCharge(tierId);
-      if (res.success) {
-        showToast({ title: 'Deleted', message: 'Delivery charge tier deleted.', type: 'success' });
-        loadGlobalConfig();
-      } else {
-        showToast({ title: 'Error', message: res.message || 'Failed to delete tier.', type: 'error' });
-      }
-    } catch {
-      showToast({ title: 'Error', message: 'Failed to delete delivery charge tier.', type: 'error' });
-    } finally {
-      setSubmittingTier(false);
-      setSelectedTierToDelete(null);
-    }
-  };
-
   const handleLogoutConfirm = async () => {
     setLogoutModalVisible(false);
     await logout();
@@ -251,484 +112,346 @@ export default function SettingsScreen() {
   return (
     <View style={styles.container}>
       <Header
-        title="Settings & Config"
+        title="Settings & System"
         showBackButton={true}
         rightElement={
           <TouchableOpacity
-            style={{ padding: 8, marginRight: 4 }}
+            style={styles.headerLogoutBtn}
             onPress={() => setLogoutModalVisible(true)}
             activeOpacity={0.7}
           >
-            <LogOut size={22} color={Colors.danger} />
+            <LogOut size={18} color={Colors.danger} />
           </TouchableOpacity>
         }
       />
 
-      {loading ? (
-        <ScrollView
-          contentContainerStyle={[
-            styles.scrollContent,
-            { paddingHorizontal: isTablet ? 24 : 16, maxWidth: 840, alignSelf: 'center', width: '100%' },
-          ]}
-          showsVerticalScrollIndicator={false}
-        >
-          <RestaurantSettingsSkeleton />
-        </ScrollView>
-      ) : (
-        <ScrollView
-          contentContainerStyle={[
-            styles.scrollContent,
-            { paddingHorizontal: isTablet ? 24 : 16, maxWidth: 840, alignSelf: 'center', width: '100%' },
-          ]}
-          showsVerticalScrollIndicator={false}
-        >
-          {/* Super Admin Profile Banner Card */}
-          <View style={styles.profileBannerCard}>
-            <View style={styles.profileBannerBadge}>
-              <ShieldCheck size={24} color={Colors.primary} />
+      <ScrollView
+        contentContainerStyle={[
+          styles.scrollContent,
+          { paddingHorizontal: isTablet ? 24 : 16, maxWidth: 840, alignSelf: 'center', width: '100%' },
+        ]}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Profile Card */}
+        <View style={styles.profileCard}>
+          <View style={styles.profileAvatar}>
+            <ShieldCheck size={24} color={Colors.primary} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.profileName}>{user?.fullName || 'Super Administrator'}</Text>
+            <Text style={styles.profileEmail}>{user?.email || 'admin@krifoo.com'}</Text>
+          </View>
+          <View style={styles.adminBadge}>
+            <Text style={styles.adminBadgeText}>SUPER ADMIN</Text>
+          </View>
+        </View>
+
+        {/* SECTION 1: CHANNELS & STORES */}
+        <Text style={styles.sectionHeader}>STOREFRONT & ORDERING CHANNELS</Text>
+        <View style={styles.cardGroup}>
+          {/* External Website & Domain */}
+          <TouchableOpacity
+            style={[styles.groupItem, styles.groupItemBorder]}
+            onPress={() => router.push('/external-website-settings')}
+            activeOpacity={0.7}
+          >
+            <View style={[styles.itemIconBadge, { backgroundColor: '#EEF2FF' }]}>
+              <Globe size={18} color="#4F46E5" />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.bannerName}>{user?.fullName || 'Super Administrator'}</Text>
-              <Text style={styles.bannerSub}>{user?.email || 'admin@krifoo.com'} · System Root</Text>
-            </View>
-            <View style={styles.roleBadge}>
-              <Text style={styles.roleBadgeText}>SUPER ADMIN</Text>
-            </View>
-          </View>
-
-          <Text style={styles.menuSectionTitle}>SYSTEM & PLATFORM CONFIG</Text>
-
-          {/* 1. Global Menu Categories */}
-          <View style={styles.expandableCard}>
-            <TouchableOpacity
-              style={styles.menuCardRow}
-              onPress={() => setShowCategories(!showCategories)}
-              activeOpacity={0.7}
-            >
-              <View style={styles.iconBadge}>
-                <Grid size={20} color={Colors.primary} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.menuTitle}>Global Menu Categories</Text>
-                <Text style={styles.menuSub} numberOfLines={1}>
-                  {categories.length} global categories configured
-                </Text>
-              </View>
-              {showCategories ? (
-                <ChevronUp size={20} color={Colors.textMuted} />
-              ) : (
-                <ChevronDown size={20} color={Colors.textMuted} />
-              )}
-            </TouchableOpacity>
-
-            {showCategories && (
-              <View style={styles.expandedContent}>
-                {categories.length === 0 ? (
-                  <Text style={styles.emptyText}>No global menu categories configured.</Text>
-                ) : (
-                  categories.map((cat) => (
-                    <View key={cat._id} style={styles.configItem}>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.configItemTitle}>{cat.categoryName}</Text>
-                        <Text style={styles.configItemSub}>
-                          {cat.description || 'Global Category'} · {cat.isActive ? 'Active' : 'Inactive'}
-                        </Text>
-                      </View>
-                      <View style={[styles.miniStatusBadge, cat.isActive ? styles.miniActive : styles.miniInactive]}>
-                        <Text style={styles.miniStatusText}>{cat.isActive ? 'ONLINE' : 'OFFLINE'}</Text>
-                      </View>
-                    </View>
-                  ))
-                )}
-              </View>
-            )}
-          </View>
-
-          {/* 2. Delivery Distance & Charge Tiers */}
-          <View style={styles.expandableCard}>
-            <TouchableOpacity
-              style={styles.menuCardRow}
-              onPress={() => setShowDeliveryCharges(!showDeliveryCharges)}
-              activeOpacity={0.7}
-            >
-              <View style={styles.iconBadge}>
-                <Truck size={20} color={Colors.primary} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.menuTitle}>Delivery Charge Tiers</Text>
-                <Text style={styles.menuSub} numberOfLines={1}>
-                  {deliveryCharges.length} distance tiers (€ per mile threshold)
-                </Text>
-              </View>
-              {showDeliveryCharges ? (
-                <ChevronUp size={20} color={Colors.textMuted} />
-              ) : (
-                <ChevronDown size={20} color={Colors.textMuted} />
-              )}
-            </TouchableOpacity>
-
-            {showDeliveryCharges && (
-              <View style={styles.expandedContent}>
-                <View style={styles.tierHeaderRow}>
-                  <Text style={styles.tierHeaderTitle}>Distance-based Pricing Tiers</Text>
-                  {!isAddingTier && (
-                    <TouchableOpacity
-                      style={styles.addTierBtn}
-                      onPress={() => setIsAddingTier(true)}
-                    >
-                      <Plus size={13} color="#FFFFFF" />
-                      <Text style={styles.addTierBtnText}>Add Tier</Text>
-                    </TouchableOpacity>
-                  )}
+              <View style={styles.itemTitleRow}>
+                <Text style={styles.itemTitle}>External Website & Delivery</Text>
+                <View style={styles.newBadge}>
+                  <Text style={styles.newBadgeText}>PORTED</Text>
                 </View>
-
-                {isAddingTier && (
-                  <View style={styles.addTierForm}>
-                    <Text style={styles.formTitle}>New Delivery Tier</Text>
-                    <View style={styles.inputsRow}>
-                      <View style={styles.inputGroup}>
-                        <Text style={styles.inputLabel}>Max Dist (miles)</Text>
-                        <TextInput
-                          style={styles.formInput}
-                          keyboardType="numeric"
-                          placeholder="e.g. 5"
-                          placeholderTextColor={Colors.textSubtle}
-                          value={newMaxDistance}
-                          onChangeText={setNewMaxDistance}
-                        />
-                      </View>
-                      <View style={styles.inputGroup}>
-                        <Text style={styles.inputLabel}>Fee (€)</Text>
-                        <TextInput
-                          style={styles.formInput}
-                          keyboardType="numeric"
-                          placeholder="e.g. 4.00"
-                          placeholderTextColor={Colors.textSubtle}
-                          value={newCharge}
-                          onChangeText={setNewCharge}
-                        />
-                      </View>
-                    </View>
-                    <View style={styles.formActions}>
-                      <TouchableOpacity
-                        style={styles.cancelBtn}
-                        onPress={() => setIsAddingTier(false)}
-                      >
-                        <X size={14} color={Colors.textMuted} />
-                        <Text style={styles.cancelBtnText}>Cancel</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={styles.confirmSaveBtn}
-                        onPress={handleCreateTier}
-                        disabled={submittingTier}
-                      >
-                        {submittingTier ? (
-                          <ActivityIndicator size="small" color="#FFFFFF" />
-                        ) : (
-                          <>
-                            <Check size={14} color="#FFFFFF" />
-                            <Text style={styles.confirmSaveText}>Save Tier</Text>
-                          </>
-                        )}
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                )}
-
-                {deliveryCharges.length === 0 ? (
-                  <Text style={styles.emptyText}>No delivery charge tiers configured.</Text>
-                ) : (
-                  deliveryCharges.map((tier) => {
-                    const isEditing = editingTierId === tier._id;
-
-                    if (isEditing) {
-                      return (
-                        <View key={tier._id} style={styles.editingTierCard}>
-                          <View style={styles.inputsRow}>
-                            <View style={styles.inputGroup}>
-                              <Text style={styles.inputLabel}>Max Dist (miles)</Text>
-                              <TextInput
-                                style={styles.formInput}
-                                keyboardType="numeric"
-                                value={editMaxDistance}
-                                onChangeText={setEditMaxDistance}
-                              />
-                            </View>
-                            <View style={styles.inputGroup}>
-                              <Text style={styles.inputLabel}>Fee (€)</Text>
-                              <TextInput
-                                style={styles.formInput}
-                                keyboardType="numeric"
-                                value={editCharge}
-                                onChangeText={setEditCharge}
-                              />
-                            </View>
-                          </View>
-                          <View style={styles.formActions}>
-                            <TouchableOpacity
-                              style={styles.cancelBtn}
-                              onPress={() => setEditingTierId(null)}
-                            >
-                              <X size={14} color={Colors.textMuted} />
-                              <Text style={styles.cancelBtnText}>Cancel</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                              style={styles.confirmSaveBtn}
-                              onPress={() => handleSaveEditTier(tier._id)}
-                              disabled={submittingTier}
-                            >
-                              {submittingTier ? (
-                                <ActivityIndicator size="small" color="#FFFFFF" />
-                              ) : (
-                                <>
-                                  <Check size={14} color="#FFFFFF" />
-                                  <Text style={styles.confirmSaveText}>Update</Text>
-                                </>
-                              )}
-                            </TouchableOpacity>
-                          </View>
-                        </View>
-                      );
-                    }
-
-                    return (
-                      <View key={tier._id} style={styles.tierItemRow}>
-                        <View>
-                          <Text style={styles.configItemTitle}>
-                            Up to <Text style={{ color: Colors.primary, fontWeight: '800' }}>{tier.maxDistance} miles</Text>
-                          </Text>
-                          <Text style={styles.configItemSub}>Delivery Fee: €{tier.charge?.toFixed(2)}</Text>
-                        </View>
-
-                        <View style={styles.tierActions}>
-                          <TouchableOpacity
-                            style={styles.iconActionBtn}
-                            onPress={() => handleStartEditTier(tier)}
-                          >
-                            <Edit2 size={15} color={Colors.info} />
-                          </TouchableOpacity>
-                          <TouchableOpacity
-                            style={styles.iconActionBtn}
-                            onPress={() => handleDeleteTier(tier._id, tier.maxDistance)}
-                          >
-                            <Trash2 size={15} color={Colors.danger} />
-                          </TouchableOpacity>
-                        </View>
-                      </View>
-                    );
-                  })
-                )}
               </View>
-            )}
-          </View>
+              <Text style={styles.itemSubtitle}>Custom domain, brand colors, banners & tiered delivery fees</Text>
+            </View>
+            <ChevronRight size={18} color={Colors.textMuted} />
+          </TouchableOpacity>
 
-          {/* 3. Universal Thermal POS Printer Setup */}
+          {/* Global Menu Categories */}
           <TouchableOpacity
-            style={styles.menuCard}
+            style={[styles.groupItem, styles.groupItemBorder]}
+            onPress={() => router.push('/categories')}
+            activeOpacity={0.7}
+          >
+            <View style={[styles.itemIconBadge, { backgroundColor: '#F0FDF4' }]}>
+              <Grid size={18} color="#16A34A" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.itemTitle}>Global Menu Categories</Text>
+              <Text style={styles.itemSubtitle}>Platform categories, photo badges & visibility toggles</Text>
+            </View>
+            <ChevronRight size={18} color={Colors.textMuted} />
+          </TouchableOpacity>
+
+          {/* Platform Delivery Distance Tiers */}
+          <TouchableOpacity
+            style={[styles.groupItem, styles.groupItemBorder]}
+            onPress={() => router.push('/delivery-charges')}
+            activeOpacity={0.7}
+          >
+            <View style={[styles.itemIconBadge, { backgroundColor: '#FEF3C7' }]}>
+              <Truck size={18} color="#D97706" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.itemTitle}>Platform Delivery Distance Tiers</Text>
+              <Text style={styles.itemSubtitle}>Default mileage threshold tiers & delivery fees (£)</Text>
+            </View>
+            <ChevronRight size={18} color={Colors.textMuted} />
+          </TouchableOpacity>
+
+          {/* Operational & Delivery Timings */}
+          <TouchableOpacity
+            style={[styles.groupItem, styles.groupItemBorder]}
+            onPress={() => router.push('/operational-timings')}
+            activeOpacity={0.7}
+          >
+            <View style={[styles.itemIconBadge, { backgroundColor: '#F3E8FF' }]}>
+              <Clock size={18} color="#9333EA" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.itemTitle}>Operating & Delivery Timings</Text>
+              <Text style={styles.itemSubtitle}>Store hours, Krifoo delivery schedule & external website hours</Text>
+            </View>
+            <ChevronRight size={18} color={Colors.textMuted} />
+          </TouchableOpacity>
+
+          {/* Acceptance & Payment Settings */}
+          <TouchableOpacity
+            style={[styles.groupItem, styles.groupItemBorder]}
+            onPress={() => router.push('/operation-settings')}
+            activeOpacity={0.7}
+          >
+            <View style={[styles.itemIconBadge, { backgroundColor: '#FEF3C7' }]}>
+              <Sliders size={18} color="#D97706" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.itemTitle}>Acceptance & Payment Rules</Text>
+              <Text style={styles.itemSubtitle}>Krifoo app and external website online payments, COD & pickup</Text>
+            </View>
+            <ChevronRight size={18} color={Colors.textMuted} />
+          </TouchableOpacity>
+
+          {/* Global Platform Settings */}
+          <TouchableOpacity
+            style={styles.groupItem}
+            onPress={() => router.push('/global-settings')}
+            activeOpacity={0.7}
+          >
+            <View style={[styles.itemIconBadge, { backgroundColor: '#FDF2F8' }]}>
+              <Layers size={18} color="#DB2777" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.itemTitle}>Global Platform Settings</Text>
+              <Text style={styles.itemSubtitle}>Order notification emails, commission rates & fee rules</Text>
+            </View>
+            <ChevronRight size={18} color={Colors.textMuted} />
+          </TouchableOpacity>
+        </View>
+
+        {/* SECTION 2: HARDWARE & DISPLAY */}
+        <Text style={styles.sectionHeader}>POS HARDWARE & DISPLAY</Text>
+        <View style={styles.cardGroup}>
+          {/* Thermal POS Printer Setup */}
+          <TouchableOpacity
+            style={[styles.groupItem, styles.groupItemBorder]}
             onPress={() => router.push('/printer-settings')}
             activeOpacity={0.7}
           >
-            <View style={styles.iconBadge}>
-              <Printer size={20} color={Colors.primary} />
+            <View style={[styles.itemIconBadge, { backgroundColor: '#E0F2FE' }]}>
+              <Printer size={18} color="#0284C7" />
             </View>
             <View style={{ flex: 1 }}>
-                <Text style={styles.menuTitle}>Printing Setup</Text>
-              <Text style={styles.menuSub} numberOfLines={1}>
-                  Epson TM-m30III, SUNMI, Star Micronics Printers
-              </Text>
+              <Text style={styles.itemTitle}>Thermal POS Printers</Text>
+              <Text style={styles.itemSubtitle}>Epson TM-m30III, SUNMI, Star Micronics & Bluetooth/LAN</Text>
             </View>
-            <ChevronRight size={20} color={Colors.textMuted} />
+            <ChevronRight size={18} color={Colors.textMuted} />
           </TouchableOpacity>
 
-          {/* 4. Order Sound & Buzz Alerts */}
+          {/* Sound & Buzz Alerts */}
           <TouchableOpacity
-            style={styles.menuCard}
+            style={[styles.groupItem, styles.groupItemBorder]}
             onPress={() => router.push('/sound-settings')}
             activeOpacity={0.7}
           >
-            <View style={styles.iconBadge}>
-              <Bell size={20} color={Colors.primary} />
+            <View style={[styles.itemIconBadge, { backgroundColor: '#FEE2E2' }]}>
+              <Bell size={18} color="#DC2626" />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.menuTitle}>Order Sound & Buzz Alerts</Text>
-              <Text style={styles.menuSub} numberOfLines={1}>
-                Alert duration, volume level, buzzer chime & haptic vibration
-              </Text>
+              <Text style={styles.itemTitle}>Order Sound & Buzz Alerts</Text>
+              <Text style={styles.itemSubtitle}>Continuous buzzer loop, loud chime volume & haptic pulses</Text>
             </View>
-            <ChevronRight size={20} color={Colors.textMuted} />
+            <ChevronRight size={18} color={Colors.textMuted} />
           </TouchableOpacity>
 
-          {/* 5. Display Orientation (POS Desktop Mode) */}
-          <View style={styles.expandableCard}>
-            <TouchableOpacity
-              style={styles.menuCardRow}
-              onPress={() => setShowOrientationConfig(!showOrientationConfig)}
-              activeOpacity={0.7}
-            >
-              <View style={styles.iconBadge}>
-                <Monitor size={20} color={Colors.primary} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.menuTitle}>Screen Orientation & Display</Text>
-                <Text style={styles.menuSub} numberOfLines={1}>
-                  Current: {appOrientation.toUpperCase()} (Portrait / POS Landscape)
-                </Text>
-              </View>
-              {showOrientationConfig ? (
-                <ChevronUp size={20} color={Colors.textMuted} />
-              ) : (
-                <ChevronDown size={20} color={Colors.textMuted} />
-              )}
-            </TouchableOpacity>
-
-            {showOrientationConfig && (
-              <View style={styles.expandedContent}>
-                <View style={styles.orientationButtonsRow}>
-                  <TouchableOpacity
+          {/* Minimal Screen Orientation Selector */}
+          <View style={styles.groupItem}>
+            <View style={[styles.itemIconBadge, { backgroundColor: '#F1F5F9' }]}>
+              <Monitor size={18} color="#475569" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.itemTitle}>Screen Orientation</Text>
+              <View style={styles.orientationPillRow}>
+                <TouchableOpacity
+                  style={[
+                    styles.orientationPill,
+                    appOrientation === 'portrait' && styles.orientationPillActive,
+                  ]}
+                  onPress={() => handleSetOrientation('portrait')}
+                  activeOpacity={0.7}
+                >
+                  <Text
                     style={[
-                      styles.orientationBtn,
-                      appOrientation === 'portrait' && styles.orientationBtnActive,
+                      styles.orientationPillText,
+                      appOrientation === 'portrait' && styles.orientationPillTextActive,
                     ]}
-                    onPress={() => handleSetOrientation('portrait')}
-                    activeOpacity={0.7}
                   >
-                    <Text style={[styles.orientationBtnText, appOrientation === 'portrait' && styles.orientationBtnTextActive]}>
-                      Portrait (Default)
-                    </Text>
-                  </TouchableOpacity>
+                    Portrait
+                  </Text>
+                </TouchableOpacity>
 
-                  <TouchableOpacity
+                <TouchableOpacity
+                  style={[
+                    styles.orientationPill,
+                    appOrientation === 'landscape' && styles.orientationPillActive,
+                  ]}
+                  onPress={() => handleSetOrientation('landscape')}
+                  activeOpacity={0.7}
+                >
+                  <Text
                     style={[
-                      styles.orientationBtn,
-                      appOrientation === 'landscape' && styles.orientationBtnActive,
+                      styles.orientationPillText,
+                      appOrientation === 'landscape' && styles.orientationPillTextActive,
                     ]}
-                    onPress={() => handleSetOrientation('landscape')}
-                    activeOpacity={0.7}
                   >
-                    <Text style={[styles.orientationBtnText, appOrientation === 'landscape' && styles.orientationBtnTextActive]}>
-                      Landscape (POS)
-                    </Text>
-                  </TouchableOpacity>
+                    POS Landscape
+                  </Text>
+                </TouchableOpacity>
 
-                  <TouchableOpacity
+                <TouchableOpacity
+                  style={[
+                    styles.orientationPill,
+                    appOrientation === 'default' && styles.orientationPillActive,
+                  ]}
+                  onPress={() => handleSetOrientation('default')}
+                  activeOpacity={0.7}
+                >
+                  <Text
                     style={[
-                      styles.orientationBtn,
-                      appOrientation === 'default' && styles.orientationBtnActive,
+                      styles.orientationPillText,
+                      appOrientation === 'default' && styles.orientationPillTextActive,
                     ]}
-                    onPress={() => handleSetOrientation('default')}
-                    activeOpacity={0.7}
                   >
-                    <Text style={[styles.orientationBtnText, appOrientation === 'default' && styles.orientationBtnTextActive]}>
-                      Sensor Auto
-                    </Text>
-                  </TouchableOpacity>
-                </View>
+                    Auto
+                  </Text>
+                </TouchableOpacity>
               </View>
-            )}
+            </View>
           </View>
+        </View>
 
-          {/* 6. Backend API Server Configuration */}
-          <View style={styles.expandableCard}>
-            <TouchableOpacity
-              style={styles.menuCardRow}
-              onPress={() => setShowApiConfig(!showApiConfig)}
-              activeOpacity={0.7}
-            >
-              <View style={styles.iconBadge}>
-                <Server size={20} color={Colors.primary} />
+        {/* SECTION 3: SYSTEM & LEGAL */}
+        <Text style={styles.sectionHeader}>SYSTEM & LEGAL</Text>
+        <View style={styles.cardGroup}>
+          {/* API Server Endpoint */}
+          <View style={[styles.groupItem, styles.groupItemBorder]}>
+            <View style={[styles.itemIconBadge, { backgroundColor: '#ECFEFF' }]}>
+              <Server size={18} color="#0891B2" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <View style={styles.itemTitleRow}>
+                <Text style={styles.itemTitle}>Backend API Server</Text>
+                <TouchableOpacity
+                  onPress={() => setEditingApiUrl(!editingApiUrl)}
+                  style={styles.miniEditBtn}
+                >
+                  <Edit3 size={12} color={Colors.primary} />
+                  <Text style={styles.miniEditBtnText}>
+                    {editingApiUrl ? 'Cancel' : 'Edit'}
+                  </Text>
+                </TouchableOpacity>
               </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.menuTitle}>Backend Server & API Config</Text>
-                <Text style={styles.menuSub} numberOfLines={1}>
-                  Endpoint: {apiUrl || 'Default Base URL'}
-                </Text>
-              </View>
-              {showApiConfig ? (
-                <ChevronUp size={20} color={Colors.textMuted} />
-              ) : (
-                <ChevronDown size={20} color={Colors.textMuted} />
-              )}
-            </TouchableOpacity>
 
-            {showApiConfig && (
-              <View style={styles.expandedContent}>
-                <View style={styles.urlInputRow}>
+              {editingApiUrl ? (
+                <View style={styles.apiEditContainer}>
                   <TextInput
-                    style={styles.urlInput}
-                    value={apiUrl}
-                    onChangeText={setApiUrl}
+                    style={styles.apiInput}
+                    value={tempApiUrl}
+                    onChangeText={setTempApiUrl}
                     placeholder="https://api.krifoo.com"
                     placeholderTextColor={Colors.textSubtle}
                     autoCapitalize="none"
+                    autoCorrect={false}
                   />
-                  <TouchableOpacity style={styles.saveUrlBtn} onPress={handleSaveApiUrl}>
-                    <Text style={styles.saveUrlText}>Save</Text>
+                  <TouchableOpacity style={styles.apiSaveBtn} onPress={handleSaveApiUrl}>
+                    <Check size={14} color="#FFFFFF" strokeWidth={2.5} />
+                    <Text style={styles.apiSaveBtnText}>Save</Text>
                   </TouchableOpacity>
                 </View>
-              </View>
-            )}
+              ) : (
+                <Text style={styles.apiUrlText} numberOfLines={1}>
+                  {apiUrl || 'Default Base URL'}
+                </Text>
+              )}
+            </View>
           </View>
 
-          <Text style={[styles.menuSectionTitle, { marginTop: 16 }]}>LEGAL & SUPPORT</Text>
-
-          {/* 7. Terms & Conditions */}
+          {/* Terms & Conditions */}
           <TouchableOpacity
-            style={styles.menuCard}
+            style={[styles.groupItem, styles.groupItemBorder]}
             onPress={() => router.push('/terms-conditions')}
             activeOpacity={0.7}
           >
-            <View style={styles.iconBadge}>
-              <Shield size={20} color={Colors.primary} />
+            <View style={[styles.itemIconBadge, { backgroundColor: '#F8FAFC' }]}>
+              <Shield size={18} color={Colors.textMuted} />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.menuTitle}>Terms & Conditions</Text>
-              <Text style={styles.menuSub} numberOfLines={1}>
-                Krifoo Super Admin platform agreement & policies
-              </Text>
+              <Text style={styles.itemTitle}>Terms & Conditions</Text>
+              <Text style={styles.itemSubtitle}>Platform usage terms and merchant agreement</Text>
             </View>
-            <ChevronRight size={20} color={Colors.textMuted} />
+            <ChevronRight size={18} color={Colors.textMuted} />
           </TouchableOpacity>
 
-          {/* 8. Privacy Policy */}
+          {/* Privacy Policy */}
           <TouchableOpacity
-            style={styles.menuCard}
+            style={styles.groupItem}
             onPress={() => router.push('/privacy-policy')}
             activeOpacity={0.7}
           >
-            <View style={styles.iconBadge}>
-              <Shield size={20} color={Colors.primary} />
+            <View style={[styles.itemIconBadge, { backgroundColor: '#F8FAFC' }]}>
+              <Shield size={18} color={Colors.textMuted} />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.menuTitle}>Privacy Policy</Text>
-              <Text style={styles.menuSub} numberOfLines={1}>
-                Platform security & data governance policies
-              </Text>
+              <Text style={styles.itemTitle}>Privacy Policy</Text>
+              <Text style={styles.itemSubtitle}>Data encryption and GDPR compliance</Text>
             </View>
-            <ChevronRight size={20} color={Colors.textMuted} />
+            <ChevronRight size={18} color={Colors.textMuted} />
           </TouchableOpacity>
-        </ScrollView>
-      )}
+        </View>
 
-      {/* Delete Tier Confirm Modal */}
-      <ConfirmModal
-        visible={deleteTierModalVisible}
-        title="Delete Delivery Tier"
-        message={`Delete tier for distances up to ${selectedTierToDelete?.distance} miles?`}
-        confirmText="Delete"
-        cancelText="Cancel"
-        isDanger={true}
-        onConfirm={handleDeleteTierConfirm}
-        onClose={() => setDeleteTierModalVisible(false)}
-      />
+        {/* Logout Button Card */}
+        <TouchableOpacity
+          style={styles.logoutCard}
+          onPress={() => setLogoutModalVisible(true)}
+          activeOpacity={0.7}
+        >
+          <LogOut size={18} color={Colors.danger} />
+          <Text style={styles.logoutCardText}>Sign Out from Super Admin</Text>
+        </TouchableOpacity>
+
+        <Text style={styles.versionFooter}>Krifoo SuperAdmin Mobile · Build 2.4.0 (External Sync)</Text>
+      </ScrollView>
 
       {/* Logout Confirm Modal */}
       <ConfirmModal
         visible={logoutModalVisible}
         title="Logout"
-        message="Are you sure you want to log out from Super Admin?"
-        confirmText="Logout"
+        message="Are you sure you want to sign out from the Super Admin portal?"
+        confirmText="Sign Out"
         cancelText="Cancel"
-        isDanger={true}
+        isDestructive={true}
         onConfirm={handleLogoutConfirm}
         onClose={() => setLogoutModalVisible(false)}
       />
@@ -741,11 +464,15 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.background,
   },
+  headerLogoutBtn: {
+    padding: 8,
+    marginRight: 4,
+  },
   scrollContent: {
     padding: 16,
     paddingBottom: 110,
   },
-  profileBannerCard: {
+  profileCard: {
     backgroundColor: Colors.cardSurface,
     borderRadius: 16,
     padding: 16,
@@ -756,27 +483,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
   },
-  profileBannerBadge: {
+  profileAvatar: {
     width: 44,
     height: 44,
     borderRadius: 12,
     backgroundColor: Colors.primaryLight,
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: Colors.primary,
   },
-  bannerName: {
-    fontSize: 16,
+  profileName: {
+    fontSize: 15,
     fontWeight: '800',
     color: Colors.text,
   },
-  bannerSub: {
+  profileEmail: {
     fontSize: 12,
     color: Colors.textMuted,
     marginTop: 2,
   },
-  roleBadge: {
+  adminBadge: {
     backgroundColor: '#ECFDF5',
     borderColor: '#A7F3D0',
     borderWidth: 1,
@@ -784,289 +509,173 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     borderRadius: 8,
   },
-  roleBadgeText: {
-    fontSize: 9.5,
+  adminBadgeText: {
+    fontSize: 10,
     fontWeight: '800',
     color: '#065F46',
     letterSpacing: 0.3,
   },
-  menuSectionTitle: {
+  sectionHeader: {
     fontSize: 11,
     fontWeight: '800',
     color: Colors.textSubtle,
-    letterSpacing: 0.5,
-    marginBottom: 10,
+    letterSpacing: 0.6,
+    marginBottom: 8,
     marginLeft: 4,
   },
-  menuCard: {
+  cardGroup: {
     backgroundColor: Colors.cardSurface,
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 10,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: Colors.cardBorder,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  expandableCard: {
-    backgroundColor: Colors.cardSurface,
-    borderRadius: 14,
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: Colors.cardBorder,
+    marginBottom: 20,
     overflow: 'hidden',
   },
-  menuCardRow: {
+  groupItem: {
     flexDirection: 'row',
     alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 13,
     gap: 12,
-    padding: 14,
   },
-  iconBadge: {
-    width: 40,
-    height: 40,
+  groupItemBorder: {
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.cardBorder,
+  },
+  itemIconBadge: {
+    width: 38,
+    height: 38,
     borderRadius: 10,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: Colors.primaryLight,
-    borderWidth: 1,
-    borderColor: Colors.primary,
   },
-  menuTitle: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: Colors.text,
-  },
-  menuSub: {
-    fontSize: 11,
-    color: Colors.textMuted,
-    marginTop: 2,
-  },
-  expandedContent: {
-    paddingHorizontal: 14,
-    paddingBottom: 14,
-    borderTopWidth: 1,
-    borderTopColor: Colors.cardBorder,
-    paddingTop: 12,
-  },
-  emptyText: {
-    fontSize: 12,
-    color: Colors.textSubtle,
-    fontStyle: 'italic',
-    paddingVertical: 6,
-  },
-  configItem: {
+  itemTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.cardBorder,
   },
-  configItemTitle: {
-    fontSize: 13,
+  itemTitle: {
+    fontSize: 13.5,
     fontWeight: '700',
     color: Colors.text,
   },
-  configItemSub: {
+  itemSubtitle: {
     fontSize: 11,
     color: Colors.textMuted,
     marginTop: 2,
+    lineHeight: 15,
   },
-  miniStatusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
+  newBadge: {
+    backgroundColor: '#EEF2FF',
+    borderColor: '#C7D2FE',
+    borderWidth: 1,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
     borderRadius: 6,
+    marginRight: 6,
   },
-  miniActive: {
-    backgroundColor: '#ECFDF5',
-  },
-  miniInactive: {
-    backgroundColor: '#FEF2F2',
-  },
-  miniStatusText: {
+  newBadgeText: {
     fontSize: 9,
     fontWeight: '800',
-    color: '#065F46',
+    color: '#4F46E5',
+    letterSpacing: 0.3,
   },
-  tierHeaderRow: {
+  orientationPillRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 10,
+    gap: 6,
+    marginTop: 8,
   },
-  tierHeaderTitle: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: Colors.text,
-  },
-  addTierBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: Colors.primary,
+  orientationPill: {
     paddingHorizontal: 10,
     paddingVertical: 5,
-    borderRadius: 6,
-  },
-  addTierBtnText: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#FFFFFF',
-  },
-  tierItemRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.cardBorder,
-  },
-  tierActions: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  iconActionBtn: {
-    padding: 6,
-    borderRadius: 6,
-    backgroundColor: Colors.card,
-    borderWidth: 1,
-    borderColor: Colors.cardBorder,
-  },
-  addTierForm: {
-    backgroundColor: Colors.card,
-    padding: 12,
-    borderRadius: 10,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: Colors.cardBorder,
-  },
-  editingTierCard: {
-    backgroundColor: Colors.card,
-    padding: 10,
     borderRadius: 8,
-    marginBottom: 8,
+    backgroundColor: Colors.background,
     borderWidth: 1,
+    borderColor: Colors.cardBorder,
+  },
+  orientationPillActive: {
+    backgroundColor: Colors.primaryLight,
     borderColor: Colors.primary,
   },
-  formTitle: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: Colors.text,
-    marginBottom: 8,
-  },
-  inputsRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 8,
-  },
-  inputGroup: {
-    flex: 1,
-  },
-  inputLabel: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: Colors.textMuted,
-    marginBottom: 3,
-  },
-  formInput: {
-    backgroundColor: Colors.cardSurface,
-    borderWidth: 1,
-    borderColor: Colors.cardBorder,
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    fontSize: 13,
-    color: Colors.text,
-  },
-  formActions: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    gap: 8,
-  },
-  cancelBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 6,
-    backgroundColor: Colors.cardSurface,
-    borderWidth: 1,
-    borderColor: Colors.cardBorder,
-  },
-  cancelBtnText: {
+  orientationPillText: {
     fontSize: 11,
+    fontWeight: '600',
     color: Colors.textMuted,
-    fontWeight: '700',
   },
-  confirmSaveBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 6,
-    backgroundColor: Colors.primary,
-  },
-  confirmSaveText: {
-    fontSize: 11,
-    color: '#FFFFFF',
+  orientationPillTextActive: {
+    color: Colors.primary,
     fontWeight: '800',
   },
-  orientationButtonsRow: {
+  miniEditBtn: {
     flexDirection: 'row',
-    gap: 8,
-    paddingVertical: 4,
-  },
-  orientationBtn: {
-    flex: 1,
-    paddingVertical: 9,
+    alignItems: 'center',
+    gap: 3,
     paddingHorizontal: 6,
-    borderRadius: 8,
-    backgroundColor: Colors.card,
-    borderWidth: 1,
-    borderColor: Colors.cardBorder,
-    alignItems: 'center',
+    paddingVertical: 2,
   },
-  orientationBtnActive: {
-    backgroundColor: Colors.primary,
-    borderColor: Colors.primary,
-  },
-  orientationBtnText: {
+  miniEditBtnText: {
     fontSize: 11,
     fontWeight: '700',
-    color: Colors.text,
+    color: Colors.primary,
   },
-  orientationBtnTextActive: {
-    color: '#FFFFFF',
+  apiUrlText: {
+    fontSize: 11.5,
+    color: Colors.textMuted,
+    marginTop: 2,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
   },
-  urlInputRow: {
+  apiEditContainer: {
     flexDirection: 'row',
     gap: 8,
+    marginTop: 8,
     alignItems: 'center',
   },
-  urlInput: {
+  apiInput: {
     flex: 1,
-    backgroundColor: Colors.card,
+    backgroundColor: Colors.background,
     borderWidth: 1,
     borderColor: Colors.cardBorder,
     borderRadius: 8,
     paddingHorizontal: 10,
-    paddingVertical: 8,
+    paddingVertical: 6,
     fontSize: 12,
     color: Colors.text,
   },
-  saveUrlBtn: {
+  apiSaveBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
     backgroundColor: Colors.primary,
-    paddingHorizontal: 14,
-    paddingVertical: 9,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
     borderRadius: 8,
   },
-  saveUrlText: {
-    fontSize: 12,
-    fontWeight: '800',
+  apiSaveBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
     color: '#FFFFFF',
+  },
+  logoutCard: {
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    borderRadius: 14,
+    paddingVertical: 14,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 16,
+  },
+  logoutCardText: {
+    fontSize: 13.5,
+    fontWeight: '700',
+    color: Colors.danger,
+  },
+  versionFooter: {
+    textAlign: 'center',
+    fontSize: 11,
+    color: Colors.textSubtle,
+    marginTop: 4,
   },
 });

@@ -119,6 +119,10 @@ export default function RootLayout() {
                 <Stack.Screen name="sound-settings" options={{ animation: 'slide_from_right' }} />
                 <Stack.Screen name="payout-settings" options={{ animation: 'slide_from_right' }} />
                 <Stack.Screen name="printer-settings" options={{ animation: 'slide_from_right' }} />
+                <Stack.Screen name="external-website-settings" options={{ animation: 'slide_from_right' }} />
+                <Stack.Screen name="categories" options={{ animation: 'slide_from_right' }} />
+                <Stack.Screen name="delivery-charges" options={{ animation: 'slide_from_right' }} />
+                <Stack.Screen name="global-settings" options={{ animation: 'slide_from_right' }} />
                 <Stack.Screen name="add-edit-menu" options={{ animation: 'slide_from_right' }} />
               </Stack>
             </SocketProvider>
