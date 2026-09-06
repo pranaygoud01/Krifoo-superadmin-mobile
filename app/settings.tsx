@@ -532,9 +532,9 @@ export default function SettingsScreen() {
               <Printer size={20} color={Colors.primary} />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.menuTitle}>Universal POS & Thermal Printing Setup</Text>
+                <Text style={styles.menuTitle}>Printing Setup</Text>
               <Text style={styles.menuSub} numberOfLines={1}>
-                Epson TM-m30III, SUNMI, Star Micronics & Bluetooth/LAN Printers
+                  Epson TM-m30III, SUNMI, Star Micronics Printers
               </Text>
             </View>
             <ChevronRight size={20} color={Colors.textMuted} />

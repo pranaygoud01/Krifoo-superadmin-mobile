@@ -8,7 +8,7 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Switch,
-  Alert,
+  Platform,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Header } from '../components/Header';
@@ -16,17 +16,29 @@ import { Colors } from '../constants/colors';
 import { useToast } from '../context/ToastContext';
 import {
   Printer,
-  Settings2,
-  ChevronDown,
-  ChevronUp,
-  CheckCircle2,
   Wifi,
+  Bluetooth,
+  Smartphone,
+  FileText,
+  CheckCircle2,
+  AlertCircle,
   RotateCw,
   Save,
-  Bluetooth,
-  FileText,
   DollarSign,
+  Layers,
+  ChevronDown,
+  ChevronUp,
+  Search,
+  Check,
+  ShieldCheck,
+  Radio,
+  Sliders,
+  Sparkles,
   Info,
+  ChevronRight,
+  HelpCircle,
+  ExternalLink,
+  XCircle,
 } from 'lucide-react-native';
 import {
   printSampleThermalReceipt,
@@ -36,10 +48,20 @@ import {
   savePosPrinterConfig,
   POS_BRANDS,
   testEpsonPrinter,
+  openCashDrawer,
+  isSunmiAvailable,
 } from '../services/thermal-print.service';
-import { PosPrinterConfig, PosBrand, PosConnectionType, DEFAULT_POS_CONFIG } from '../services/pos-config.service';
+import {
+  PosPrinterConfig,
+  PosBrand,
+  PosConnectionType,
+  DEFAULT_POS_CONFIG,
+  validatePosConfig,
+  isProfileConfigured,
+  profileFromConfig,
+  PrinterProfile,
+} from '../services/pos-config.service';
 import { BluetoothPrinterModal, DiscoveredPrinterDevice } from '../components/BluetoothPrinterModal';
-import { EpsonPrinterService } from '../src/services/printer/EpsonPrinterService';
 
 export default function PrinterSettingsScreen() {
   const router = useRouter();
@@ -47,64 +69,114 @@ export default function PrinterSettingsScreen() {
   const params = useLocalSearchParams<{ restaurantId?: string }>();
   const restaurantId = params.restaurantId;
 
-  const [posConfig, setPosConfig] = useState<PosPrinterConfig>(DEFAULT_POS_CONFIG);
-  const [showBrandDropdown, setShowBrandDropdown] = useState(false);
-  const [printerIpInput, setPrinterIpInput] = useState('192.168.1.100');
-  const [printerPortInput, setPrinterPortInput] = useState('9100');
-  const [isSavingIp, setIsSavingIp] = useState(false);
-  const [isTestingPrint, setIsTestingPrint] = useState(false);
-  const [showBtModal, setShowBtModal] = useState(false);
-  const [autoPrintEnabled, setAutoPrintState] = useState(true);
+  // Master switch (Uber Eats mechanism: Receipt printing enabled)
+  const [receiptPrintingEnabled, setReceiptPrintingEnabled] = useState(true);
 
+  // Configuration state
+  const [posConfig, setPosConfig] = useState<PosPrinterConfig>(DEFAULT_POS_CONFIG);
+  const [printerIpInput, setPrinterIpInput] = useState('');
+  const [printerPortInput, setPrinterPortInput] = useState('9100');
+  const [showIpSetup, setShowIpSetup] = useState(false);
+  const [showManualBt, setShowManualBt] = useState(false);
+  const [manualBtInput, setManualBtInput] = useState('');
+
+  // Troubleshooting accordions
+  const [expandedFaq, setExpandedFaq] = useState<string | null>(null);
+
+  // Status & action indicators
+  const [isSaving, setIsSaving] = useState(false);
+  const [isTestingPrint, setIsTestingPrint] = useState(false);
+  const [isTestingDrawer, setIsTestingDrawer] = useState(false);
+  const [showBtModal, setShowBtModal] = useState(false);
+  const [isSunmiHardware, setIsSunmiHardware] = useState<boolean | null>(null);
+
+  // Fetch initial config and check hardware
   useEffect(() => {
     getPosPrinterConfig(restaurantId).then((cfg) => {
       setPosConfig(cfg);
-      setPrinterIpInput(cfg.ipAddress || '192.168.1.100');
-      setPrinterPortInput(String(cfg.port || 9100));
-      setAutoPrintState(cfg.autoPrint);
+      setReceiptPrintingEnabled(cfg.autoPrint !== false || isProfileConfigured(cfg));
+      setPrinterIpInput(cfg.ipAddress || '');
+      setPrinterPortInput(String(cfg.port || (cfg.brand === 'epson' ? 8008 : 9100)));
+      setManualBtInput(cfg.target || cfg.macAddress || '');
+    });
+
+    isSunmiAvailable().then((avail) => {
+      setIsSunmiHardware(avail);
     });
   }, [restaurantId]);
 
-  const handleSelectBrand = async (brandId: PosBrand) => {
-    const selectedBrand = POS_BRANDS.find((b) => b.id === brandId);
-    const newConn = selectedBrand?.defaultConnection || 'bluetooth';
+  const isConfigured = isProfileConfigured(posConfig);
+  const activeProfile = profileFromConfig(posConfig);
+
+  // Toggle Master Receipt Printing switch
+  const handleToggleMasterPrinting = async (val: boolean) => {
+    setReceiptPrintingEnabled(val);
+    await setAutoPrintEnabled(val);
+    const updated = await savePosPrinterConfig({ autoPrint: val }, restaurantId);
+    setPosConfig(updated);
+    showToast({
+      title: val ? 'Receipt Printing Enabled' : 'Receipt Printing Disabled',
+      message: val ? 'Orders will be formatted and routed to your printer' : 'Receipt printing is currently turned off',
+      type: val ? 'success' : 'info',
+    });
+  };
+
+  // Select Connection Mode (Uber Eats connection mechanism)
+  const handleSelectConnectionType = async (connType: PosConnectionType) => {
+    let targetBrand = posConfig.brand;
+    let targetPort = posConfig.port;
+
+    if (connType === 'builtin') {
+      targetBrand = 'sunmi';
+    } else if (connType === 'system') {
+      targetBrand = 'system';
+    } else if (connType === 'network' && posConfig.brand === 'sunmi') {
+      targetBrand = 'epson';
+      targetPort = 8008;
+    }
+
     const updated = await savePosPrinterConfig(
-      { brand: brandId, connectionType: newConn },
+      {
+        connectionType: connType,
+        brand: targetBrand,
+        port: targetPort,
+      },
       restaurantId
     );
+
     setPosConfig(updated);
-    setShowBrandDropdown(false);
-    showToast({
-      title: 'POS Brand Updated',
-      message: `Configured for ${selectedBrand?.name}`,
-      type: 'success',
-    });
+    setPrinterPortInput(String(updated.port || 9100));
+
+    if (connType === 'bluetooth') {
+      setShowBtModal(true);
+    } else if (connType === 'network') {
+      setShowIpSetup(true);
+    }
   };
 
-  const handleSelectConnectionType = async (connType: PosConnectionType) => {
-    const updated = await savePosPrinterConfig({ connectionType: connType }, restaurantId);
-    setPosConfig(updated);
-    showToast({
-      title: 'Connection Mode Saved',
-      message: `Set to ${connType.toUpperCase()} mode`,
-      type: 'info',
-    });
-  };
-
+  // Pair a Discovered Device from Modal
   const handlePairDevice = async (device: DiscoveredPrinterDevice) => {
     if (device.connectionType === 'bluetooth') {
+      const deviceTarget = device.target || device.macAddress || device.name || '';
+      const brand: PosBrand = device.name?.toLowerCase().includes('star')
+        ? 'star'
+        : device.name?.toLowerCase().includes('epson')
+        ? 'epson'
+        : posConfig.brand || 'epson';
+
       const updated = await savePosPrinterConfig(
         {
-          brand: 'epson',
+          brand,
           connectionType: 'bluetooth',
-          target: device.target || 'BT:EP-TM-M30III',
-          macAddress: device.macAddress || '',
+          target: deviceTarget,
+          macAddress: device.macAddress || (deviceTarget.startsWith('BT:') ? '' : deviceTarget),
         },
         restaurantId
       );
       setPosConfig(updated);
+      setManualBtInput(deviceTarget);
       showToast({
-        title: 'Bluetooth Printer Paired',
+        title: 'Printer Connected',
         message: `Successfully connected ${device.name}`,
         type: 'success',
       });
@@ -112,7 +184,6 @@ export default function PrinterSettingsScreen() {
       setPrinterIpInput(device.ipAddress);
       const updated = await savePosPrinterConfig(
         {
-          brand: 'epson',
           connectionType: 'network',
           ipAddress: device.ipAddress,
         },
@@ -120,41 +191,107 @@ export default function PrinterSettingsScreen() {
       );
       setPosConfig(updated);
       showToast({
-        title: 'Network Printer Paired',
+        title: 'Network Printer Connected',
         message: `Connected ${device.name} at IP ${device.ipAddress}`,
         type: 'success',
       });
     }
   };
 
+  // Save manual IP address
   const handleSaveNetworkSettings = async () => {
-    setIsSavingIp(true);
+    const ip = printerIpInput.trim();
+    const portNum = parseInt(printerPortInput, 10) || (posConfig.brand === 'epson' ? 8008 : 9100);
+
+    const validation = validatePosConfig({ connectionType: 'network', ipAddress: ip });
+    if (!validation.valid) {
+      showToast({
+        title: 'Invalid IP Address',
+        message: validation.error || 'Please enter a valid IP address.',
+        type: 'error',
+      });
+      return;
+    }
+
+    setIsSaving(true);
     try {
-      const portNum = parseInt(printerPortInput, 10) || 9100;
       const updated = await savePosPrinterConfig(
         {
-          ipAddress: printerIpInput.trim(),
+          ipAddress: ip,
           port: portNum,
+          connectionType: 'network',
         },
         restaurantId
       );
       setPosConfig(updated);
+      setShowIpSetup(false);
       showToast({
-        title: 'Network Settings Saved',
-        message: `Printer IP set to ${printerIpInput.trim()}:${portNum}`,
+        title: 'Printer IP Saved',
+        message: `Connected at ${ip}:${portNum}`,
         type: 'success',
       });
     } catch (err) {
-      showToast({ title: 'Error', message: 'Failed to save network settings', type: 'error' });
+      showToast({ title: 'Error', message: 'Failed to save network configuration', type: 'error' });
     } finally {
-      setIsSavingIp(false);
+      setIsSaving(false);
     }
   };
 
+  // Disconnect / Forget Printer
+  const handleDisconnectPrinter = async () => {
+    const updated = await savePosPrinterConfig(
+      {
+        ipAddress: '',
+        target: '',
+        macAddress: '',
+        connectionType: 'bluetooth',
+      },
+      restaurantId
+    );
+    setPosConfig(updated);
+    setPrinterIpInput('');
+    setManualBtInput('');
+    showToast({
+      title: 'Printer Disconnected',
+      message: 'The printer has been removed from this station.',
+      type: 'info',
+    });
+  };
+
+  // Save manual Bluetooth target
+  const handleSaveManualBtTarget = async () => {
+    const target = manualBtInput.trim();
+    if (!target) {
+      showToast({
+        title: 'Input Required',
+        message: 'Please enter a Bluetooth device target or MAC address.',
+        type: 'error',
+      });
+      return;
+    }
+
+    const updated = await savePosPrinterConfig(
+      {
+        connectionType: 'bluetooth',
+        target,
+        macAddress: target.startsWith('BT:') ? '' : target,
+      },
+      restaurantId
+    );
+    setPosConfig(updated);
+    setShowManualBt(false);
+    showToast({
+      title: 'Bluetooth Target Saved',
+      message: `Target set to ${target}`,
+      type: 'success',
+    });
+  };
+
+  // Setting handlers
   const handleSetPaperWidth = async (width: '80mm' | '58mm') => {
     const updated = await savePosPrinterConfig({ paperWidth: width }, restaurantId);
     setPosConfig(updated);
-    showToast({ title: 'Paper Width Updated', message: `Set to ${width} thermal roll`, type: 'info' });
+    showToast({ title: 'Paper Roll Updated', message: `Format set to ${width}`, type: 'info' });
   };
 
   const handleSetCopies = async (copies: number) => {
@@ -168,7 +305,6 @@ export default function PrinterSettingsScreen() {
   };
 
   const handleToggleAutoPrint = async (val: boolean) => {
-    setAutoPrintState(val);
     await setAutoPrintEnabled(val);
     const updated = await savePosPrinterConfig({ autoPrint: val }, restaurantId);
     setPosConfig(updated);
@@ -179,9 +315,19 @@ export default function PrinterSettingsScreen() {
     setPosConfig(updated);
   };
 
+  // Test actions
   const handleTestPrint = async () => {
+    if (!isConfigured) {
+      showToast({
+        title: 'No Printer Connected',
+        message: 'Please search for or connect a printer before running a test.',
+        type: 'error',
+      });
+      return;
+    }
+
     setIsTestingPrint(true);
-    showToast({ title: 'Testing Printer', message: 'Sending test receipt payload...', type: 'info' });
+    showToast({ title: 'Testing Printer', message: 'Sending test receipt...', type: 'info' });
     try {
       const result = await testEpsonPrinter(posConfig);
       if (result.success) {
@@ -195,353 +341,529 @@ export default function PrinterSettingsScreen() {
         }
       }
     } catch (e: any) {
-      showToast({ title: 'Print Error', message: 'Failed to send print command', type: 'error' });
+      showToast({ title: 'Print Error', message: 'Failed to send test receipt', type: 'error' });
     } finally {
       setIsTestingPrint(false);
     }
   };
 
   const handleOpenCashDrawerTest = async () => {
-    showToast({ title: 'Testing Cash Drawer', message: 'Sending pulse signal...', type: 'info' });
-    await EpsonPrinterService.openCashDrawer(posConfig);
+    setIsTestingDrawer(true);
+    showToast({ title: 'Testing Cash Drawer', message: 'Sending drawer pulse signal...', type: 'info' });
+    try {
+      const success = await openCashDrawer(restaurantId);
+      if (success) {
+        showToast({ title: 'Cash Drawer Kicked', message: 'Drawer kick signal acknowledged', type: 'success' });
+      } else {
+        showToast({ title: 'Drawer Notice', message: 'Could not pulse cash drawer. Check printer connection.', type: 'info' });
+      }
+    } finally {
+      setIsTestingDrawer(false);
+    }
   };
 
-  const activeBrandObj = POS_BRANDS.find((b) => b.id === posConfig.brand) || POS_BRANDS[0];
+  const arch = getArchitectureDetails(posConfig, activeProfile);
 
   return (
     <View style={styles.container}>
-      <Header title="POS & Thermal Printer Setup" showBack={true} />
+      <Header title="Receipt printing" showBackButton={true} />
 
       <ScrollView contentContainerStyle={styles.scrollBody} showsVerticalScrollIndicator={false}>
-        {/* Status Card */}
-        <View style={styles.statusCard}>
-          <View style={styles.statusIconBox}>
-            <Printer size={24} color="#FFFFFF" />
-          </View>
-          <View style={{ flex: 1, flexShrink: 1, marginRight: 8 }}>
-            <Text style={styles.statusTitle} numberOfLines={1}>{activeBrandObj.name}</Text>
-            <Text style={styles.statusSub} numberOfLines={2}>
-              {posConfig.connectionType === 'bluetooth'
-                ? `🔵 Bluetooth Wireless • Target: ${posConfig.target || 'BT:EP-TM-M30III'}`
-                : posConfig.connectionType === 'network'
-                ? `📶 Local Network • IP: ${posConfig.ipAddress}:${posConfig.port}`
-                : `📱 ${posConfig.connectionType.toUpperCase()} Mode`}
-            </Text>
-          </View>
-          <View style={styles.activeBadge}>
-            <Text style={styles.activeBadgeText}>ACTIVE</Text>
+        {/* ========================================================================= */}
+        {/* UBER EATS MASTER TOGGLE: Receipt printing enabled                         */}
+        {/* ========================================================================= */}
+        <View style={styles.uberCard}>
+          <View style={styles.masterRow}>
+            <View style={styles.masterIconCircle}>
+              <Printer size={22} color={receiptPrintingEnabled ? Colors.primary : Colors.textMuted} />
+            </View>
+            <View style={{ flex: 1, marginRight: 12 }}>
+              <Text style={styles.masterTitle}>Receipt printing</Text>
+              <Text style={styles.masterSubtitle}>
+                {receiptPrintingEnabled ? 'Receipt printing is enabled for this station' : 'Receipt printing is turned off'}
+              </Text>
+            </View>
+            <Switch
+              value={receiptPrintingEnabled}
+              onValueChange={handleToggleMasterPrinting}
+              trackColor={{ false: Colors.cardBorder, true: '#10B981' }}
+              thumbColor="#FFFFFF"
+            />
           </View>
         </View>
 
-        {/* Action Button: Scan & Pair Bluetooth Printer */}
-        <TouchableOpacity
-          style={styles.scanBtn}
-          onPress={() => setShowBtModal(true)}
-          activeOpacity={0.8}
-        >
-          <RotateCw size={16} color="#FFFFFF" />
-          <Text style={styles.scanBtnText}>🔍 Scan & Pair Bluetooth Printer</Text>
-        </TouchableOpacity>
+        {receiptPrintingEnabled && (
+          <>
+            {/* ========================================================================= */}
+            {/* UBER EATS CONNECTED PRINTER SECTION                                      */}
+            {/* ========================================================================= */}
+            <View style={styles.sectionBlock}>
+              <Text style={styles.uberSectionHeader}>CONNECTED PRINTER</Text>
 
-        {/* 1. Brand Selection Section */}
-        <View style={styles.card}>
-          <View style={styles.cardHeaderRow}>
-            <Text style={styles.cardHeaderTitle}>Printer Brand</Text>
-            <TouchableOpacity
-              style={styles.selectBrandBtn}
-              onPress={() => setShowBrandDropdown(!showBrandDropdown)}
-            >
-              <Settings2 size={14} color="#FFFFFF" />
-              <Text style={styles.selectBrandBtnText}>
-                {showBrandDropdown ? 'Close' : 'Change Brand'}
-              </Text>
-              {showBrandDropdown ? <ChevronUp size={13} color="#FFFFFF" /> : <ChevronDown size={13} color="#FFFFFF" />}
-            </TouchableOpacity>
-          </View>
+              {isConfigured ? (
+                /* Connected State Card */
+                <View style={styles.connectedPrinterCard}>
+                  <View style={styles.connectedTopRow}>
+                    <View style={styles.connectedIconBox}>
+                      <Printer size={24} color="#10B981" />
+                    </View>
+                    <View style={{ flex: 1, marginRight: 8 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <View style={styles.greenPulseDot} />
+                        <Text style={styles.connectedStatusText}>Connected</Text>
+                      </View>
+                      <Text style={styles.connectedPrinterName} numberOfLines={1}>
+                        {arch.title}
+                      </Text>
+                      <Text style={styles.connectedDetailsText} numberOfLines={1}>
+                        {arch.transportBadge} • {arch.targetSummary}
+                      </Text>
+                    </View>
+                  </View>
 
-          {showBrandDropdown && (
-            <View style={styles.brandList}>
-              {POS_BRANDS.map((brand) => {
-                const isSelected = posConfig.brand === brand.id;
-                return (
-                  <TouchableOpacity
-                    key={brand.id}
-                    style={[styles.brandItem, isSelected && styles.brandItemSelected]}
-                    onPress={() => handleSelectBrand(brand.id)}
-                    activeOpacity={0.7}
-                  >
+                  {/* Uber Eats Action Row on Connected Card */}
+                  <View style={styles.connectedActionRow}>
+                    <TouchableOpacity
+                      style={styles.uberTestBtn}
+                      onPress={handleTestPrint}
+                      disabled={isTestingPrint}
+                      activeOpacity={0.8}
+                    >
+                      {isTestingPrint ? (
+                        <ActivityIndicator size="small" color={Colors.text} />
+                      ) : (
+                        <>
+                          <Printer size={15} color={Colors.text} />
+                          <Text style={styles.uberTestBtnText}>Test print receipt</Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={styles.uberDisconnectBtn}
+                      onPress={handleDisconnectPrinter}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.uberDisconnectBtnText}>Disconnect</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ) : (
+                /* Not Connected Card with "Search for printer" */
+                <View style={styles.notConnectedCard}>
+                  <View style={styles.notConnectedTopRow}>
+                    <View style={styles.notConnectedIconBox}>
+                      <Printer size={24} color={Colors.textMuted} />
+                    </View>
                     <View style={{ flex: 1 }}>
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                        <Text style={[styles.brandName, isSelected && styles.brandNameSelected]}>
-                          {brand.name}
-                        </Text>
-                        {brand.badge && (
-                          <View
-                            style={{
-                              backgroundColor: brand.badge === 'RECOMMENDED' ? '#10B981' : Colors.primary,
-                              paddingHorizontal: 5,
-                              paddingVertical: 1,
-                              borderRadius: 4,
-                            }}
-                          >
-                            <Text style={{ color: '#FFFFFF', fontSize: 9, fontWeight: '800' }}>
-                              {brand.badge}
-                            </Text>
-                          </View>
-                        )}
+                        <View style={styles.grayDot} />
+                        <Text style={styles.notConnectedStatusText}>No printer connected</Text>
                       </View>
-                      <Text style={styles.brandSub}>{brand.subtitle}</Text>
+                      <Text style={styles.notConnectedSub}>
+                        Connect your Bluetooth or local network receipt printer.
+                      </Text>
                     </View>
-                    {isSelected && <CheckCircle2 size={18} color={Colors.primary} />}
+                  </View>
+
+                  <TouchableOpacity
+                    style={styles.uberPrimaryBtn}
+                    onPress={() => setShowBtModal(true)}
+                    activeOpacity={0.8}
+                  >
+                    <Search size={16} color="#FFFFFF" />
+                    <Text style={styles.uberPrimaryBtnText}>Search for Printer</Text>
                   </TouchableOpacity>
-                );
-              })}
+                </View>
+              )}
             </View>
-          )}
-        </View>
 
-        {/* 2. Connection Mode Selection */}
-        <View style={styles.card}>
-          <Text style={styles.cardHeaderTitle}>Connection Mode</Text>
-          <Text style={styles.cardSubtitle}>
-            Select how your POS tablet connects to the thermal printer.
-          </Text>
+            {/* ========================================================================= */}
+            {/* UBER EATS CONNECTION METHODS (Select or Change Connection)                */}
+            {/* ========================================================================= */}
+            <View style={styles.sectionBlock}>
+              <Text style={styles.uberSectionHeader}>CONNECT A PRINTER</Text>
 
-          <View style={styles.connGrid}>
-            <TouchableOpacity
-              style={[
-                styles.connBtn,
-                posConfig.connectionType === 'bluetooth' && styles.connBtnActive,
-              ]}
-              onPress={() => handleSelectConnectionType('bluetooth')}
-            >
-              <Text
-                style={[styles.connText, posConfig.connectionType === 'bluetooth' && styles.connTextActive]}
-                numberOfLines={1}
-                adjustsFontSizeToFit
-              >
-                🔵 Bluetooth Wireless
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[
-                styles.connBtn,
-                posConfig.connectionType === 'network' && styles.connBtnActive,
-              ]}
-              onPress={() => handleSelectConnectionType('network')}
-            >
-              <Text
-                style={[styles.connText, posConfig.connectionType === 'network' && styles.connTextActive]}
-                numberOfLines={1}
-                adjustsFontSizeToFit
-              >
-                📶 WiFi / LAN IP
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[
-                styles.connBtn,
-                posConfig.connectionType === 'builtin' && styles.connBtnActive,
-              ]}
-              onPress={() => handleSelectConnectionType('builtin')}
-            >
-              <Text
-                style={[styles.connText, posConfig.connectionType === 'builtin' && styles.connTextActive]}
-                numberOfLines={1}
-                adjustsFontSizeToFit
-              >
-                📱 Built-in Terminal
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[
-                styles.connBtn,
-                posConfig.connectionType === 'system' && styles.connBtnActive,
-              ]}
-              onPress={() => handleSelectConnectionType('system')}
-            >
-              <Text
-                style={[styles.connText, posConfig.connectionType === 'system' && styles.connTextActive]}
-                numberOfLines={1}
-                adjustsFontSizeToFit
-              >
-                📄 AirPrint / Dialog
-              </Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Network IP Form if Network Mode */}
-          {posConfig.connectionType === 'network' && (
-            <View style={styles.netBox}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-                <Wifi size={16} color={Colors.primary} />
-                <Text style={{ fontSize: 13, fontWeight: '700', color: Colors.text }}>LAN / WiFi Network IP Settings</Text>
-              </View>
-              <View style={styles.netRow}>
-                <View style={{ flex: 2 }}>
-                  <Text style={styles.miniLabel}>Printer IP Address</Text>
-                  <TextInput
-                    style={styles.netInput}
-                    value={printerIpInput}
-                    onChangeText={setPrinterIpInput}
-                    placeholder="192.168.1.100"
-                    placeholderTextColor={Colors.textSubtle}
-                    keyboardType="numeric"
-                  />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.miniLabel}>Port</Text>
-                  <TextInput
-                    style={styles.netInput}
-                    value={printerPortInput}
-                    onChangeText={setPrinterPortInput}
-                    placeholder="9100"
-                    placeholderTextColor={Colors.textSubtle}
-                    keyboardType="numeric"
-                  />
-                </View>
+              <View style={styles.uberCardGroup}>
+                {/* 1. Bluetooth Wireless (Recommended for TM-m30 / Star TSP143) */}
                 <TouchableOpacity
-                  style={styles.saveNetBtn}
-                  onPress={handleSaveNetworkSettings}
-                  disabled={isSavingIp}
+                  style={styles.uberListRow}
+                  onPress={() => handleSelectConnectionType('bluetooth')}
+                  activeOpacity={0.7}
                 >
-                  {isSavingIp ? <ActivityIndicator size="small" color="#FFFFFF" /> : <Save size={14} color="#FFFFFF" />}
+                  <View style={[styles.methodIconBox, { backgroundColor: 'rgba(59, 130, 246, 0.1)' }]}>
+                    <Bluetooth size={18} color="#2563EB" />
+                  </View>
+                  <View style={{ flex: 1, marginRight: 8 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Text style={styles.methodTitle}>Bluetooth Printer</Text>
+                      <View style={styles.recBadgePill}>
+                        <Text style={styles.recBadgePillText}>RECOMMENDED</Text>
+                      </View>
+                    </View>
+                    <Text style={styles.methodSubtitle}>
+                      {posConfig.connectionType === 'bluetooth' && (posConfig.target || posConfig.macAddress)
+                        ? `Connected: ${posConfig.target || posConfig.macAddress}`
+                        : 'Epson TM-m30, Star Micronics TSP143 & portable wireless'}
+                    </Text>
+                  </View>
+                  <ChevronRight size={18} color={Colors.textMuted} />
+                </TouchableOpacity>
+
+                {/* 2. Network (LAN / Wi-Fi IP) */}
+                <TouchableOpacity
+                  style={styles.uberListRow}
+                  onPress={() => {
+                    handleSelectConnectionType('network');
+                    setShowIpSetup(true);
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <View style={[styles.methodIconBox, { backgroundColor: 'rgba(16, 185, 129, 0.1)' }]}>
+                    <Wifi size={18} color="#059669" />
+                  </View>
+                  <View style={{ flex: 1, marginRight: 8 }}>
+                    <Text style={styles.methodTitle}>Network IP (Ethernet / Wi-Fi)</Text>
+                    <Text style={styles.methodSubtitle}>
+                      {posConfig.connectionType === 'network' && posConfig.ipAddress
+                        ? `Connected IP: ${posConfig.ipAddress}:${posConfig.port}`
+                        : 'Epson ePOS (Port 8008) or Universal ESC/POS (Port 9100)'}
+                    </Text>
+                  </View>
+                  <ChevronRight size={18} color={Colors.textMuted} />
+                </TouchableOpacity>
+
+                {/* 3. Sunmi Built-in POS Terminal */}
+                <TouchableOpacity
+                  style={styles.uberListRow}
+                  onPress={() => handleSelectConnectionType('builtin')}
+                  activeOpacity={0.7}
+                >
+                  <View style={[styles.methodIconBox, { backgroundColor: 'rgba(255, 92, 57, 0.1)' }]}>
+                    <Smartphone size={18} color={Colors.primary} />
+                  </View>
+                  <View style={{ flex: 1, marginRight: 8 }}>
+                    <Text style={styles.methodTitle}>Built-in Terminal</Text>
+                    <Text style={styles.methodSubtitle}>
+                      {isSunmiHardware ? 'Sunmi POS internal high-speed printer ready' : 'Sunmi Android POS devices (V2, T2, V3 MIX)'}
+                    </Text>
+                  </View>
+                  <ChevronRight size={18} color={Colors.textMuted} />
+                </TouchableOpacity>
+
+                {/* 4. AirPrint / System Spooler */}
+                <TouchableOpacity
+                  style={[styles.uberListRow, { borderBottomWidth: 0 }]}
+                  onPress={() => handleSelectConnectionType('system')}
+                  activeOpacity={0.7}
+                >
+                  <View style={[styles.methodIconBox, { backgroundColor: 'rgba(100, 116, 139, 0.1)' }]}>
+                    <FileText size={18} color="#475569" />
+                  </View>
+                  <View style={{ flex: 1, marginRight: 8 }}>
+                    <Text style={styles.methodTitle}>System Spooler (AirPrint / PDF)</Text>
+                    <Text style={styles.methodSubtitle}>Standard iOS AirPrint & Android print sheet</Text>
+                  </View>
+                  <ChevronRight size={18} color={Colors.textMuted} />
+                </TouchableOpacity>
+              </View>
+
+              {/* Collapsible Network IP Setup Form */}
+              {showIpSetup && (
+                <View style={styles.ipSetupBox}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                    <Text style={styles.ipSetupTitle}>Configure Network Printer IP</Text>
+                    <TouchableOpacity onPress={() => setShowIpSetup(false)}>
+                      <Text style={styles.cancelLinkText}>Close</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  <View style={{ flexDirection: 'row', gap: 10 }}>
+                    <View style={{ flex: 3 }}>
+                      <Text style={styles.inputMiniLabel}>Printer IP Address</Text>
+                      <TextInput
+                        style={styles.uberTextInput}
+                        value={printerIpInput}
+                        onChangeText={setPrinterIpInput}
+                        placeholder="e.g. 192.168.1.100"
+                        placeholderTextColor={Colors.textSubtle}
+                        keyboardType="decimal-pad"
+                        autoCapitalize="none"
+                      />
+                    </View>
+                    <View style={{ flex: 1.3 }}>
+                      <Text style={styles.inputMiniLabel}>Port</Text>
+                      <TextInput
+                        style={styles.uberTextInput}
+                        value={printerPortInput}
+                        onChangeText={setPrinterPortInput}
+                        placeholder="9100 / 8008"
+                        placeholderTextColor={Colors.textSubtle}
+                        keyboardType="numeric"
+                      />
+                    </View>
+                  </View>
+
+                  <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+                    <TouchableOpacity
+                      style={styles.scanSecondaryBtn}
+                      onPress={() => setShowBtModal(true)}
+                      activeOpacity={0.7}
+                    >
+                      <Search size={14} color={Colors.text} />
+                      <Text style={styles.scanSecondaryBtnText}>Auto-Discover</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={styles.savePrimaryBtn}
+                      onPress={handleSaveNetworkSettings}
+                      disabled={isSaving}
+                      activeOpacity={0.8}
+                    >
+                      {isSaving ? (
+                        <ActivityIndicator size="small" color="#FFFFFF" />
+                      ) : (
+                        <Text style={styles.savePrimaryBtnText}>Save & Connect</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
+            </View>
+
+            {/* ========================================================================= */}
+            {/* UBER EATS PRINTING PREFERENCES                                           */}
+            {/* ========================================================================= */}
+            <View style={styles.sectionBlock}>
+              <Text style={styles.uberSectionHeader}>ORDER PRINTING PREFERENCES</Text>
+
+              <View style={styles.uberCardGroup}>
+                {/* Auto-print orders toggle */}
+                <View style={styles.preferenceRow}>
+                  <View style={{ flex: 1, marginRight: 10 }}>
+                    <Text style={styles.prefTitle}>Auto-print orders</Text>
+                    <Text style={styles.prefSubtitle}>Print receipt automatically when an order arrives</Text>
+                  </View>
+                  <Switch
+                    value={posConfig.autoPrint}
+                    onValueChange={handleToggleAutoPrint}
+                    trackColor={{ false: Colors.cardBorder, true: '#10B981' }}
+                    thumbColor="#FFFFFF"
+                  />
+                </View>
+
+                {/* Copies per order */}
+                <View style={styles.preferenceRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.prefTitle}>Number of copies</Text>
+                    <Text style={styles.prefSubtitle}>1 copy (Kitchen) or 2 copies (Kitchen + Customer)</Text>
+                  </View>
+                  <View style={styles.segmentGroup}>
+                    <TouchableOpacity
+                      style={[styles.segmentBtn, posConfig.copies === 1 && styles.segmentBtnActive]}
+                      onPress={() => handleSetCopies(1)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={[styles.segmentText, posConfig.copies === 1 && styles.segmentTextActive]}>1 copy</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.segmentBtn, posConfig.copies === 2 && styles.segmentBtnActive]}
+                      onPress={() => handleSetCopies(2)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={[styles.segmentText, posConfig.copies === 2 && styles.segmentTextActive]}>2 copies</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                {/* Paper Roll Width */}
+                <View style={styles.preferenceRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.prefTitle}>Paper roll width</Text>
+                    <Text style={styles.prefSubtitle}>Standard 80mm roll or compact 58mm roll</Text>
+                  </View>
+                  <View style={styles.segmentGroup}>
+                    <TouchableOpacity
+                      style={[styles.segmentBtn, posConfig.paperWidth === '80mm' && styles.segmentBtnActive]}
+                      onPress={() => handleSetPaperWidth('80mm')}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={[styles.segmentText, posConfig.paperWidth === '80mm' && styles.segmentTextActive]}>80mm</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.segmentBtn, posConfig.paperWidth === '58mm' && styles.segmentBtnActive]}
+                      onPress={() => handleSetPaperWidth('58mm')}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={[styles.segmentText, posConfig.paperWidth === '58mm' && styles.segmentTextActive]}>58mm</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                {/* Auto-cut receipt */}
+                <View style={styles.preferenceRow}>
+                  <View style={{ flex: 1, marginRight: 10 }}>
+                    <Text style={styles.prefTitle}>Cut receipt</Text>
+                    <Text style={styles.prefSubtitle}>Automatically cut paper after each receipt is printed</Text>
+                  </View>
+                  <Switch
+                    value={posConfig.autoCut}
+                    onValueChange={handleToggleAutoCut}
+                    trackColor={{ false: Colors.cardBorder, true: '#10B981' }}
+                    thumbColor="#FFFFFF"
+                  />
+                </View>
+
+                {/* Open cash drawer */}
+                <View style={[styles.preferenceRow, { borderBottomWidth: 0 }]}>
+                  <View style={{ flex: 1, marginRight: 10 }}>
+                    <Text style={styles.prefTitle}>Open cash drawer</Text>
+                    <Text style={styles.prefSubtitle}>Kick drawer open when order payment is cash</Text>
+                  </View>
+                  <Switch
+                    value={posConfig.openCashDrawer}
+                    onValueChange={handleToggleCashDrawer}
+                    trackColor={{ false: Colors.cardBorder, true: '#10B981' }}
+                    thumbColor="#FFFFFF"
+                  />
+                </View>
+              </View>
+            </View>
+
+            {/* ========================================================================= */}
+            {/* TESTING & CASH DRAWER CONTROLS                                           */}
+            {/* ========================================================================= */}
+            <View style={styles.sectionBlock}>
+              <Text style={styles.uberSectionHeader}>TESTING & HARDWARE TOOLS</Text>
+
+              <View style={styles.uberCardGroup}>
+                <TouchableOpacity
+                  style={styles.uberActionRow}
+                  onPress={handleTestPrint}
+                  disabled={isTestingPrint}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.actionIconBox}>
+                    <Printer size={18} color={Colors.text} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.actionRowTitle}>Test print receipt</Text>
+                    <Text style={styles.actionRowSubtitle}>Send a sample order ticket to verify printer output</Text>
+                  </View>
+                  {isTestingPrint ? (
+                    <ActivityIndicator size="small" color={Colors.primary} />
+                  ) : (
+                    <ChevronRight size={18} color={Colors.textMuted} />
+                  )}
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.uberActionRow, { borderBottomWidth: 0 }]}
+                  onPress={handleOpenCashDrawerTest}
+                  disabled={isTestingDrawer}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.actionIconBox}>
+                    <DollarSign size={18} color={Colors.text} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.actionRowTitle}>Test cash drawer</Text>
+                    <Text style={styles.actionRowSubtitle}>Send drawer pulse without printing paper</Text>
+                  </View>
+                  {isTestingDrawer ? (
+                    <ActivityIndicator size="small" color={Colors.primary} />
+                  ) : (
+                    <ChevronRight size={18} color={Colors.textMuted} />
+                  )}
                 </TouchableOpacity>
               </View>
             </View>
-          )}
-        </View>
 
-        {/* 3. Paper & Receipt Preferences */}
-        <View style={styles.card}>
-          <Text style={styles.cardHeaderTitle}>Receipt Layout & Formatting</Text>
+            {/* ========================================================================= */}
+            {/* UBER EATS TROUBLESHOOTING & HELP ACCORDION                                */}
+            {/* ========================================================================= */}
+            <View style={styles.sectionBlock}>
+              <Text style={styles.uberSectionHeader}>TROUBLESHOOTING & HELP</Text>
 
-          {/* Paper Width */}
-          <View style={styles.settingRow}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.settingTitle}>Thermal Paper Roll Format</Text>
-              <Text style={styles.settingSub}>80mm (Standard POS) or 58mm (Compact)</Text>
+              <View style={styles.uberCardGroup}>
+                {/* 1. Star Micronics Pairing */}
+                <TouchableOpacity
+                  style={styles.faqRow}
+                  onPress={() => setExpandedFaq(expandedFaq === 'star' ? null : 'star')}
+                  activeOpacity={0.7}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.faqQuestion}>How to pair Star Micronics printers</Text>
+                  </View>
+                  {expandedFaq === 'star' ? <ChevronUp size={18} color={Colors.textMuted} /> : <ChevronDown size={18} color={Colors.textMuted} />}
+                </TouchableOpacity>
+                {expandedFaq === 'star' && (
+                  <View style={styles.faqAnswerBox}>
+                    <Text style={styles.faqAnswerText}>
+                      1. Turn ON your Star printer.{'\n'}
+                      2. Locate the red PAIR button on the back of the device.{'\n'}
+                      3. Press and hold the PAIR button for 5 seconds until the green LED flashes.{'\n'}
+                      4. Open tablet Bluetooth settings and pair with your printer, then tap "Search for Printer" above.
+                    </Text>
+                  </View>
+                )}
+
+                {/* 2. Epson TM-m30 Pairing */}
+                <TouchableOpacity
+                  style={styles.faqRow}
+                  onPress={() => setExpandedFaq(expandedFaq === 'epson' ? null : 'epson')}
+                  activeOpacity={0.7}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.faqQuestion}>How to connect Epson TM-m30 printers</Text>
+                  </View>
+                  {expandedFaq === 'epson' ? <ChevronUp size={18} color={Colors.textMuted} /> : <ChevronDown size={18} color={Colors.textMuted} />}
+                </TouchableOpacity>
+                {expandedFaq === 'epson' && (
+                  <View style={styles.faqAnswerBox}>
+                    <Text style={styles.faqAnswerText}>
+                      • Bluetooth: Make sure Bluetooth is turned ON in your tablet settings. Tap "Search for Printer" above and select your TM-m30.{'\n'}
+                      • Wi-Fi / Ethernet: Ensure your printer and tablet are on the same Wi-Fi network. Tap "Network IP", enter your printer's IP, and tap Save & Connect.
+                    </Text>
+                  </View>
+                )}
+
+                {/* 3. Paper Roll Direction */}
+                <TouchableOpacity
+                  style={[styles.faqRow, { borderBottomWidth: 0 }]}
+                  onPress={() => setExpandedFaq(expandedFaq === 'paper' ? null : 'paper')}
+                  activeOpacity={0.7}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.faqQuestion}>How to load thermal paper roll</Text>
+                  </View>
+                  {expandedFaq === 'paper' ? <ChevronUp size={18} color={Colors.textMuted} /> : <ChevronDown size={18} color={Colors.textMuted} />}
+                </TouchableOpacity>
+                {expandedFaq === 'paper' && (
+                  <View style={styles.faqAnswerBox}>
+                    <Text style={styles.faqAnswerText}>
+                      Thermal paper must feed from the BOTTOM of the roll (facing upward). If the paper is loaded backwards, receipts will feed blank without any printed text.
+                    </Text>
+                  </View>
+                )}
+              </View>
             </View>
-            <View style={styles.segmentGroup}>
-              <TouchableOpacity
-                style={[styles.segmentBtn, posConfig.paperWidth === '80mm' && styles.segmentBtnActive]}
-                onPress={() => handleSetPaperWidth('80mm')}
-              >
-                <Text style={[styles.segmentText, posConfig.paperWidth === '80mm' && styles.segmentTextActive]}>80mm</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.segmentBtn, posConfig.paperWidth === '58mm' && styles.segmentBtnActive]}
-                onPress={() => handleSetPaperWidth('58mm')}
-              >
-                <Text style={[styles.segmentText, posConfig.paperWidth === '58mm' && styles.segmentTextActive]}>58mm</Text>
-              </TouchableOpacity>
+
+            {/* Architecture Pipeline Summary Badge (Subtle footer) */}
+            <View style={styles.architectureFooter}>
+              <Layers size={13} color={Colors.textMuted} />
+              <Text style={styles.architectureFooterText}>
+                5-Layer Pipeline: {arch.encoderName} → {arch.transportName}
+              </Text>
             </View>
-          </View>
-
-          {/* Receipt Copies */}
-          <View style={styles.settingRow}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.settingTitle}>Copies per Order</Text>
-              <Text style={styles.settingSub}>1 Copy (Kitchen) or 2 Copies (Kitchen + Customer)</Text>
-            </View>
-            <View style={styles.segmentGroup}>
-              <TouchableOpacity
-                style={[styles.segmentBtn, posConfig.copies === 1 && styles.segmentBtnActive]}
-                onPress={() => handleSetCopies(1)}
-              >
-                <Text style={[styles.segmentText, posConfig.copies === 1 && styles.segmentTextActive]}>1 Copy</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.segmentBtn, posConfig.copies === 2 && styles.segmentBtnActive]}
-                onPress={() => handleSetCopies(2)}
-              >
-                <Text style={[styles.segmentText, posConfig.copies === 2 && styles.segmentTextActive]}>2 Copies</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          {/* Auto Cut */}
-          <View style={styles.settingRow}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.settingTitle}>Automatic Paper Cut</Text>
-              <Text style={styles.settingSub}>Send auto-cut signal (\x1D\x56\x00) after each receipt</Text>
-            </View>
-            <Switch
-              value={posConfig.autoCut}
-              onValueChange={handleToggleAutoCut}
-              trackColor={{ false: Colors.cardBorder, true: Colors.primary }}
-              thumbColor="#FFFFFF"
-            />
-          </View>
-
-          {/* Auto Print New Orders */}
-          <View style={styles.settingRow}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.settingTitle}>Auto-Print Live Orders</Text>
-              <Text style={styles.settingSub}>Automatically print receipt when a new website/app order arrives</Text>
-            </View>
-            <Switch
-              value={autoPrintEnabled}
-              onValueChange={handleToggleAutoPrint}
-              trackColor={{ false: Colors.cardBorder, true: Colors.primary }}
-              thumbColor="#FFFFFF"
-            />
-          </View>
-
-          {/* Open Cash Drawer */}
-          <View style={[styles.settingRow, { borderBottomWidth: 0 }]}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.settingTitle}>Open Cash Drawer on Cash Payments</Text>
-              <Text style={styles.settingSub}>Pulse drawer kickout code (\x1B\x70\x00\x19\xFA) on cash orders</Text>
-            </View>
-            <Switch
-              value={posConfig.openCashDrawer}
-              onValueChange={handleToggleCashDrawer}
-              trackColor={{ false: Colors.cardBorder, true: Colors.primary }}
-              thumbColor="#FFFFFF"
-            />
-          </View>
-        </View>
-
-        {/* 4. Hardware Test Controls */}
-        <View style={styles.card}>
-          <Text style={styles.cardHeaderTitle}>Hardware Diagnostic Controls</Text>
-
-          <View style={{ flexDirection: 'row', gap: 10, marginTop: 8 }}>
-            <TouchableOpacity
-              style={styles.testBtn}
-              onPress={handleTestPrint}
-              disabled={isTestingPrint}
-              activeOpacity={0.8}
-            >
-              {isTestingPrint ? (
-                <ActivityIndicator size="small" color="#FFFFFF" />
-              ) : (
-                <>
-                  <Printer size={15} color="#FFFFFF" />
-                  <Text style={styles.testBtnText}>Print Test Receipt</Text>
-                </>
-              )}
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.testBtn, { backgroundColor: '#10B981' }]}
-              onPress={handleOpenCashDrawerTest}
-              activeOpacity={0.8}
-            >
-              <DollarSign size={15} color="#FFFFFF" />
-              <Text style={styles.testBtnText}>Kick Cash Drawer</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
+          </>
+        )}
       </ScrollView>
 
-      {/* Bluetooth Pairing Modal */}
+      {/* Bluetooth / Network Discovery Modal */}
       <BluetoothPrinterModal
         visible={showBtModal}
+        activeTarget={posConfig.target || posConfig.macAddress || posConfig.ipAddress}
         onClose={() => setShowBtModal(false)}
         onSelectPrinter={handlePairDevice}
       />
@@ -549,260 +871,496 @@ export default function PrinterSettingsScreen() {
   );
 }
 
+// Helper to compute architecture details from profile
+function getArchitectureDetails(config: PosPrinterConfig, profile: PrinterProfile | null) {
+  if (!profile) {
+    return {
+      title: 'No Printer Connected',
+      transportBadge: 'Not connected',
+      targetSummary: 'Search for a printer to connect',
+      encoderName: 'EscPosEncoder',
+      transportName: 'Awaiting Printer Connection',
+      classifierName: 'classifyRawByteResult',
+    };
+  }
+
+  switch (profile.connectionType) {
+    case 'network_epos':
+      return {
+        title: config.brand === 'epson' ? 'Epson TM-m30 / TM-T88 Network' : 'Network ePOS Printer',
+        transportBadge: 'Local Network (Wi-Fi/LAN)',
+        targetSummary: `IP: ${profile.ipAddress}:${profile.port || 8008}`,
+        encoderName: 'EposXmlEncoder',
+        transportName: 'HttpEposTransport (Cached)',
+        classifierName: 'classifyEposXmlResult',
+      };
+    case 'network_raw':
+      return {
+        title: 'Universal ESC/POS Network Printer',
+        transportBadge: 'Local Network (Port 9100)',
+        targetSummary: `IP: ${profile.ipAddress}:${profile.port}`,
+        encoderName: 'EscPosEncoder',
+        transportName: 'TcpSocketTransport',
+        classifierName: 'classifyRawByteResult',
+      };
+    case 'ble':
+      return {
+        title: 'Epson TM-m30 / TM-m10 Bluetooth',
+        transportBadge: 'Bluetooth Wireless (BLE)',
+        targetSummary: `MAC: ${profile.macAddress}`,
+        encoderName: 'EscPosEncoder',
+        transportName: 'BleTransport',
+        classifierName: 'classifyRawByteResult',
+      };
+    case 'spp':
+      return {
+        title: 'Star Micronics / ESC-POS Bluetooth',
+        transportBadge: 'Bluetooth Classic (SPP)',
+        targetSummary: `${profile.target || profile.macAddress}`,
+        encoderName: 'EscPosEncoder',
+        transportName: 'SppTransport',
+        classifierName: 'classifyRawByteResult',
+      };
+    case 'builtin':
+      return {
+        title: 'Sunmi POS Integrated Printer',
+        transportBadge: 'Internal Hardware',
+        targetSummary: 'Sunmi AIDL Native Service',
+        encoderName: 'Direct Sunmi Native',
+        transportName: 'SunmiTransport',
+        classifierName: 'classifyRawByteResult',
+      };
+    case 'system':
+      return {
+        title: 'System Print Spooler',
+        transportBadge: 'AirPrint / Android Spooler',
+        targetSummary: 'Native Print Dialog',
+        encoderName: 'HTML / CSS 80mm',
+        transportName: 'SystemTransport',
+        classifierName: 'classifyRawByteResult',
+      };
+  }
+}
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: Colors.background,
+    backgroundColor: '#F6F6F6', // Uber Eats signature soft merchant gray background
   },
   scrollBody: {
     padding: 16,
+    paddingBottom: 48,
   },
-  statusCard: {
+
+  /* Master Switch Card */
+  uberCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#E8E8E8',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  masterRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.card,
+  },
+  masterIconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#F3F4F6',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  masterTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#000000',
+  },
+  masterSubtitle: {
+    fontSize: 12.5,
+    color: '#6B7280',
+    marginTop: 2,
+  },
+
+  /* Section Headers (Uber Eats Uppercase tracking) */
+  sectionBlock: {
+    marginBottom: 20,
+  },
+  uberSectionHeader: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#6B7280',
+    letterSpacing: 0.8,
+    marginBottom: 8,
+    marginLeft: 4,
+  },
+  uberCardGroup: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E8E8E8',
+    overflow: 'hidden',
+  },
+
+  /* Connected Printer Card (Uber Eats style) */
+  connectedPrinterCard: {
+    backgroundColor: '#FFFFFF',
     borderRadius: 14,
     padding: 16,
     borderWidth: 1,
-    borderColor: Colors.cardBorder,
-    gap: 12,
-    marginBottom: 12,
+    borderColor: '#E8E8E8',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 2,
   },
-  statusIconBox: {
+  connectedTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  connectedIconBox: {
+    width: 46,
+    height: 46,
+    borderRadius: 12,
+    backgroundColor: '#ECFDF5',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  greenPulseDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: '#10B981',
+  },
+  connectedStatusText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#10B981',
+  },
+  connectedPrinterName: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#000000',
+    marginTop: 1,
+  },
+  connectedDetailsText: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: 2,
+  },
+  connectedActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 14,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
+  },
+  uberTestBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#F3F4F6',
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  uberTestBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#000000',
+  },
+  uberDisconnectBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 8,
+    backgroundColor: '#FEE2E2',
+  },
+  uberDisconnectBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#EF4444',
+  },
+
+  /* Not Connected Card */
+  notConnectedCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#E8E8E8',
+  },
+  notConnectedTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 14,
+  },
+  notConnectedIconBox: {
     width: 44,
     height: 44,
     borderRadius: 12,
-    backgroundColor: '#FF5C39',
+    backgroundColor: '#F3F4F6',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  statusTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: Colors.text,
+  grayDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: '#9CA3AF',
   },
-  statusSub: {
+  notConnectedStatusText: {
     fontSize: 12,
-    color: Colors.textSubtle,
+    fontWeight: '700',
+    color: '#6B7280',
+  },
+  notConnectedSub: {
+    fontSize: 12.5,
+    color: '#4B5563',
     marginTop: 2,
   },
-  activeBadge: {
-    backgroundColor: 'rgba(16, 185, 129, 0.15)',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-  },
-  activeBadgeText: {
-    color: '#10B981',
-    fontSize: 10,
-    fontWeight: '800',
-  },
-  scanBtn: {
+  uberPrimaryBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#FF5C39',
+    gap: 8,
+    backgroundColor: '#000000', // Uber signature black button
     paddingVertical: 12,
-    borderRadius: 10,
-    gap: 8,
-    marginBottom: 16,
+    borderRadius: 8,
   },
-  scanBtnText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
+  uberPrimaryBtnText: {
     fontSize: 14,
-  },
-  card: {
-    backgroundColor: Colors.card,
-    borderRadius: 14,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: Colors.cardBorder,
-    marginBottom: 16,
-  },
-  cardHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  cardHeaderTitle: {
-    fontSize: 15,
     fontWeight: '700',
-    color: Colors.text,
-  },
-  cardSubtitle: {
-    fontSize: 12,
-    color: Colors.textSubtle,
-    marginTop: 2,
-    marginBottom: 12,
-  },
-  selectBrandBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#FF5C39',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-  },
-  selectBrandBtnText: {
     color: '#FFFFFF',
-    fontWeight: '700',
-    fontSize: 12,
   },
-  brandList: {
-    marginTop: 12,
-    gap: 8,
-  },
-  brandItem: {
+
+  /* Connection Method List Rows (Uber Eats style) */
+  uberListRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  methodIconBox: {
+    width: 36,
+    height: 36,
     borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  methodTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#000000',
+  },
+  recBadgePill: {
+    backgroundColor: '#EEF2FF',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 4,
+  },
+  recBadgePillText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#4F46E5',
+  },
+  methodSubtitle: {
+    fontSize: 11.5,
+    color: '#6B7280',
+    marginTop: 2,
+  },
+
+  /* IP Setup Expandable Box */
+  ipSetupBox: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 14,
+    marginTop: 8,
     borderWidth: 1,
-    borderColor: Colors.cardBorder,
-    backgroundColor: Colors.background,
+    borderColor: '#E8E8E8',
   },
-  brandItemSelected: {
-    borderColor: Colors.primary,
-    backgroundColor: 'rgba(255, 92, 57, 0.05)',
-  },
-  brandName: {
+  ipSetupTitle: {
     fontSize: 13,
     fontWeight: '700',
-    color: Colors.text,
+    color: '#000000',
   },
-  brandNameSelected: {
-    color: Colors.primary,
-  },
-  brandSub: {
-    fontSize: 11,
-    color: Colors.textSubtle,
-    marginTop: 2,
-  },
-  connGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginVertical: 8,
-  },
-  connBtn: {
-    flex: 1,
-    minWidth: '45%',
-    paddingVertical: 10,
-    paddingHorizontal: 8,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: Colors.cardBorder,
-    backgroundColor: Colors.background,
-    alignItems: 'center',
-  },
-  connBtnActive: {
-    backgroundColor: Colors.primary,
-    borderColor: Colors.primary,
-  },
-  connText: {
+  cancelLinkText: {
     fontSize: 12,
     fontWeight: '600',
-    color: Colors.textSubtle,
+    color: '#6B7280',
   },
-  connTextActive: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-  },
-  netBox: {
-    marginTop: 12,
-    padding: 12,
-    borderRadius: 8,
-    backgroundColor: Colors.background,
-    borderWidth: 1,
-    borderColor: Colors.cardBorder,
-  },
-  netRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    gap: 8,
-  },
-  miniLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: Colors.textSubtle,
+  inputMiniLabel: {
+    fontSize: 11.5,
+    fontWeight: '600',
+    color: '#374151',
     marginBottom: 4,
   },
-  netInput: {
-    backgroundColor: '#FFFFFF',
+  uberTextInput: {
+    backgroundColor: '#F9FAFB',
     borderWidth: 1,
-    borderColor: Colors.cardBorder,
-    borderRadius: 6,
-    paddingHorizontal: 10,
-    height: 38,
+    borderColor: '#E5E7EB',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
     fontSize: 13,
-    color: Colors.text,
+    color: '#000000',
   },
-  saveNetBtn: {
-    backgroundColor: Colors.primary,
-    width: 38,
-    height: 38,
-    borderRadius: 6,
-    justifyContent: 'center',
+  scanSecondaryBtn: {
+    flex: 1,
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#F3F4F6',
+    paddingVertical: 10,
+    borderRadius: 8,
   },
-  settingRow: {
+  scanSecondaryBtnText: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#000000',
+  },
+  savePrimaryBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#000000',
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  savePrimaryBtnText: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+
+  /* Preferences Rows */
+  preferenceRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 12,
+    paddingVertical: 13,
+    paddingHorizontal: 16,
     borderBottomWidth: 1,
-    borderBottomColor: Colors.cardBorder,
+    borderBottomColor: '#F3F4F6',
   },
-  settingTitle: {
-    fontSize: 13,
+  prefTitle: {
+    fontSize: 13.5,
     fontWeight: '700',
-    color: Colors.text,
+    color: '#000000',
   },
-  settingSub: {
-    fontSize: 11,
-    color: Colors.textSubtle,
+  prefSubtitle: {
+    fontSize: 11.5,
+    color: '#6B7280',
     marginTop: 2,
   },
   segmentGroup: {
     flexDirection: 'row',
-    backgroundColor: Colors.background,
+    backgroundColor: '#F3F4F6',
     borderRadius: 8,
     padding: 3,
-    borderWidth: 1,
-    borderColor: Colors.cardBorder,
   },
   segmentBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
     borderRadius: 6,
   },
   segmentBtnActive: {
-    backgroundColor: Colors.primary,
+    backgroundColor: '#000000',
   },
   segmentText: {
-    fontSize: 12,
+    fontSize: 11.5,
     fontWeight: '600',
-    color: Colors.textSubtle,
+    color: '#6B7280',
   },
   segmentTextActive: {
     color: '#FFFFFF',
     fontWeight: '700',
   },
-  testBtn: {
-    flex: 1,
+
+  /* Action Rows */
+  uberActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+    gap: 12,
+  },
+  actionIconBox: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: '#F3F4F6',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  actionRowTitle: {
+    fontSize: 13.5,
+    fontWeight: '700',
+    color: '#000000',
+  },
+  actionRowSubtitle: {
+    fontSize: 11.5,
+    color: '#6B7280',
+    marginTop: 2,
+  },
+
+  /* Troubleshooting FAQ */
+  faqRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  faqQuestion: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#111827',
+  },
+  faqAnswerBox: {
+    backgroundColor: '#F9FAFB',
+    padding: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  faqAnswerText: {
+    fontSize: 12,
+    color: '#4B5563',
+    lineHeight: 18,
+  },
+
+  /* Architecture Footer */
+  architectureFooter: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    backgroundColor: '#FF5C39',
-    paddingVertical: 10,
-    borderRadius: 8,
+    marginTop: 18,
   },
-  testBtnText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-    fontSize: 13,
+  architectureFooterText: {
+    fontSize: 11,
+    color: '#9CA3AF',
   },
 });

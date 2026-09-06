@@ -2,9 +2,12 @@ import * as Print from 'expo-print';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Order } from '../types';
 import { isSunmiAvailable, printSunmiOrderReceipt } from './sunmi-printer.service';
-import { getPosPrinterConfig, savePosPrinterConfig, PosPrinterConfig, POS_BRANDS, getBrandOption, getBrandName } from './pos-config.service';
+import { getPosPrinterConfig, savePosPrinterConfig, PosPrinterConfig, POS_BRANDS, getBrandOption, getBrandName, profileFromConfig } from './pos-config.service';
 import { printNetworkOrderReceipt, testNetworkPrinter } from './printer/network-printer.service';
 import { printEpsonOrderReceipt, testEpsonPrinter, discoverEpsonPrinters } from './printer/epson-printer.service';
+import { buildReceiptDocument, buildDrawerKickDocument } from './printer/receipt-document';
+import { resolvePrinter } from './printer/printer-registry';
+import { PrintQueueService } from './printer/print-queue.service';
 
 export {
   isSunmiAvailable,
@@ -18,6 +21,10 @@ export {
   printEpsonOrderReceipt,
   testEpsonPrinter,
   discoverEpsonPrinters,
+  buildReceiptDocument,
+  buildDrawerKickDocument,
+  resolvePrinter,
+  PrintQueueService,
 };
 
 const AUTO_PRINT_KEY = '@krifoo_auto_print_thermal';
@@ -671,6 +678,7 @@ export async function printThermalReceipt(order: Partial<Order> & any, isManual:
 
     const copies = Math.max(1, config.copies || 1);
     const targetAddr = config.connectionType === 'network' ? `${config.ipAddress}:${config.port}` : config.connectionType;
+    const profile = profileFromConfig(config);
 
     console.log(`[PRINT HARDWARE] Brand: ${config.brand.toUpperCase()} (${config.connectionType} @ ${targetAddr}) | Copies: ${copies}`);
 
@@ -679,50 +687,41 @@ export async function printThermalReceipt(order: Partial<Order> & any, isManual:
         console.log(`[PRINT] Printing copy ${copy} of ${copies}...`);
       }
 
-      // 1. Built-in Sunmi / Flipdish POS hardware
-      if (config.connectionType === 'builtin' || config.brand === 'sunmi' || config.brand === 'flipdish') {
-        const hasSunmi = await isSunmiAvailable();
-        if (hasSunmi) {
-          console.log(`[PRINT ATTEMPT] Trying Sunmi AIDL Native Hardware (Copy ${copy}/${copies})...`);
-          const res = await printSunmiOrderReceipt(order);
-          if (res) {
-            driverUsed = 'sunmi_aidl';
-            driverLabel = 'Sunmi POS AIDL Native Printer';
-            success = true;
-            continue;
-          }
+      // 1. If valid hardware profile is configured and not purely 'system'
+      if (profile && profile.connectionType !== 'system') {
+        const printer = resolvePrinter(profile, {
+          brand: config.brand,
+          paperWidth: config.paperWidth,
+          orderContext: order,
+          configContext: config,
+        });
+
+        console.log(`[PRINT ATTEMPT] Dispatching to ${printer.model} via PrintQueue (Copy ${copy}/${copies})...`);
+        const doc = buildReceiptDocument(order, config);
+
+        const result = await PrintQueueService.enqueuePrintJob(
+          printer,
+          doc,
+          config,
+          `Order_${orderNum}_c${copy}`
+        );
+
+        if (result.success) {
+          driverUsed = profile.connectionType === 'builtin'
+            ? 'sunmi_aidl'
+            : profile.connectionType === 'network_epos'
+            ? 'epson_epos'
+            : 'network_escpos';
+          driverLabel = printer.model;
+          success = true;
+          continue;
         } else {
-          console.log(`[PRINT ATTEMPT] Sunmi hardware not present on device.`);
+          printError = result.detail || `Printer failed with reason: ${result.reason}`;
+          console.warn(`[PRINT WARNING] ${printer.model} returned error: ${printError}. Falling back to system spooler...`);
         }
       }
 
-      // 2. Epson ePOS XML SDK (Epson TM-m30, TM-T88, TM-T20, TM-T82)
-      if (config.brand === 'epson') {
-        console.log(`[PRINT ATTEMPT] Trying Epson ePOS-XML SDK at ${targetAddr} (Copy ${copy}/${copies})...`);
-        const epsonRes = await printEpsonOrderReceipt(order, config);
-        if (epsonRes) {
-          driverUsed = 'epson_epos';
-          driverLabel = `Epson ePOS-XML (${targetAddr})`;
-          success = true;
-          continue;
-        }
-        console.warn('[PRINT WARNING] Epson ePOS XML returned false, falling back to network stream...');
-      }
-
-      // 3. Network ESC/POS (Star, RetailZ, Citizen, Bixolon, Munbyn, Xprinter, Generic)
-      if (config.connectionType === 'network' || ['epson', 'star', 'retailz', 'citizen', 'bixolon', 'munbyn_xprinter', 'generic_network'].includes(config.brand)) {
-        console.log(`[PRINT ATTEMPT] Trying Network ESC/POS stream at ${targetAddr} (Copy ${copy}/${copies})...`);
-        const res = await printNetworkOrderReceipt(order, config);
-        if (res) {
-          driverUsed = 'network_escpos';
-          driverLabel = `Network ESC/POS (${config.brand.toUpperCase()} @ ${targetAddr})`;
-          success = true;
-          continue;
-        }
-        console.warn('[PRINT WARNING] Network ESC/POS returned false, falling back to system spooler...');
-      }
-
-      // 4. Fallback: System Spooler / AirPrint / PDF (80mm)
+      // 2. Fallback: System Spooler / AirPrint / PDF (80mm)
       console.log(`[PRINT ATTEMPT] Dispatching to System Print Spooler (PDF / AirPrint 80mm)...`);
       try {
         const html = generateThermalReceiptHtml(order);
@@ -876,5 +875,39 @@ export const SAMPLE_THERMAL_ORDER = {
  * Print a sample test receipt matching the user's POS receipt
  */
 export async function printSampleThermalReceipt(): Promise<boolean> {
-  return printThermalReceipt(SAMPLE_THERMAL_ORDER);
+  return printThermalReceipt(SAMPLE_THERMAL_ORDER, true);
 }
+
+/**
+ * Pulse cash drawer without creating a fake dummy order (Fixes Bug #8)
+ */
+export async function openCashDrawer(restaurantId?: string): Promise<boolean> {
+  try {
+    const config = await getPosPrinterConfig(restaurantId);
+    const profile = profileFromConfig(config);
+
+    if (profile && profile.connectionType !== 'system') {
+      const printer = resolvePrinter(profile, {
+        brand: config.brand,
+        paperWidth: config.paperWidth,
+      });
+      const kickDoc = buildDrawerKickDocument(1);
+      const res = await PrintQueueService.enqueuePrintJob(printer, kickDoc, config, 'Drawer_Kick');
+      return res.success;
+    }
+
+    const hasSunmi = await isSunmiAvailable();
+    if (hasSunmi) {
+      const { openSunmiCashDrawer } = require('./sunmi-printer.service');
+      if (typeof openSunmiCashDrawer === 'function') {
+        return await openSunmiCashDrawer();
+      }
+    }
+
+    return false;
+  } catch (err) {
+    console.error('[Cash Drawer] Failed to kick drawer:', err);
+    return false;
+  }
+}
+
