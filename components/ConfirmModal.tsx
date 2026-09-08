@@ -156,6 +156,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.background,
     justifyContent: 'center',
     alignItems: 'center',
+    minWidth: 75,
   },
   cancelButtonText: {
     color: Colors.textMuted,

@@ -245,7 +245,7 @@ export const BluetoothPrinterModal: React.FC<BluetoothPrinterModalProps> = ({
             <View style={{ flex: 1, marginLeft: 12 }}>
               <Text style={styles.navBarTitle}>Search for printers</Text>
               <Text style={styles.navBarSubtitle} numberOfLines={1}>
-                Connect via Bluetooth Wireless or Local Network Wi-Fi
+                Connect via Bluetooth or IP
               </Text>
             </View>
 
@@ -593,7 +593,7 @@ export const BluetoothPrinterModal: React.FC<BluetoothPrinterModalProps> = ({
                     >
                       <Wifi size={16} color={customConnectionType === 'network' ? '#000000' : '#6B7280'} />
                       <Text style={[styles.chipText, customConnectionType === 'network' && styles.chipTextSelected]}>
-                        Network IP (LAN / Wi-Fi)
+                          IP (LAN / Wi-Fi)
                       </Text>
                     </TouchableOpacity>
                   </View>

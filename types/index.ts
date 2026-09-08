@@ -57,6 +57,8 @@ export interface ExternalWebsiteSettings {
 }
 
 export interface ExternalPaymentSettings {
+  acceptsDelivery?: boolean;
+  acceptsPickup?: boolean;
   acceptsCashOnDelivery?: boolean;
   acceptsOnlineDelivery?: boolean;
   acceptsPayAtCounter?: boolean;
@@ -108,6 +110,8 @@ export interface Restaurant {
   externalWebsiteSettings?: ExternalWebsiteSettings;
   externalPaymentSettings?: ExternalPaymentSettings;
   acceptsOnlineOrders?: boolean;
+  acceptsDelivery?: boolean;
+  acceptsPickup?: boolean;
   acceptsCashOnDelivery?: boolean;
   acceptsOnlineDelivery?: boolean;
   acceptsPayAtCounter?: boolean;

@@ -1,4 +1,5 @@
 import { Order, PosPrinterConfig } from '../../types';
+import { getCachedStoreProfile } from '../../../services/receipt-customization.service';
 
 /**
  * ESC/POS Command Byte Generator for 58mm / 80mm receipt printers & cash drawers.
@@ -115,9 +116,12 @@ export function buildOrderEscPosBytes(order: Partial<Order> & any, config: PosPr
   const builder = new EscPosBuilder();
 
   const restaurantName =
-    typeof order.restaurantId === 'object'
-      ? order.restaurantId?.restaurantName || 'KRIFOO RESTAURANT'
-      : 'KRIFOO RESTAURANT';
+    (typeof order.restaurantId === 'object' ? order.restaurantId?.restaurantName : '') ||
+    order.restaurantName ||
+    order.restaurantTitle ||
+    (typeof order.restaurant === 'object' ? order.restaurant?.restaurantName : '') ||
+    getCachedStoreProfile()?.restaurantName ||
+    'Restaurant';
 
   builder
     .init()

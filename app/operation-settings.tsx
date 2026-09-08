@@ -29,6 +29,8 @@ import {
   Check,
   Info,
   ShieldCheck,
+  Truck,
+  ShoppingBag,
 } from 'lucide-react-native';
 import { Restaurant } from '../types';
 
@@ -55,6 +57,8 @@ export default function OperationSettingsScreen() {
   // Krifoo Marketplace Acceptance Settings
   const [krifooConfig, setKrifooConfig] = useState({
     acceptsOnlineOrders: true,
+    acceptsDelivery: true,
+    acceptsPickup: true,
     acceptsOnlineDelivery: true,
     acceptsCashOnDelivery: true,
     acceptsOnlinePickup: true,
@@ -65,6 +69,8 @@ export default function OperationSettingsScreen() {
 
   // External Website Acceptance Settings
   const [externalConfig, setExternalConfig] = useState({
+    acceptsDelivery: true,
+    acceptsPickup: true,
     acceptsOnlineDelivery: true,
     acceptsCashOnDelivery: true,
     acceptsOnlinePickup: true,
@@ -118,6 +124,8 @@ export default function OperationSettingsScreen() {
   const applyRestaurantData = (r: Restaurant) => {
     setKrifooConfig({
       acceptsOnlineOrders: r.acceptsOnlineOrders ?? true,
+      acceptsDelivery: r.acceptsDelivery ?? true,
+      acceptsPickup: r.acceptsPickup ?? true,
       acceptsOnlineDelivery: r.acceptsOnlineDelivery ?? true,
       acceptsCashOnDelivery: r.acceptsCashOnDelivery ?? true,
       acceptsOnlinePickup: r.acceptsOnlinePickup ?? true,
@@ -128,6 +136,8 @@ export default function OperationSettingsScreen() {
 
     const eps = r.externalPaymentSettings || {};
     setExternalConfig({
+      acceptsDelivery: (eps as any).acceptsDelivery !== false,
+      acceptsPickup: (eps as any).acceptsPickup !== false,
       acceptsOnlineDelivery: eps.acceptsOnlineDelivery !== false,
       acceptsCashOnDelivery: eps.acceptsCashOnDelivery !== false,
       acceptsOnlinePickup: eps.acceptsOnlinePickup !== false,
@@ -149,6 +159,8 @@ export default function OperationSettingsScreen() {
     try {
       const payload: any = {
         acceptsOnlineOrders: krifooConfig.acceptsOnlineOrders,
+        acceptsDelivery: krifooConfig.acceptsDelivery,
+        acceptsPickup: krifooConfig.acceptsPickup,
         acceptsOnlineDelivery: krifooConfig.acceptsOnlineDelivery,
         acceptsCashOnDelivery: krifooConfig.acceptsCashOnDelivery,
         acceptsOnlinePickup: krifooConfig.acceptsOnlinePickup,
@@ -156,6 +168,8 @@ export default function OperationSettingsScreen() {
         acceptsDining: krifooConfig.acceptsDining,
         autoApproveOrders: krifooConfig.autoApproveOrders,
         externalPaymentSettings: {
+          acceptsDelivery: externalConfig.acceptsDelivery,
+          acceptsPickup: externalConfig.acceptsPickup,
           acceptsOnlineDelivery: externalConfig.acceptsOnlineDelivery,
           acceptsCashOnDelivery: externalConfig.acceptsCashOnDelivery,
           acceptsOnlinePickup: externalConfig.acceptsOnlinePickup,
@@ -323,7 +337,7 @@ export default function OperationSettingsScreen() {
                   <View style={{ flex: 1, paddingRight: 10 }}>
                     <Text style={styles.cardTitle}>Accept Online Orders (Krifoo App)</Text>
                     <Text style={styles.cardSubtitle}>
-                      Master toggle allowing customers to place new delivery & pickup orders via the Krifoo customer marketplace app.
+                      Master toggle allowing customers to place new orders via the Krifoo customer marketplace app.
                     </Text>
                   </View>
                   <Switch
@@ -335,9 +349,83 @@ export default function OperationSettingsScreen() {
                 </View>
               </View>
 
-              {/* Payment Methods for Delivery */}
+              {/* Order Fulfillment Modes (Delivery & Pickup On/Off) */}
               <View style={styles.card}>
-                <Text style={styles.cardSectionTitle}>DELIVERY PAYMENT METHODS</Text>
+                <View style={styles.sectionHeaderRow}>
+                  <Text style={styles.cardSectionTitle}>FULFILLMENT MODES (DELIVERY & PICKUP)</Text>
+                </View>
+
+                {/* Accept Delivery Orders Switch */}
+                <View style={[styles.toggleRow, styles.toggleRowBorder]}>
+                  <View style={styles.toggleInfo}>
+                    <View style={styles.iconTitleRow}>
+                      <View style={[styles.badgeIconBox, { backgroundColor: '#EFF6FF' }]}>
+                        <Truck size={16} color="#2563EB" />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <Text style={styles.toggleTitle}>Delivery Orders</Text>
+                          <View style={[styles.statusPill, { backgroundColor: krifooConfig.acceptsDelivery ? '#DCFCE7' : '#FEE2E2' }]}>
+                            <Text style={[styles.statusPillText, { color: krifooConfig.acceptsDelivery ? '#15803D' : '#B91C1C' }]}>
+                              {krifooConfig.acceptsDelivery ? 'ON' : 'OFF'}
+                            </Text>
+                          </View>
+                        </View>
+                        <Text style={styles.toggleSub}>
+                          Enable or disable home & office delivery orders on Krifoo app
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
+                  <Switch
+                    value={krifooConfig.acceptsDelivery}
+                    onValueChange={(v) => setKrifooConfig((p) => ({ ...p, acceptsDelivery: v }))}
+                    trackColor={{ true: Colors.primaryLight, false: Colors.cardBorder }}
+                    thumbColor={krifooConfig.acceptsDelivery ? Colors.primary : Colors.textSubtle}
+                  />
+                </View>
+
+                {/* Accept Pickup Orders Switch */}
+                <View style={styles.toggleRow}>
+                  <View style={styles.toggleInfo}>
+                    <View style={styles.iconTitleRow}>
+                      <View style={[styles.badgeIconBox, { backgroundColor: '#FFF7ED' }]}>
+                        <ShoppingBag size={16} color="#EA580C" />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <Text style={styles.toggleTitle}>Pickup / Collection Orders</Text>
+                          <View style={[styles.statusPill, { backgroundColor: krifooConfig.acceptsPickup ? '#DCFCE7' : '#FEE2E2' }]}>
+                            <Text style={[styles.statusPillText, { color: krifooConfig.acceptsPickup ? '#15803D' : '#B91C1C' }]}>
+                              {krifooConfig.acceptsPickup ? 'ON' : 'OFF'}
+                            </Text>
+                          </View>
+                        </View>
+                        <Text style={styles.toggleSub}>
+                          Enable or disable takeaway / self-pickup collection orders on Krifoo app
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
+                  <Switch
+                    value={krifooConfig.acceptsPickup}
+                    onValueChange={(v) => setKrifooConfig((p) => ({ ...p, acceptsPickup: v }))}
+                    trackColor={{ true: Colors.primaryLight, false: Colors.cardBorder }}
+                    thumbColor={krifooConfig.acceptsPickup ? Colors.primary : Colors.textSubtle}
+                  />
+                </View>
+              </View>
+
+              {/* Payment Methods for Delivery */}
+              <View style={[styles.card, !krifooConfig.acceptsDelivery && styles.cardDisabled]}>
+                <View style={styles.sectionHeaderRow}>
+                  <Text style={styles.cardSectionTitle}>DELIVERY PAYMENT METHODS</Text>
+                  {!krifooConfig.acceptsDelivery && (
+                    <View style={styles.disabledBadge}>
+                      <Text style={styles.disabledBadgeText}>DELIVERY IS OFF</Text>
+                    </View>
+                  )}
+                </View>
 
                 <View style={[styles.toggleRow, styles.toggleRowBorder]}>
                   <View style={styles.toggleInfo}>
@@ -373,8 +461,15 @@ export default function OperationSettingsScreen() {
               </View>
 
               {/* Payment Methods for Pickup / Collection */}
-              <View style={styles.card}>
-                <Text style={styles.cardSectionTitle}>PICKUP / COLLECTION PAYMENT METHODS</Text>
+              <View style={[styles.card, !krifooConfig.acceptsPickup && styles.cardDisabled]}>
+                <View style={styles.sectionHeaderRow}>
+                  <Text style={styles.cardSectionTitle}>PICKUP / COLLECTION PAYMENT METHODS</Text>
+                  {!krifooConfig.acceptsPickup && (
+                    <View style={styles.disabledBadge}>
+                      <Text style={styles.disabledBadgeText}>PICKUP IS OFF</Text>
+                    </View>
+                  )}
+                </View>
 
                 <View style={[styles.toggleRow, styles.toggleRowBorder]}>
                   <View style={styles.toggleInfo}>
@@ -461,9 +556,83 @@ export default function OperationSettingsScreen() {
                 </View>
               </View>
 
-              {/* External Delivery Methods */}
+              {/* External Website Fulfillment Modes (Delivery & Pickup On/Off) */}
               <View style={styles.card}>
-                <Text style={styles.cardSectionTitle}>EXTERNAL WEBSITE DELIVERY</Text>
+                <View style={styles.sectionHeaderRow}>
+                  <Text style={styles.cardSectionTitle}>WEBSITE FULFILLMENT MODES</Text>
+                </View>
+
+                {/* Accept Website Delivery Switch */}
+                <View style={[styles.toggleRow, styles.toggleRowBorder]}>
+                  <View style={styles.toggleInfo}>
+                    <View style={styles.iconTitleRow}>
+                      <View style={[styles.badgeIconBox, { backgroundColor: '#EEF2FF' }]}>
+                        <Truck size={16} color="#4F46E5" />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <Text style={styles.toggleTitle}>Website Delivery Orders</Text>
+                          <View style={[styles.statusPill, { backgroundColor: externalConfig.acceptsDelivery ? '#DCFCE7' : '#FEE2E2' }]}>
+                            <Text style={[styles.statusPillText, { color: externalConfig.acceptsDelivery ? '#15803D' : '#B91C1C' }]}>
+                              {externalConfig.acceptsDelivery ? 'ON' : 'OFF'}
+                            </Text>
+                          </View>
+                        </View>
+                        <Text style={styles.toggleSub}>
+                          Enable or disable home & office delivery for direct website visitors
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
+                  <Switch
+                    value={externalConfig.acceptsDelivery}
+                    onValueChange={(v) => setExternalConfig((p) => ({ ...p, acceptsDelivery: v }))}
+                    trackColor={{ true: '#A5B4FC', false: Colors.cardBorder }}
+                    thumbColor={externalConfig.acceptsDelivery ? '#4F46E5' : Colors.textSubtle}
+                  />
+                </View>
+
+                {/* Accept Website Pickup Switch */}
+                <View style={styles.toggleRow}>
+                  <View style={styles.toggleInfo}>
+                    <View style={styles.iconTitleRow}>
+                      <View style={[styles.badgeIconBox, { backgroundColor: '#FFF7ED' }]}>
+                        <ShoppingBag size={16} color="#EA580C" />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <Text style={styles.toggleTitle}>Website Pickup / Collection</Text>
+                          <View style={[styles.statusPill, { backgroundColor: externalConfig.acceptsPickup ? '#DCFCE7' : '#FEE2E2' }]}>
+                            <Text style={[styles.statusPillText, { color: externalConfig.acceptsPickup ? '#15803D' : '#B91C1C' }]}>
+                              {externalConfig.acceptsPickup ? 'ON' : 'OFF'}
+                            </Text>
+                          </View>
+                        </View>
+                        <Text style={styles.toggleSub}>
+                          Enable or disable takeaway collection for direct website visitors
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
+                  <Switch
+                    value={externalConfig.acceptsPickup}
+                    onValueChange={(v) => setExternalConfig((p) => ({ ...p, acceptsPickup: v }))}
+                    trackColor={{ true: '#A5B4FC', false: Colors.cardBorder }}
+                    thumbColor={externalConfig.acceptsPickup ? '#4F46E5' : Colors.textSubtle}
+                  />
+                </View>
+              </View>
+
+              {/* External Delivery Methods */}
+              <View style={[styles.card, !externalConfig.acceptsDelivery && styles.cardDisabled]}>
+                <View style={styles.sectionHeaderRow}>
+                  <Text style={styles.cardSectionTitle}>EXTERNAL WEBSITE DELIVERY PAYMENT METHODS</Text>
+                  {!externalConfig.acceptsDelivery && (
+                    <View style={styles.disabledBadge}>
+                      <Text style={styles.disabledBadgeText}>DELIVERY IS OFF</Text>
+                    </View>
+                  )}
+                </View>
 
                 <View style={[styles.toggleRow, styles.toggleRowBorder]}>
                   <View style={styles.toggleInfo}>
@@ -499,8 +668,15 @@ export default function OperationSettingsScreen() {
               </View>
 
               {/* External Collection Methods */}
-              <View style={styles.card}>
-                <Text style={styles.cardSectionTitle}>EXTERNAL WEBSITE COLLECTION / PICKUP</Text>
+              <View style={[styles.card, !externalConfig.acceptsPickup && styles.cardDisabled]}>
+                <View style={styles.sectionHeaderRow}>
+                  <Text style={styles.cardSectionTitle}>EXTERNAL WEBSITE COLLECTION PAYMENT METHODS</Text>
+                  {!externalConfig.acceptsPickup && (
+                    <View style={styles.disabledBadge}>
+                      <Text style={styles.disabledBadgeText}>PICKUP IS OFF</Text>
+                    </View>
+                  )}
+                </View>
 
                 <View style={[styles.toggleRow, styles.toggleRowBorder]}>
                   <View style={styles.toggleInfo}>
@@ -790,6 +966,46 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '800',
+    letterSpacing: 0.3,
+  },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  badgeIconBox: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  statusPill: {
+    paddingHorizontal: 6,
+    paddingVertical: 1.5,
+    borderRadius: 4,
+  },
+  statusPillText: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+  },
+  cardDisabled: {
+    opacity: 0.65,
+  },
+  disabledBadge: {
+    backgroundColor: '#FEE2E2',
+    paddingHorizontal: 7,
+    paddingVertical: 2.5,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: '#FECACA',
+  },
+  disabledBadgeText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#DC2626',
     letterSpacing: 0.3,
   },
 });

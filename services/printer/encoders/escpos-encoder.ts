@@ -18,7 +18,9 @@ export const EscPosEncoder: CommandEncoder<Uint8Array> = {
 
     let currentAlign: 'left' | 'center' | 'right' = 'left';
     let currentBold = false;
-    let currentSize: 'normal' | 'double' = 'normal';
+    let currentItalic = false;
+    let currentFont: 'fontA' | 'fontB' = 'fontA';
+    let currentSize: 'normal' | 'double' | 'small' = 'normal';
 
     const setAlign = (align?: 'left' | 'center' | 'right') => {
       const target = align || 'left';
@@ -37,7 +39,23 @@ export const EscPosEncoder: CommandEncoder<Uint8Array> = {
       }
     };
 
-    const setSize = (size?: 'normal' | 'double') => {
+    const setItalic = (italic?: boolean) => {
+      const target = Boolean(italic);
+      if (target !== currentItalic) {
+        currentItalic = target;
+        buffer.push(0x1b, 0x34, target ? 1 : 0);
+      }
+    };
+
+    const setFont = (font?: 'fontA' | 'fontB') => {
+      const target = font || 'fontA';
+      if (target !== currentFont) {
+        currentFont = target;
+        buffer.push(0x1b, 0x4d, target === 'fontB' ? 1 : 0);
+      }
+    };
+
+    const setSize = (size?: 'normal' | 'double' | 'small') => {
       const target = size || 'normal';
       if (target !== currentSize) {
         currentSize = target;
@@ -70,14 +88,27 @@ export const EscPosEncoder: CommandEncoder<Uint8Array> = {
         case 'text':
           setAlign(cmd.align);
           setBold(cmd.bold);
+          setItalic(cmd.italic);
+          setFont(cmd.font);
           setSize(cmd.size);
           pushText(cmd.value);
           buffer.push(0x0a); // LF
           break;
 
+        case 'spacing':
+          if (cmd.mode === 'compact') {
+            buffer.push(0x1b, 0x33, 18); // ESC 3 18
+          } else if (cmd.mode === 'relaxed') {
+            buffer.push(0x1b, 0x33, 36); // ESC 3 36
+          } else {
+            buffer.push(0x1b, 0x32); // ESC 2 default 1/6 inch
+          }
+          break;
+
         case 'line':
           setAlign('left');
           setBold(false);
+          setItalic(false);
           setSize('normal');
           pushText('-'.repeat(cols));
           buffer.push(0x0a);

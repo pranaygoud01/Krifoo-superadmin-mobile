@@ -5,9 +5,10 @@ import { isSunmiAvailable, printSunmiOrderReceipt } from './sunmi-printer.servic
 import { getPosPrinterConfig, savePosPrinterConfig, PosPrinterConfig, POS_BRANDS, getBrandOption, getBrandName, profileFromConfig } from './pos-config.service';
 import { printNetworkOrderReceipt, testNetworkPrinter } from './printer/network-printer.service';
 import { printEpsonOrderReceipt, testEpsonPrinter, discoverEpsonPrinters } from './printer/epson-printer.service';
-import { buildReceiptDocument, buildDrawerKickDocument } from './printer/receipt-document';
+import { buildReceiptDocument, buildDrawerKickDocument, buildCustomizedReceiptDocument } from './printer/receipt-document';
 import { resolvePrinter } from './printer/printer-registry';
 import { PrintQueueService } from './printer/print-queue.service';
+import { getActiveReceiptTemplate, ReceiptTemplate, getSampleOrderForPreview, getCachedStoreProfile, setCachedStoreProfile, formatRestaurantAddress } from './receipt-customization.service';
 
 export {
   isSunmiAvailable,
@@ -22,9 +23,12 @@ export {
   testEpsonPrinter,
   discoverEpsonPrinters,
   buildReceiptDocument,
+  buildCustomizedReceiptDocument,
   buildDrawerKickDocument,
   resolvePrinter,
   PrintQueueService,
+  getActiveReceiptTemplate,
+  ReceiptTemplate,
 };
 
 const AUTO_PRINT_KEY = '@krifoo_auto_print_thermal';
@@ -61,6 +65,41 @@ function formatMoney(amount?: number): string {
   return `£${Number(amount).toFixed(2)}`;
 }
 
+function getItemPrice(item: any): number {
+  if (!item) return 0;
+  const qty = Number(item.quantity || item.qty || 1);
+
+  // 1. Direct line total
+  const lineTotal = item.itemTotal ?? item.totalPrice ?? item.total;
+  if (lineTotal !== undefined && lineTotal !== null && !isNaN(Number(lineTotal)) && Number(lineTotal) > 0) {
+    return Number(lineTotal);
+  }
+
+  // 2. Unit price
+  const unitPrice =
+    item.price ??
+    item.basePrice ??
+    item.unitPrice ??
+    item.cost ??
+    item.rate ??
+    (typeof item.menuItemId === 'object' ? item.menuItemId?.price ?? item.menuItemId?.basePrice : undefined) ??
+    (typeof item.itemId === 'object' ? item.itemId?.price ?? item.itemId?.basePrice : undefined);
+
+  if (unitPrice !== undefined && unitPrice !== null && !isNaN(Number(unitPrice)) && Number(unitPrice) > 0) {
+    return Number(unitPrice) * qty;
+  }
+
+  // 3. Customization price
+  if (item.customization) {
+    const customPrice = item.customization.price ?? item.customization.totalPrice;
+    if (customPrice !== undefined && customPrice !== null && !isNaN(Number(customPrice)) && Number(customPrice) > 0) {
+      return Number(customPrice) * qty;
+    }
+  }
+
+  return 0;
+}
+
 /**
  * Format date time into UK style string e.g. "Mar 29, 22:08" or "Today by 23:05"
  */
@@ -86,9 +125,284 @@ function formatOrderDate(dateString?: string): { placedAt: string; targetTime: s
 }
 
 /**
+ * Generate customized thermal receipt HTML reflecting restaurant owner's template
+ */
+export function generateCustomizedThermalReceiptHtml(order: Partial<Order> & any, template: ReceiptTemplate): string {
+  const layout = template.layout;
+  const content = template.content;
+  const is58mm = layout.paperWidth === '58mm';
+  const paperWidthMm = is58mm ? '58mm' : '80mm';
+  const fontFamilyCss = layout.fontFamily === 'fontB' ? 'Consolas, "Courier New", monospace' : '"Courier New", Courier, monospace';
+  const fontSizePx = layout.fontSize === 'small' ? '11px' : layout.fontSize === 'large' ? '14px' : '12.5px';
+  const lineHeight = layout.lineSpacing === 'compact' ? '1.18' : layout.lineSpacing === 'relaxed' ? '1.55' : '1.35';
+
+  const orderNum = order.orderNumber || (order._id ? `#${order._id.slice(-5).toUpperCase()}` : '#00000');
+
+  const customerName = order.customerDetails?.name || order.customerId?.fullName || order.userId?.fullName || 'Customer';
+  const customerPhone = order.customerDetails?.phoneNumber || order.customerId?.phoneNumber || order.userId?.phoneNumber || order.deliveryAddress?.phoneNumber || '';
+
+  const restaurantName =
+    (typeof order.restaurantId === 'object' ? order.restaurantId?.restaurantName : '') ||
+    order.restaurantName ||
+    order.restaurantTitle ||
+    (typeof order.restaurant === 'object' ? order.restaurant?.restaurantName || order.restaurant?.name : '') ||
+    getCachedStoreProfile()?.restaurantName ||
+    'Restaurant';
+  const restaurantPhone =
+    (typeof order.restaurantId === 'object' ? order.restaurantId?.phoneNumber : '') ||
+    order.restaurantPhone ||
+    '';
+  const rawRestAddr =
+    (typeof order.restaurantId === 'object'
+      ? order.restaurantId?.formattedAddress || order.restaurantId?.address
+      : '') ||
+    order.restaurantAddress ||
+    getCachedStoreProfile()?.address;
+  const restaurantAddress = formatRestaurantAddress(rawRestAddr);
+
+  const fulfillmentType = (order.orderType || order.deliveryType || 'Delivery').toUpperCase();
+  const isDelivery = fulfillmentType.includes('DELIV');
+  const isDineIn = fulfillmentType.includes('DINE') || fulfillmentType.includes('EAT') || Boolean(order.tableNumber);
+  const tableNum = order.tableNumber || (isDineIn && order.notes?.match(/table\s*([0-9a-zA-Z]+)/i)?.[1]) || '';
+
+  const rawAddress =
+    order.deliveryAddress?.fullAddress ||
+    order.deliveryAddress?.formattedAddress ||
+    order.deliveryAddress?.addressLine1 ||
+    (typeof order.deliveryAddress === 'string' ? order.deliveryAddress : '');
+  const postalCode = order.deliveryAddress?.postalCode || order.deliveryAddress?.postcode || '';
+
+  const { placedAt } = formatOrderDate(order.createdAt);
+  const itemsList = order.orderedItems || order.items || [];
+  const pricing = order.pricing || {};
+  const subtotal = Number(pricing.subtotal ?? (order as any).subtotal ?? order.totalAmount ?? 0);
+  const deliveryFee = Number(pricing.deliveryFee ?? (order as any).deliveryFee ?? 0);
+  const onlinePaymentFee = Number(pricing.onlinePaymentFee ?? (order as any).onlinePaymentFee ?? 0);
+  const handlingCharge = Number(pricing.handlingCharge ?? (order as any).handlingCharge ?? 0);
+  const platformFee = Number(pricing.platformFee ?? (order as any).platformFee ?? 0);
+  const tax = Number(pricing.tax ?? pricing.vat ?? (order as any).tax ?? 0);
+  const tip = Number(pricing.tip ?? (order as any).tip ?? 0);
+  const discount = Number(pricing.discount ?? pricing.discountAmount ?? (order as any).discountAmount ?? 0);
+  const total = Number(pricing.total ?? pricing.totalAmount ?? order.totalAmount ?? (subtotal + deliveryFee + onlinePaymentFee + handlingCharge + platformFee + tax + tip - discount));
+
+  const paymentType = order.paymentType || 'Card';
+  const paymentStatus = (order.paymentStatus || 'Paid').toUpperCase();
+  const isPaid = paymentStatus === 'PAID' || paymentStatus === 'COMPLETED';
+  const specialNotes = order.notes || order.specialInstructions || '';
+
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Receipt ${orderNum}</title>
+  <style>
+    @page {
+      size: ${paperWidthMm} auto;
+      margin: 0mm !important;
+    }
+    * {
+      box-sizing: border-box;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    html, body {
+      width: 100% !important;
+      max-width: ${paperWidthMm} !important;
+      margin: 0 auto !important;
+      padding: 0 !important;
+      background-color: #ffffff;
+    }
+    body {
+      font-family: ${fontFamilyCss};
+      padding: 4mm 3mm 10mm 3mm;
+      color: #000000;
+      font-size: ${fontSizePx};
+      line-height: ${lineHeight};
+    }
+    .header-sec { text-align: ${layout.alignment.header}; margin-bottom: 6px; }
+    .items-sec { text-align: ${layout.alignment.items}; margin-bottom: 6px; }
+    .totals-sec { text-align: ${layout.alignment.totals}; margin-bottom: 6px; }
+    .footer-sec { text-align: ${layout.alignment.footer}; margin-top: 8px; }
+    .title-large {
+      font-size: 1.35em;
+      font-weight: ${layout.boldElements.restaurantName ? '800' : '500'};
+      letter-spacing: -0.3px;
+    }
+    .order-banner {
+      background: #000000;
+      color: #ffffff;
+      padding: 6px 8px;
+      text-align: center;
+      font-weight: ${layout.boldElements.orderNumber ? '800' : '600'};
+      font-size: 1.15em;
+      border-radius: 4px;
+      margin: 6px 0;
+    }
+    .divider {
+      border-bottom: 1px dashed #000000;
+      margin: 6px 0;
+    }
+    .divider-double {
+      border-bottom: 2px solid #000000;
+      margin: 6px 0;
+    }
+    .item-row {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 3px;
+      font-weight: ${layout.boldElements.itemNames ? '700' : '500'};
+    }
+    .item-notes {
+      font-size: 0.9em;
+      color: #444444;
+      padding-left: 14px;
+      margin-bottom: 2px;
+    }
+    .summary-row {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 2px;
+    }
+    .total-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 1.3em;
+      font-weight: ${layout.boldElements.totalAmount ? '800' : '600'};
+      margin: 4px 0;
+    }
+    .tagline {
+      font-style: ${layout.italicElements.tagline ? 'italic' : 'normal'};
+      font-size: 0.95em;
+      color: #333333;
+    }
+    .footer-msg {
+      font-style: ${layout.italicElements.footerMessage ? 'italic' : 'normal'};
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+    .qr-box {
+      text-align: center;
+      margin: 8px 0;
+    }
+  </style>
+</head>
+<body>
+  <!-- Header -->
+  <div class="header-sec">
+    ${content.showLogo && content.logoUrl ? `<img src="${content.logoUrl}" style="max-width:90px; max-height:65px; display:block; margin:0 auto 6px auto;" />` : ''}
+    ${content.customHeaderTitle ? `<div style="font-weight:800; font-size:1em; letter-spacing:0.5px;">${content.customHeaderTitle.toUpperCase()}</div>` : ''}
+    ${content.showRestaurantName ? `<div class="title-large">${restaurantName.toUpperCase()}</div>` : ''}
+    ${content.headerMessage ? `<div class="tagline">${content.headerMessage}</div>` : ''}
+    ${content.showAddress && restaurantAddress ? `<div>${restaurantAddress}</div>` : ''}
+    ${content.showPhone && restaurantPhone ? `<div>Tel: ${restaurantPhone}</div>` : ''}
+    ${content.showTaxId && content.taxIdValue ? `<div style="font-size:0.9em;">${content.taxIdLabel || 'Tax ID:'} ${content.taxIdValue}</div>` : ''}
+  </div>
+
+  <div class="divider"></div>
+
+  <!-- Order Info -->
+  ${content.showOrderNumber ? `<div class="order-banner">ORDER ${orderNum}</div>` : ''}
+  ${content.showDateTime ? `<div style="text-align:center; font-size:0.9em;">Placed: ${placedAt}</div>` : ''}
+  <div style="text-align:center; font-weight:700; font-size:0.95em; margin:2px 0;">
+    [ ${isDineIn ? `EAT-IN / DINE-IN ${tableNum ? `TABLE ${tableNum}` : ''}` : `${fulfillmentType} ORDER`} ]
+  </div>
+  ${content.showTableNumber && tableNum ? `<div style="text-align:center; font-weight:800;">TABLE: ${tableNum.toUpperCase()}</div>` : ''}
+  ${content.showServerWaiterName && (order.waiterName || content.serverWaiterName) ? `<div style="text-align:center; font-size:0.9em;">Server: ${order.waiterName || content.serverWaiterName}</div>` : ''}
+
+  <!-- Customer Info -->
+  ${content.showCustomerInfo ? `
+  <div class="divider"></div>
+  <div style="text-align:left;">
+    <div style="font-weight:${layout.boldElements.customerDetails ? '700' : '500'};">Customer: ${customerName}</div>
+    ${customerPhone ? `<div>Phone: ${customerPhone}</div>` : ''}
+    ${rawAddress && !isDineIn ? `<div>Address: ${rawAddress}</div>` : ''}
+    ${postalCode && !isDineIn ? `<div style="font-weight:700;">Postcode: ${postalCode}</div>` : ''}
+  </div>
+  ` : ''}
+
+  <div class="divider"></div>
+
+  <!-- Items -->
+  <div class="items-sec">
+    <div style="display:flex; justify-content:space-between; font-weight:800; font-size:0.95em; border-bottom:1px solid #000; padding-bottom:3px; margin-bottom:4px;">
+      <span style="width:25px;">QTY</span>
+      <span style="flex:1; padding:0 6px;">ITEM</span>
+      <span style="text-align:right;">PRICE</span>
+    </div>
+    ${itemsList.map((item: any) => {
+      const q = item.quantity || item.qty || 1;
+      const n = item.name || item.itemName || 'Item';
+      const p = getItemPrice(item);
+      return `
+      <div class="item-row">
+        <span style="width:25px;">${q}x</span>
+        <span style="flex:1; padding:0 6px;">${n}</span>
+        <span style="text-align:right;">${formatMoney(p)}</span>
+      </div>
+      ${content.showItemNotes && item.customization?.size ? `<div class="item-notes">* Size: ${item.customization.size}</div>` : ''}
+      ${content.showItemNotes && Array.isArray(item.customization?.addOns) && item.customization.addOns.length > 0 ? `<div class="item-notes">+ ${item.customization.addOns.join(', ')}</div>` : ''}
+      `;
+    }).join('')}
+  </div>
+
+  <div class="divider"></div>
+
+  <!-- Totals -->
+  <div class="totals-sec">
+    ${subtotal > 0 ? `<div class="summary-row"><span>Subtotal</span><span>${formatMoney(subtotal)}</span></div>` : ''}
+    ${deliveryFee > 0 ? `<div class="summary-row"><span>Delivery Fee</span><span>${formatMoney(deliveryFee)}</span></div>` : ''}
+    ${onlinePaymentFee > 0 ? `<div class="summary-row"><span>Online Payment Fee</span><span>${formatMoney(onlinePaymentFee)}</span></div>` : ''}
+    ${handlingCharge > 0 ? `<div class="summary-row"><span>Handling Charge</span><span>${formatMoney(handlingCharge)}</span></div>` : ''}
+    ${platformFee > 0 ? `<div class="summary-row"><span>Platform / Service Fee</span><span>${formatMoney(platformFee)}</span></div>` : ''}
+    ${tax > 0 || content.showItemTaxBreakdown ? `
+    <div class="summary-row">
+      <span>${content.showItemTaxBreakdown ? `Tax / VAT (${content.taxPercentage || 20}%)` : 'Tax / VAT'}</span>
+      <span>${formatMoney(tax || (subtotal * ((content.taxPercentage || 20) / 100)))}</span>
+    </div>` : ''}
+    ${tip > 0 ? `<div class="summary-row"><span>Driver Tip</span><span>${formatMoney(tip)}</span></div>` : ''}
+    ${content.showDiscountLine && discount > 0 ? `<div class="summary-row"><span>Discount</span><span>-${formatMoney(discount)}</span></div>` : ''}
+    
+    <div class="divider-double"></div>
+    <div class="total-row">
+      <span>TOTAL</span>
+      <span>${formatMoney(total)}</span>
+    </div>
+    <div class="divider-double"></div>
+
+    ${content.showPaymentMethod ? `
+    <div style="text-align:center; font-weight:700; margin:4px 0;">
+      PAYMENT: ${paymentType.toUpperCase()} (${isPaid ? 'PAID' : paymentStatus})
+    </div>` : ''}
+  </div>
+
+  ${specialNotes ? `
+  <div class="divider"></div>
+  <div style="font-weight:700; font-size:0.95em;">NOTE: ${specialNotes}</div>
+  ` : ''}
+
+  <!-- Footer & QR -->
+  <div class="footer-sec">
+    ${content.footerMessage ? `<div class="footer-msg">${content.footerMessage}</div>` : ''}
+    ${content.showQrCode && content.qrCodeData ? `
+    <div class="qr-box">
+      <img src="https://api.qrserver.com/v1/create-qr-code/?size=110x110&data=${encodeURIComponent(content.qrCodeData)}" style="width:90px; height:90px; display:block; margin:0 auto 4px auto;" />
+      ${content.qrCodeLabel ? `<div style="font-size:0.85em; font-weight:600;">${content.qrCodeLabel}</div>` : ''}
+    </div>` : ''}
+  </div>
+</body>
+</html>
+  `;
+}
+
+/**
  * Generate 80mm Thermal POS Receipt HTML matching the exact physical receipt layout
  */
-export function generateThermalReceiptHtml(order: Partial<Order> & any): string {
+export function generateThermalReceiptHtml(order: Partial<Order> & any, template?: ReceiptTemplate): string {
+  if (template) {
+    return generateCustomizedThermalReceiptHtml(order, template);
+  }
   const orderNum = order.orderNumber || (order._id ? `#${order._id.slice(-5).toUpperCase()}` : '#00000');
   
   // Customer details
@@ -654,7 +968,11 @@ export function getLastPrintJobReport(): PrintJobReport | null {
  * @param order Order data object
  * @param isManual True if initiated by direct user tap (bypasses auto-print check & debounce)
  */
-export async function printThermalReceipt(order: Partial<Order> & any, isManual: boolean = false): Promise<boolean> {
+export async function printThermalReceipt(
+  order: Partial<Order> & any,
+  isManual: boolean = false,
+  customTemplate?: ReceiptTemplate
+): Promise<boolean> {
   const startTime = Date.now();
   const orderNum = String(order.orderNumber || (order._id ? `#${order._id.slice(-5).toUpperCase()}` : '#00000'));
   const orderId = String(order._id || order.id || orderNum);
@@ -674,6 +992,50 @@ export async function printThermalReceipt(order: Partial<Order> & any, isManual:
   try {
     const restId = typeof order.restaurantId === 'object' ? order.restaurantId?._id : (order.restaurantId || order.restaurant);
     const config = await getPosPrinterConfig(restId ? String(restId) : undefined);
+    const template = customTemplate || (await getActiveReceiptTemplate(restId ? String(restId) : undefined));
+
+    // Ensure order has live store details populated
+    if (!order.restaurantName && (typeof order.restaurantId !== 'object' || !order.restaurantId?.restaurantName)) {
+      const cached = getCachedStoreProfile();
+      if (cached?.restaurantName) {
+        order.restaurantName = cached.restaurantName;
+        if (typeof order.restaurantId === 'object') {
+          order.restaurantId.restaurantName = cached.restaurantName;
+        } else {
+          order.restaurantId = {
+            _id: String(order.restaurantId || ''),
+            restaurantName: cached.restaurantName,
+            phoneNumber: cached.phoneNumber || '',
+          };
+        }
+      } else {
+        try {
+          const { restaurantOwnerService } = require('./restaurant-owner.service');
+          const ownerRes = await restaurantOwnerService.getRestaurantProfile();
+          if (ownerRes?.success && ownerRes.data?.restaurantName) {
+            order.restaurantName = ownerRes.data.restaurantName;
+            const ownerAddr = ownerRes.data.address;
+            const resolvedAddr = formatRestaurantAddress(ownerAddr);
+            setCachedStoreProfile({
+              restaurantName: ownerRes.data.restaurantName,
+              phoneNumber: ownerRes.data.phoneNumber,
+              address: resolvedAddr,
+            });
+            if (typeof order.restaurantId === 'object') {
+              order.restaurantId.restaurantName = ownerRes.data.restaurantName;
+            } else {
+              order.restaurantId = {
+                _id: String(order.restaurantId || ownerRes.data._id || ''),
+                restaurantName: ownerRes.data.restaurantName,
+                phoneNumber: ownerRes.data.phoneNumber || '',
+              };
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }
 
     // If auto-print is disabled and this was not a manual user click, skip
     if (!config.autoPrint && !isManual) {
@@ -737,7 +1099,7 @@ export async function printThermalReceipt(order: Partial<Order> & any, isManual:
         });
 
         console.log(`[PRINT ATTEMPT] Dispatching to ${printer.model} via PrintQueue (Copy ${copy}/${copies})...`);
-        const doc = buildReceiptDocument(order, config);
+        const doc = buildCustomizedReceiptDocument(order, config, template);
 
         const result = await PrintQueueService.enqueuePrintJob(
           printer,
@@ -756,40 +1118,42 @@ export async function printThermalReceipt(order: Partial<Order> & any, isManual:
           success = true;
           continue;
         } else {
-          printError = result.detail || `Printer failed with reason: ${result.reason}`;
+          const failRes = result as { success: false; reason?: string; detail?: string };
+          printError = failRes.detail || (failRes.reason ? `Printer failed with reason: ${failRes.reason}` : 'Printer failed');
           console.warn(`[PRINT WARNING] ${printer.model} returned error: ${printError}. Falling back to system spooler...`);
         }
       }
 
-      // 2. Fallback: System Spooler / AirPrint / PDF (80mm)
-      console.log(`[PRINT ATTEMPT] Dispatching to System Print Spooler (PDF / AirPrint 80mm)...`);
+      // 2. Fallback: System Spooler / AirPrint / PDF
+      const paperWidthPoints = template.layout.paperWidth === '58mm' ? 164 : THERMAL_80MM_WIDTH_POINTS;
+      console.log(`[PRINT ATTEMPT] Dispatching to System Print Spooler (PDF / AirPrint ${template.layout.paperWidth})...`);
       try {
-        const html = generateThermalReceiptHtml(order);
+        const html = generateThermalReceiptHtml(order, template);
         const file = await Print.printToFileAsync({
           html,
-          width: THERMAL_80MM_WIDTH_POINTS,
+          width: paperWidthPoints,
         });
 
         await Print.printAsync({
           uri: file.uri,
         });
         driverUsed = 'system_spooler';
-        driverLabel = 'System Print Spooler (AirPrint / 80mm PDF)';
+        driverLabel = `System Print Spooler (AirPrint / ${template.layout.paperWidth})`;
         success = true;
       } catch (fallbackErr: any) {
         console.warn('[PRINT FALLBACK] PrintToFileAsync failed, trying direct printAsync:', fallbackErr);
         try {
-          const html = generateThermalReceiptHtml(order);
+          const html = generateThermalReceiptHtml(order, template);
           await Print.printAsync({
             html,
-            width: THERMAL_80MM_WIDTH_POINTS,
+            width: paperWidthPoints,
           });
           driverUsed = 'system_spooler';
-          driverLabel = 'System Print Spooler (Direct 80mm)';
+          driverLabel = `System Print Spooler (Direct ${template.layout.paperWidth})`;
           success = true;
         } catch (directErr: any) {
-          printError = directErr?.message || String(directErr);
-          console.error('[PRINT ERROR] System spooler failed:', directErr);
+          console.error('[PRINT ERROR] All print attempts failed:', directErr);
+          printError = directErr?.message || fallbackErr?.message || 'Print spooler failed';
           success = false;
         }
       }
@@ -950,4 +1314,70 @@ export async function openCashDrawer(restaurantId?: string): Promise<boolean> {
     return false;
   }
 }
+
+/**
+ * Print a test receipt using a specific customized template to verify physical formatting
+ */
+export async function printTestReceiptTemplate(
+  template: ReceiptTemplate,
+  restaurantId?: string,
+  storeNameOverride?: string
+): Promise<boolean> {
+  let resolvedStoreName = storeNameOverride || getCachedStoreProfile()?.restaurantName;
+  let resolvedPhone = getCachedStoreProfile()?.phoneNumber;
+  let resolvedAddress = getCachedStoreProfile()?.address;
+
+  if (!resolvedStoreName) {
+    try {
+      if (restaurantId) {
+        const { restaurantService } = require('./restaurant.service');
+        const res = await restaurantService.getRestaurantById(restaurantId);
+        if (res?.success && res.data?.restaurantName) {
+          resolvedStoreName = res.data.restaurantName;
+          resolvedPhone = res.data.phoneNumber || resolvedPhone;
+          const rAddr = res.data.address;
+          resolvedAddress = formatRestaurantAddress(rAddr) || resolvedAddress;
+        }
+      }
+      if (!resolvedStoreName) {
+        const { restaurantOwnerService } = require('./restaurant-owner.service');
+        const ownerRes = await restaurantOwnerService.getRestaurantProfile();
+        if (ownerRes?.success && ownerRes.data?.restaurantName) {
+          resolvedStoreName = ownerRes.data.restaurantName;
+          resolvedPhone = ownerRes.data.phoneNumber || resolvedPhone;
+          const oAddr = ownerRes.data.address;
+          resolvedAddress = formatRestaurantAddress(oAddr) || resolvedAddress;
+          setCachedStoreProfile({
+            restaurantName: resolvedStoreName,
+            phoneNumber: resolvedPhone,
+            address: resolvedAddress,
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('[printTestReceiptTemplate] Could not fetch store profile:', e);
+    }
+  }
+
+  const sampleOrder = getSampleOrderForPreview(
+    template.content.showTableNumber ? 'dine_in' : 'delivery',
+    resolvedStoreName
+  );
+
+  if (resolvedStoreName) {
+    const formattedAddr = formatRestaurantAddress(resolvedAddress);
+    sampleOrder.restaurantId = {
+      _id: restaurantId || 'rest_001',
+      restaurantName: resolvedStoreName,
+      phoneNumber: resolvedPhone || '01223 456789',
+      address: formattedAddr,
+      formattedAddress: formattedAddr,
+    };
+    sampleOrder.restaurantName = resolvedStoreName;
+    sampleOrder.restaurantAddress = formattedAddr;
+  }
+
+  return printThermalReceipt(sampleOrder, true, template);
+}
+
 

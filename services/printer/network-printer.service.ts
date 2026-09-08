@@ -1,20 +1,24 @@
 import { Order } from '../../types';
 import { PosPrinterConfig } from '../pos-config.service';
-import { buildEscPosReceipt } from './escpos-builder';
+import { buildEscPosReceipt, buildCustomizedEscPosReceipt } from './escpos-builder';
+import { getActiveReceiptTemplate, ReceiptTemplate } from '../receipt-customization.service';
 
 /**
  * Send raw binary ESC/POS payload to Network/WiFi LAN thermal printer on Port 9100
  */
 export async function printNetworkOrderReceipt(
   order: Partial<Order> & any,
-  config: PosPrinterConfig
+  config: PosPrinterConfig,
+  template?: ReceiptTemplate
 ): Promise<boolean> {
   const ip = config.ipAddress || '192.168.1.100';
   const port = config.port || 9100;
 
   try {
     console.log(`[Network Print] Connecting to ${config.brand} printer at ${ip}:${port}...`);
-    const payloadBytes = buildEscPosReceipt(order, config);
+    const restId = typeof order.restaurantId === 'object' ? order.restaurantId?._id : (order.restaurantId || order.restaurant);
+    const activeTemplate = template || (await getActiveReceiptTemplate(restId ? String(restId) : undefined));
+    const payloadBytes = buildCustomizedEscPosReceipt(order, config, activeTemplate);
 
     // Try sending over TCP Raw Socket using standard React Native fetch/socket stream or direct POST bridge
     const controller = new AbortController();

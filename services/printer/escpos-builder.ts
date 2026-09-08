@@ -1,5 +1,8 @@
 import { Order } from '../../types';
 import { PosPrinterConfig } from '../pos-config.service';
+import { ReceiptTemplate, getCachedStoreProfile } from '../receipt-customization.service';
+import { buildCustomizedReceiptDocument } from './receipt-document';
+import { EscPosEncoder } from './encoders/escpos-encoder';
 
 /**
  * Format currency with symbol (£ for UK)
@@ -73,6 +76,43 @@ export class EscPosBuilder {
 
   public bold(enable: boolean): this {
     this.buffer.push(0x1b, 0x45, enable ? 1 : 0);
+    return this;
+  }
+
+  public italic(enable: boolean): this {
+    this.buffer.push(0x1b, 0x34, enable ? 1 : 0);
+    return this;
+  }
+
+  public setFont(font: 'fontA' | 'fontB' = 'fontA'): this {
+    this.buffer.push(0x1b, 0x4d, font === 'fontB' ? 1 : 0);
+    return this;
+  }
+
+  public setLineSpacing(spacing: 'compact' | 'normal' | 'relaxed' = 'normal'): this {
+    if (spacing === 'compact') {
+      this.buffer.push(0x1b, 0x33, 18);
+    } else if (spacing === 'relaxed') {
+      this.buffer.push(0x1b, 0x33, 36);
+    } else {
+      this.buffer.push(0x1b, 0x32);
+    }
+    return this;
+  }
+
+  public qrCode(data: string): this {
+    const pL = (data.length + 3) % 256;
+    const pH = Math.floor((data.length + 3) / 256);
+    this.alignCenter();
+    this.buffer.push(0x1d, 0x28, 0x6b, 0x04, 0x00, 0x31, 0x41, 0x32, 0x00);
+    this.buffer.push(0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x43, 0x06);
+    this.buffer.push(0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x45, 0x31);
+    this.buffer.push(0x1d, 0x28, 0x6b, pL, pH, 0x31, 0x50, 0x30);
+    for (let i = 0; i < data.length; i++) {
+      this.buffer.push(data.charCodeAt(i));
+    }
+    this.buffer.push(0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x51, 0x30);
+    this.buffer.push(0x0a);
     return this;
   }
 
@@ -202,9 +242,12 @@ export function buildEscPosReceipt(order: Partial<Order> & any, config: PosPrint
 
   // Restaurant details
   const restaurantName =
-    typeof order.restaurantId === 'object'
-      ? order.restaurantId?.restaurantName || 'KRIFOO RESTAURANT'
-      : 'KRIFOO RESTAURANT';
+    (typeof order.restaurantId === 'object' ? order.restaurantId?.restaurantName : '') ||
+    order.restaurantName ||
+    order.restaurantTitle ||
+    (typeof order.restaurant === 'object' ? order.restaurant?.restaurantName : '') ||
+    getCachedStoreProfile()?.restaurantName ||
+    'Restaurant';
 
   const restaurantPhone =
     typeof order.restaurantId === 'object'
@@ -459,3 +502,19 @@ export function buildEscPosReceipt(order: Partial<Order> & any, config: PosPrint
 
   return builder.toByteArray();
 }
+
+/**
+ * Build customized ESC/POS binary receipt using template customizations
+ */
+export function buildCustomizedEscPosReceipt(
+  order: Partial<Order> & any,
+  config: PosPrinterConfig,
+  template?: ReceiptTemplate
+): Uint8Array {
+  if (!template) {
+    return buildEscPosReceipt(order, config);
+  }
+  const doc = buildCustomizedReceiptDocument(order, config, template);
+  return EscPosEncoder.encode(doc, config);
+}
+

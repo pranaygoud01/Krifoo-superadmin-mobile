@@ -1,16 +1,17 @@
 import { Order } from '../../types';
 import { PosPrinterConfig, profileFromConfig } from '../pos-config.service';
 import { EpsonEposModule } from '../../src/modules/epson-epos';
-import { buildReceiptDocument, buildDrawerKickDocument } from './receipt-document';
+import { buildReceiptDocument, buildDrawerKickDocument, buildCustomizedReceiptDocument } from './receipt-document';
 import { EposXmlEncoder } from './encoders/epos-xml-encoder';
 import { resolvePrinter } from './printer-registry';
 import { PrintQueueService } from './print-queue.service';
+import { getActiveReceiptTemplate, ReceiptTemplate } from '../receipt-customization.service';
 
 /**
  * Generate official Epson ePOS-Print XML payload from order using Layer 1 & 2 encoders
  */
-export function buildEpsonEposXml(order: Partial<Order> & any, config: PosPrinterConfig): string {
-  const doc = buildReceiptDocument(order, config);
+export function buildEpsonEposXml(order: Partial<Order> & any, config: PosPrinterConfig, template?: ReceiptTemplate): string {
+  const doc = template ? buildCustomizedReceiptDocument(order, config, template) : buildReceiptDocument(order, config);
   return EposXmlEncoder.encode(doc, config);
 }
 
@@ -41,7 +42,8 @@ export async function discoverEpsonPrinters(): Promise<
  */
 export async function printEpsonOrderReceipt(
   order: Partial<Order> & any,
-  config: PosPrinterConfig
+  config: PosPrinterConfig,
+  template?: ReceiptTemplate
 ): Promise<boolean> {
   const profile = profileFromConfig(config);
   if (!profile) {
@@ -49,8 +51,11 @@ export async function printEpsonOrderReceipt(
     return false;
   }
 
+  const restId = typeof order.restaurantId === 'object' ? order.restaurantId?._id : (order.restaurantId || order.restaurant);
+  const activeTemplate = template || (await getActiveReceiptTemplate(restId ? String(restId) : undefined));
+
   const printer = resolvePrinter(profile, { brand: config.brand, paperWidth: config.paperWidth });
-  const doc = buildReceiptDocument(order, config);
+  const doc = buildCustomizedReceiptDocument(order, config, activeTemplate);
   const orderNum = order.orderNumber || (order._id ? order._id.slice(-5).toUpperCase() : 'Order');
 
   const result = await PrintQueueService.enqueuePrintJob(

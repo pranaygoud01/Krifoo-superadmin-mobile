@@ -1,6 +1,7 @@
 import { Platform } from 'react-native';
 import * as RN from 'react-native';
 import { Order } from '../types';
+import { getActiveReceiptTemplate, ReceiptTemplate, getCachedStoreProfile, formatRestaurantAddress } from './receipt-customization.service';
 
 export enum AlignValue {
   LEFT = 0,
@@ -114,7 +115,10 @@ function formatOrderDate(dateString?: string): { placedAt: string; targetTime: s
  * - 80mm column alignment and custom font hierarchy
  * - Automatic paper cut upon completion
  */
-export async function printSunmiOrderReceipt(order: Partial<Order> & any): Promise<boolean> {
+export async function printSunmiOrderReceipt(
+  order: Partial<Order> & any,
+  customTemplate?: ReceiptTemplate
+): Promise<boolean> {
   const sunmi = getSunmiModule();
   if (!sunmi || typeof sunmi.printerInit !== 'function') {
     console.log('[Sunmi] Native Sunmi module not available on this device/environment.');
@@ -124,19 +128,52 @@ export async function printSunmiOrderReceipt(order: Partial<Order> & any): Promi
   try {
     console.log('[Sunmi] Initializing Sunmi Printer for order:', order.orderNumber || order._id);
 
+    // Resolve active receipt template for this restaurant/globally
+    const restId = typeof order.restaurantId === 'object' ? order.restaurantId?._id : (order.restaurantId || (order as any).restaurant);
+    const template = customTemplate || (await getActiveReceiptTemplate(restId ? String(restId) : undefined));
+
+    const is58mm = template.layout.paperWidth === '58mm';
+    const dividerLine = is58mm ? '--------------------------------\n' : '------------------------------------------------\n';
+    const doubleLine = is58mm ? '================================\n' : '================================================\n';
+    const itemCols: [number, number, number] = is58mm ? [4, 20, 8] : [6, 32, 10];
+    const summaryCols: [number, number] = is58mm ? [20, 12] : [32, 16];
+    const totalCols: [number, number] = is58mm ? [16, 16] : [24, 24];
+    const baseFontSize = template.layout.fontSize === 'small' ? 18 : template.layout.fontSize === 'large' ? 24 : 20;
+
+    const getAlignValue = (align: 'left' | 'center' | 'right'): AlignValue => {
+      if (align === 'center') return AlignValue.CENTER;
+      if (align === 'right') return AlignValue.RIGHT;
+      return AlignValue.LEFT;
+    };
+
     // 1. Initialize printer state
     sunmi.printerInit();
 
-    // Restaurant details
+    // Restaurant details - fetched directly from order backend data (not editable)
     const restaurantName =
-      typeof order.restaurantId === 'object'
-        ? order.restaurantId?.restaurantName || 'KRIFOO RESTAURANT'
-        : 'KRIFOO RESTAURANT';
+      (typeof order.restaurantId === 'object' ? order.restaurantId?.restaurantName : '') ||
+      order.restaurantName ||
+      order.restaurantTitle ||
+      (typeof order.restaurant === 'object' ? order.restaurant?.restaurantName || order.restaurant?.name : '') ||
+      getCachedStoreProfile()?.restaurantName ||
+      'Restaurant';
 
     const restaurantPhone =
-      typeof order.restaurantId === 'object'
-        ? order.restaurantId?.phoneNumber || ''
-        : '';
+      (typeof order.restaurantId === 'object' ? order.restaurantId?.phoneNumber : '') ||
+      order.restaurantPhone ||
+      '';
+
+    const rawRestAddr =
+      (typeof order.restaurantId === 'object'
+        ? order.restaurantId?.address || order.restaurantId?.formattedAddress
+        : '') ||
+      order.restaurantAddress ||
+      (typeof order.restaurant === 'object'
+        ? order.restaurant?.address || order.restaurant?.formattedAddress
+        : '') ||
+      getCachedStoreProfile()?.address;
+
+    const restaurantAddress = formatRestaurantAddress(rawRestAddr);
 
     // Customer details
     const customerName =
@@ -203,82 +240,134 @@ export async function printSunmiOrderReceipt(order: Partial<Order> & any): Promi
     const { placedAt, targetTime } = formatOrderDate(order.createdAt);
 
     // ==========================================
-    // 1. HEADER SECTION
+    // 1. HEADER SECTION (Template Driven)
     // ==========================================
-    sunmi.setAlignment(AlignValue.CENTER);
-    sunmi.setFontSize(28);
-    sunmi.setFontWeight(true);
-    sunmi.printerText(`${restaurantName.toUpperCase()}\n`);
+    sunmi.setAlignment(getAlignValue(template.layout.alignment.header));
 
-    if (restaurantPhone) {
-      sunmi.setFontSize(20);
+    if (template.content.customHeaderTitle) {
+      sunmi.setFontSize(baseFontSize + 8);
+      sunmi.setFontWeight(true);
+      sunmi.printerText(`${template.content.customHeaderTitle.toUpperCase()}\n`);
+    }
+
+    if (template.content.showRestaurantName) {
+      sunmi.setFontSize(baseFontSize + 6);
+      sunmi.setFontWeight(template.layout.boldElements.restaurantName);
+      sunmi.printerText(`${restaurantName.toUpperCase()}\n`);
+    }
+
+    if (template.content.headerMessage) {
+      sunmi.setFontSize(baseFontSize);
+      sunmi.setFontWeight(false);
+      sunmi.printerText(`${template.content.headerMessage}\n`);
+    }
+
+    if (template.content.showAddress && restaurantAddress) {
+      sunmi.setFontSize(baseFontSize - 2);
+      sunmi.setFontWeight(false);
+      sunmi.printerText(`${restaurantAddress}\n`);
+    }
+
+    if (template.content.showPhone && restaurantPhone) {
+      sunmi.setFontSize(baseFontSize - 2);
       sunmi.setFontWeight(false);
       sunmi.printerText(`Tel: ${restaurantPhone}\n`);
     }
 
-    sunmi.setFontSize(20);
-    sunmi.printerText('================================================\n');
-
-    // ORDER NUMBER & TYPE
-    sunmi.setFontSize(36);
-    sunmi.setFontWeight(true);
-    sunmi.printerText(`ORDER: ${orderNum}\n`);
-
-    sunmi.setFontSize(24);
-    sunmi.printerText(`[ ${fulfillmentType} ]\n`);
-    sunmi.setFontWeight(false);
-
-    sunmi.setFontSize(20);
-    sunmi.printerText('------------------------------------------------\n');
+    if (template.content.showTaxId && template.content.taxIdValue) {
+      sunmi.setFontSize(baseFontSize - 2);
+      sunmi.setFontWeight(false);
+      sunmi.printerText(`${template.content.taxIdLabel || 'VAT Reg No:'} ${template.content.taxIdValue}\n`);
+    }
 
     // ==========================================
-    // 2. TIMINGS & CUSTOMER SECTION
+    // 2. ORDER NUMBER & TYPE BANNER
+    // ==========================================
+    if (template.content.showOrderNumber) {
+      sunmi.setFontSize(baseFontSize);
+      sunmi.printerText(doubleLine);
+
+      sunmi.setFontSize(baseFontSize + 12);
+      sunmi.setFontWeight(template.layout.boldElements.orderNumber);
+      sunmi.printerText(`ORDER: ${orderNum}\n`);
+
+      sunmi.setFontSize(baseFontSize + 4);
+      sunmi.printerText(`[ ${fulfillmentType} ]\n`);
+      sunmi.setFontWeight(false);
+
+      if (template.content.showTableNumber && (order.tableNumber || order.table)) {
+        sunmi.setFontSize(baseFontSize + 2);
+        sunmi.setFontWeight(true);
+        sunmi.printerText(`TABLE: ${order.tableNumber || order.table}\n`);
+        sunmi.setFontWeight(false);
+      }
+
+      if (template.content.showServerWaiterName && template.content.serverWaiterName) {
+        sunmi.setFontSize(baseFontSize - 2);
+        sunmi.printerText(`Server: ${template.content.serverWaiterName}\n`);
+      }
+
+      sunmi.setFontSize(baseFontSize);
+      sunmi.printerText(dividerLine);
+    }
+
+    // ==========================================
+    // 3. TIMINGS & CUSTOMER SECTION
     // ==========================================
     sunmi.setAlignment(AlignValue.LEFT);
-    sunmi.setFontSize(20);
-    sunmi.printerText(`Placed: ${placedAt}    Target: ${targetTime}\n`);
-    sunmi.printerText('------------------------------------------------\n');
-
-    sunmi.setFontWeight(true);
-    sunmi.printerText(`CUSTOMER:\n`);
-    sunmi.setFontWeight(false);
-    sunmi.printerText(`  Name:  ${customerName}\n`);
-    if (customerPhone) {
-      sunmi.printerText(`  Phone: ${customerPhone}\n`);
-    }
-
-    // PRINT DELIVERY ADDRESS
-    if (isDelivery && deliveryAddress) {
-      sunmi.setFontSize(22);
-      sunmi.setFontWeight(true);
-      sunmi.printerText(`DELIVERY ADDRESS:\n`);
-      sunmi.printerText(`  ${deliveryAddress}\n`);
-      if (deliveryPostcode && !deliveryAddress.includes(deliveryPostcode)) {
-        sunmi.printerText(`  POSTCODE: ${deliveryPostcode}\n`);
+    if (template.content.showDateTime) {
+      sunmi.setFontSize(baseFontSize);
+      let dateDisplay = placedAt;
+      if (template.content.dateTimeFormat === 'time_only') {
+        dateDisplay = new Date(order.createdAt || Date.now()).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+      } else if (template.content.dateTimeFormat === 'short') {
+        dateDisplay = new Date(order.createdAt || Date.now()).toLocaleDateString('en-GB', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
       }
-      sunmi.setFontWeight(false);
-      sunmi.setFontSize(20);
+      sunmi.printerText(`Placed: ${dateDisplay}    Target: ${targetTime}\n`);
+      sunmi.printerText(dividerLine);
     }
 
-    if (order.deliveryInstructions || order.notes) {
-      const note = order.deliveryInstructions || order.notes;
-      sunmi.setFontWeight(true);
-      sunmi.printerText(`SPECIAL NOTE: ${note}\n`);
+    if (template.content.showCustomerInfo) {
+      sunmi.setFontWeight(template.layout.boldElements.customerDetails);
+      sunmi.printerText(`CUSTOMER:\n`);
       sunmi.setFontWeight(false);
+      sunmi.printerText(`  Name:  ${customerName}\n`);
+      if (customerPhone) {
+        sunmi.printerText(`  Phone: ${customerPhone}\n`);
+      }
+
+      if (isDelivery && deliveryAddress) {
+        sunmi.setFontSize(baseFontSize + 2);
+        sunmi.setFontWeight(true);
+        sunmi.printerText(`DELIVERY ADDRESS:\n`);
+        sunmi.printerText(`  ${deliveryAddress}\n`);
+        if (deliveryPostcode && !deliveryAddress.includes(deliveryPostcode)) {
+          sunmi.printerText(`  POSTCODE: ${deliveryPostcode}\n`);
+        }
+        sunmi.setFontWeight(false);
+        sunmi.setFontSize(baseFontSize);
+      }
+
+      if (order.deliveryInstructions || order.notes) {
+        const note = order.deliveryInstructions || order.notes;
+        sunmi.setFontWeight(true);
+        sunmi.printerText(`SPECIAL NOTE: ${note}\n`);
+        sunmi.setFontWeight(false);
+      }
     }
 
-    sunmi.printerText('================================================\n');
+    sunmi.printerText(doubleLine);
 
     // ==========================================
-    // 3. ORDER ITEMS TABLE (80mm Width)
+    // 4. ORDER ITEMS TABLE (Template Width Adapted)
     // ==========================================
-    sunmi.setFontSize(22);
+    sunmi.setAlignment(getAlignValue(template.layout.alignment.items));
+    sunmi.setFontSize(baseFontSize + 2);
     sunmi.setFontWeight(true);
-    // Table Header: QTY (6), ITEM (32), PRICE (10)
-    sunmi.printColumnsString(['QTY', 'ITEM', 'PRICE'], [6, 32, 10], [AlignValue.LEFT, AlignValue.LEFT, AlignValue.RIGHT]);
+    sunmi.printColumnsString(['QTY', 'ITEM', 'PRICE'], itemCols, [AlignValue.LEFT, AlignValue.LEFT, AlignValue.RIGHT]);
     sunmi.setFontWeight(false);
-    sunmi.setFontSize(20);
-    sunmi.printerText('------------------------------------------------\n');
+    sunmi.setFontSize(baseFontSize);
+    sunmi.printerText(dividerLine);
 
     const itemsList =
       (Array.isArray(order.orderedItems) && order.orderedItems.length > 0)
@@ -291,7 +380,6 @@ export async function printSunmiOrderReceipt(order: Partial<Order> & any): Promi
       const qtyNum = Number(item.quantity || item.qty || 1);
       const qtyStr = `${qtyNum}x`;
 
-      // Resolve item name from all possible backend schemas
       const name =
         item.itemName ||
         item.name ||
@@ -306,7 +394,6 @@ export async function printSunmiOrderReceipt(order: Partial<Order> & any): Promi
         item.productName ||
         'Item';
 
-      // Resolve item price
       let itemPrice = 0;
       if (item.itemTotal !== undefined && item.itemTotal !== null && !isNaN(item.itemTotal)) {
         itemPrice = Number(item.itemTotal);
@@ -317,12 +404,11 @@ export async function printSunmiOrderReceipt(order: Partial<Order> & any): Promi
       }
       const priceStr = formatMoney(itemPrice);
 
-      sunmi.setFontSize(28);
-      sunmi.setFontWeight(true);
-      sunmi.printColumnsString([qtyStr, name, priceStr], [6, 32, 10], [AlignValue.LEFT, AlignValue.LEFT, AlignValue.RIGHT]);
+      sunmi.setFontSize(baseFontSize + 4);
+      sunmi.setFontWeight(template.layout.boldElements.itemNames);
+      sunmi.printColumnsString([qtyStr, name, priceStr], itemCols, [AlignValue.LEFT, AlignValue.LEFT, AlignValue.RIGHT]);
       sunmi.setFontWeight(false);
 
-      // Collect all variants, add-ons, customizations
       const optionsList: string[] = [];
 
       if (Array.isArray(item.selectedVariants)) {
@@ -379,88 +465,107 @@ export async function printSunmiOrderReceipt(order: Partial<Order> & any): Promi
       }
 
       if (optionsList.length > 0) {
-        sunmi.setFontSize(22);
+        sunmi.setFontSize(baseFontSize - 2);
         optionsList.forEach((optStr) => {
           sunmi.printerText(`    + ${optStr}\n`);
         });
       }
 
-      // Item instructions / special notes
-      const itemNote = item.instructions || item.specialInstructions || item.note || '';
-      if (itemNote) {
-        sunmi.setFontSize(22);
-        sunmi.printerText(`    * Note: ${itemNote}\n`);
+      if (template.content.showItemNotes) {
+        const itemNote = item.instructions || item.specialInstructions || item.note || '';
+        if (itemNote) {
+          sunmi.setFontSize(baseFontSize - 2);
+          sunmi.printerText(`    * Note: ${itemNote}\n`);
+        }
       }
     });
 
-    sunmi.setFontSize(20);
-    sunmi.printerText('================================================\n');
+    sunmi.setFontSize(baseFontSize);
+    sunmi.printerText(doubleLine);
 
     // ==========================================
-    // 4. TOTALS & BREAKDOWN
+    // 5. TOTALS & BREAKDOWN (Template Driven)
     // ==========================================
+    sunmi.setAlignment(getAlignValue(template.layout.alignment.totals));
     const subtotal = order.pricing?.subtotal !== undefined ? order.pricing.subtotal : (order.subtotal !== undefined ? order.subtotal : (order.totalAmount || 0));
-    sunmi.printColumnsString(['Subtotal:', formatMoney(subtotal)], [32, 16], [AlignValue.LEFT, AlignValue.RIGHT]);
+    sunmi.printColumnsString(['Subtotal:', formatMoney(subtotal)], summaryCols, [AlignValue.LEFT, AlignValue.RIGHT]);
 
     const deliveryFee = order.pricing?.deliveryFee !== undefined ? order.pricing.deliveryFee : order.deliveryFee;
     if (deliveryFee !== undefined && deliveryFee > 0) {
-      sunmi.printColumnsString(['Delivery Fee:', formatMoney(deliveryFee)], [32, 16], [AlignValue.LEFT, AlignValue.RIGHT]);
+      sunmi.printColumnsString(['Delivery Fee:', formatMoney(deliveryFee)], summaryCols, [AlignValue.LEFT, AlignValue.RIGHT]);
     }
 
     const onlinePaymentFee = order.pricing?.onlinePaymentFee !== undefined ? order.pricing.onlinePaymentFee : (order.onlinePaymentFee !== undefined ? order.onlinePaymentFee : ((order.pricing as any)?.cardFee || (order.pricing as any)?.paymentFee));
     if (onlinePaymentFee !== undefined && onlinePaymentFee > 0) {
-      sunmi.printColumnsString(['Online Payment Fee:', formatMoney(onlinePaymentFee)], [32, 16], [AlignValue.LEFT, AlignValue.RIGHT]);
+      sunmi.printColumnsString(['Online Payment Fee:', formatMoney(onlinePaymentFee)], summaryCols, [AlignValue.LEFT, AlignValue.RIGHT]);
     }
 
     const handlingCharge = order.pricing?.handlingCharge !== undefined ? order.pricing.handlingCharge : order.handlingCharge;
     if (handlingCharge !== undefined && handlingCharge > 0) {
-      sunmi.printColumnsString(['Handling Charge:', formatMoney(handlingCharge)], [32, 16], [AlignValue.LEFT, AlignValue.RIGHT]);
+      sunmi.printColumnsString(['Handling Charge:', formatMoney(handlingCharge)], summaryCols, [AlignValue.LEFT, AlignValue.RIGHT]);
     }
 
     const serviceFee = order.pricing?.serviceFee !== undefined ? order.pricing.serviceFee : (order.pricing?.platformFee !== undefined ? order.pricing.platformFee : (order.serviceFee || order.platformFee));
     if (serviceFee !== undefined && serviceFee > 0) {
-      sunmi.printColumnsString(['Service Fee:', formatMoney(serviceFee)], [32, 16], [AlignValue.LEFT, AlignValue.RIGHT]);
+      sunmi.printColumnsString(['Service Fee:', formatMoney(serviceFee)], summaryCols, [AlignValue.LEFT, AlignValue.RIGHT]);
     }
 
     const tax = order.pricing?.tax !== undefined ? order.pricing.tax : (order.pricing?.vat !== undefined ? order.pricing.vat : (order.tax || order.vat));
-    if (tax !== undefined && tax > 0) {
-      sunmi.printColumnsString(['Tax / VAT:', formatMoney(tax)], [32, 16], [AlignValue.LEFT, AlignValue.RIGHT]);
+    if (tax !== undefined && tax > 0 && template.content.showItemTaxBreakdown) {
+      const taxLabel = template.content.taxPercentage ? `Tax / VAT (${template.content.taxPercentage}%):` : 'Tax / VAT:';
+      sunmi.printColumnsString([taxLabel, formatMoney(tax)], summaryCols, [AlignValue.LEFT, AlignValue.RIGHT]);
     }
 
     const discount = order.pricing?.discount !== undefined ? order.pricing.discount : (order.pricing?.discountAmount !== undefined ? order.pricing.discountAmount : order.discount);
-    if (discount !== undefined && discount > 0) {
-      sunmi.printColumnsString(['Discount:', `-${formatMoney(discount)}`], [32, 16], [AlignValue.LEFT, AlignValue.RIGHT]);
+    if (discount !== undefined && discount > 0 && template.content.showDiscountLine) {
+      sunmi.printColumnsString(['Discount:', `-${formatMoney(discount)}`], summaryCols, [AlignValue.LEFT, AlignValue.RIGHT]);
     }
 
     const tip = order.pricing?.tip !== undefined ? order.pricing.tip : order.tip;
     if (tip !== undefined && tip > 0) {
-      sunmi.printColumnsString(['Driver Tip:', formatMoney(tip)], [32, 16], [AlignValue.LEFT, AlignValue.RIGHT]);
+      sunmi.printColumnsString(['Driver Tip:', formatMoney(tip)], summaryCols, [AlignValue.LEFT, AlignValue.RIGHT]);
     }
 
-    sunmi.printerText('------------------------------------------------\n');
+    sunmi.printerText(dividerLine);
 
     // TOTAL AMOUNT (Double Size)
     const grandTotal = order.pricing?.total !== undefined ? order.pricing.total : (order.pricing?.totalAmount !== undefined ? order.pricing.totalAmount : (order.totalAmount || order.total || subtotal));
-    sunmi.setFontSize(28);
-    sunmi.setFontWeight(true);
-    sunmi.printColumnsString(['TOTAL:', formatMoney(grandTotal)], [24, 24], [AlignValue.LEFT, AlignValue.RIGHT]);
+    sunmi.setFontSize(baseFontSize + 8);
+    sunmi.setFontWeight(template.layout.boldElements.totalAmount);
+    sunmi.printColumnsString(['TOTAL:', formatMoney(grandTotal)], totalCols, [AlignValue.LEFT, AlignValue.RIGHT]);
     sunmi.setFontWeight(false);
 
-    sunmi.setFontSize(20);
-    sunmi.printerText('------------------------------------------------\n');
+    sunmi.setFontSize(baseFontSize);
+    sunmi.printerText(dividerLine);
 
     // Payment Info
-    const paymentMethod = (order.paymentType || order.paymentMethod || 'Online / Card').toUpperCase();
-    const paymentStatus = (order.paymentStatus || 'PAID').toUpperCase();
-    sunmi.setAlignment(AlignValue.LEFT);
-    sunmi.printerText(`Payment: ${paymentMethod} (${paymentStatus})\n`);
+    if (template.content.showPaymentMethod) {
+      const paymentMethod = (order.paymentType || order.paymentMethod || 'Online / Card').toUpperCase();
+      const paymentStatus = (order.paymentStatus || 'PAID').toUpperCase();
+      sunmi.setAlignment(AlignValue.LEFT);
+      sunmi.printerText(`Payment: ${paymentMethod} (${paymentStatus})\n`);
+    }
 
     // ==========================================
-    // 5. FOOTER & CUT PAPER
+    // 6. FOOTER & QR CODE & CUT PAPER
     // ==========================================
-    sunmi.setAlignment(AlignValue.CENTER);
-    sunmi.setFontSize(20);
-    sunmi.printerText('\nThank you for your order!\n');
+    sunmi.setAlignment(getAlignValue(template.layout.alignment.footer));
+    sunmi.setFontSize(baseFontSize);
+    sunmi.printerText(`\n${template.content.footerMessage || 'Thank you for your order!'}\n`);
+
+    if (template.content.showQrCode && template.content.qrCodeData) {
+      try {
+        if (typeof (sunmi as any).printQRCode === 'function') {
+          (sunmi as any).printQRCode(template.content.qrCodeData, is58mm ? 4 : 6, 2);
+        }
+      } catch (qrErr) {
+        console.warn('[Sunmi] Print QR Code failed or not supported:', qrErr);
+      }
+      if (template.content.qrCodeLabel) {
+        sunmi.setFontSize(baseFontSize - 4);
+        sunmi.printerText(`${template.content.qrCodeLabel}\n`);
+      }
+    }
 
     // Feed paper lines so the print clears the cutter blade
     sunmi.lineWrap(4);
@@ -472,10 +577,11 @@ export async function printSunmiOrderReceipt(order: Partial<Order> & any): Promi
       console.warn('[Sunmi] Cut paper command failed (device might not have auto-cutter):', cutErr);
     }
 
-    console.log('[Sunmi] Receipt printed and cut successfully.');
+    console.log(`[Sunmi] Receipt printed using template '${template.name}' (${template.layout.paperWidth}) successfully.`);
     return true;
   } catch (error) {
-    console.error('[Sunmi] Print error on Sunmi V3 MIX:', error);
+    console.error('[Sunmi] Print error on Sunmi POS:', error);
     return false;
   }
 }
+

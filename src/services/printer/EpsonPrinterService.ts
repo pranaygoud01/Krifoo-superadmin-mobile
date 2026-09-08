@@ -2,6 +2,7 @@ import { printQueue } from './PrintQueue';
 import { buildEpsonEposXml } from '../../../services/printer/epson-printer.service';
 import { buildOrderEscPosBytes } from './EscPosBuilder';
 import { Order, PosPrinterConfig } from '../../types';
+import { getActiveReceiptTemplate } from '../../../services/receipt-customization.service';
 
 /**
  * Epson Thermal Printer Hardware Service.
@@ -19,7 +20,9 @@ export class EpsonPrinterService {
       if (config.connectionType === 'NETWORK' || config.connectionType === 'BLUETOOTH') {
         const ip = config.ipAddress || '192.168.1.100';
         const fullConfig: any = { brand: 'epson', autoPrint: true, copies: 1, autoCut: true, openCashDrawer: false, ...config };
-        const xmlPayload = buildEpsonEposXml(order, fullConfig);
+        const restId = typeof order.restaurantId === 'object' ? (order.restaurantId as any)?._id : (order.restaurantId || (order as any).restaurant);
+        const activeTemplate = await getActiveReceiptTemplate(restId ? String(restId) : undefined);
+        const xmlPayload = buildEpsonEposXml(order, fullConfig, activeTemplate);
 
         const endpoints = [
           `http://${ip}/cgi-bin/epos/service.cgi?devid=local_printer&timeout=10000`,

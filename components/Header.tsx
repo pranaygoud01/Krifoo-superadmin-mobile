@@ -201,13 +201,13 @@ export const Header: React.FC<HeaderProps> = ({
                     )}
                   </View>
                 </TouchableOpacity>
-                <TouchableOpacity
+                  {/* <TouchableOpacity
                   style={styles.actionIconButton}
                   onPress={handleSettingsPress}
                   activeOpacity={0.7}
                 >
                   <Settings size={20} color={Colors.text} strokeWidth={1.8} />
-                </TouchableOpacity>
+                </TouchableOpacity> */}
               </View>
             )
           )}
@@ -253,8 +253,8 @@ const styles = StyleSheet.create({
   },
   title: {
     color: Colors.text,
-    fontSize: 20,
-    fontWeight: '800',
+    fontSize: 16,
+    fontWeight: '700',
     letterSpacing: -0.5,
   },
   profileSection: {

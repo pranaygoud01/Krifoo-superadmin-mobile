@@ -16,6 +16,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
 import { OrderDetailModal } from '../../components/OrderDetailModal';
 import { AssignDeliveryModal } from '../../components/AssignDeliveryModal';
+import { ConfirmModal } from '../../components/ConfirmModal';
 import { Colors } from '../../constants/colors';
 import { orderService } from '../../services/order.service';
 import { useToast } from '../../context/ToastContext';
@@ -862,6 +863,8 @@ export default function OrdersScreen() {
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [detailModalVisible, setDetailModalVisible] = useState(false);
   const [assignModalVisible, setAssignModalVisible] = useState(false);
+  const [cancelModalVisible, setCancelModalVisible] = useState(false);
+  const [orderToCancel, setOrderToCancel] = useState<Order | null>(null);
 
   const fetchOrders = useCallback(async (isRefresh = false) => {
     try {
@@ -972,7 +975,7 @@ export default function OrdersScreen() {
     [filteredOrders]
   );
 
-  const handleUpdateStatus = async (orderId: string, newStatus: string) => {
+  const executeUpdateStatus = async (orderId: string, newStatus: string) => {
     try {
       const res = await orderService.updateOrderStatus(orderId, newStatus);
       if (res.success) {
@@ -1002,6 +1005,26 @@ export default function OrdersScreen() {
     } catch {
       showToast({ title: 'Error', message: 'Unexpected error while updating status.', type: 'error' });
     }
+  };
+
+  const handleUpdateStatus = async (orderId: string, newStatus: string) => {
+    if (newStatus === 'cancelled') {
+      const target =
+        orders.find((o) => o._id === orderId) ||
+        (selectedOrder?._id === orderId ? selectedOrder : null) ||
+        ({ _id: orderId } as Order);
+      setOrderToCancel(target);
+      if (detailModalVisible) {
+        setDetailModalVisible(false);
+        setTimeout(() => {
+          setCancelModalVisible(true);
+        }, 350);
+      } else {
+        setCancelModalVisible(true);
+      }
+      return;
+    }
+    await executeUpdateStatus(orderId, newStatus);
   };
 
   const handleAssignConfirm = async (deliveryPartnerId: string) => {
@@ -1322,6 +1345,30 @@ export default function OrdersScreen() {
         order={selectedOrder}
         onClose={() => setAssignModalVisible(false)}
         onConfirmAssign={handleAssignConfirm}
+      />
+      <ConfirmModal
+        visible={cancelModalVisible}
+        title="Cancel Order"
+        message={
+          orderToCancel?.orderNumber || orderToCancel?._id
+            ? `Are you sure you want to cancel order #${orderToCancel.orderNumber || orderToCancel._id.substring(0, 7).toUpperCase()}? This action cannot be undone.`
+            : 'Are you sure you want to cancel this order? This action cannot be undone.'
+        }
+        confirmText="Yes"
+        cancelText="No"
+        isDestructive={true}
+        onConfirm={async () => {
+          if (orderToCancel?._id) {
+            const id = orderToCancel._id;
+            setOrderToCancel(null);
+            setCancelModalVisible(false);
+            await executeUpdateStatus(id, 'cancelled');
+          }
+        }}
+        onClose={() => {
+          setCancelModalVisible(false);
+          setOrderToCancel(null);
+        }}
       />
     </SafeAreaView>
   );
@@ -1754,9 +1801,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#FF5C39',
     fontWeight: '700',
-  },
-  kanbanRestaurantTablet: {
-    fontSize: 13.5,
   },
   sourceBadgeContainer: {
     marginTop: 5,

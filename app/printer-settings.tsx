@@ -392,6 +392,34 @@ export default function PrinterSettingsScreen() {
           </View>
         </View>
 
+        {/* Receipt Customization Banner */}
+        <TouchableOpacity
+          style={styles.customizationBannerCard}
+          onPress={() =>
+            router.push({
+              pathname: '/receipt-customization',
+              params: restaurantId ? { restaurantId } : {},
+            })
+          }
+          activeOpacity={0.85}
+        >
+          <View style={styles.customizationIconContainer}>
+            <Sparkles size={20} color="#FF5C39" />
+          </View>
+          <View style={{ flex: 1, paddingRight: 8 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Text style={styles.customizationTitle}>Receipt Templates</Text>
+              <View style={styles.customizationNewBadge}>
+                <Text style={styles.customizationNewBadgeText}>CUSTOMIZE</Text>
+              </View>
+            </View>
+            {/* <Text style={styles.customizationSubtitle}>
+              Personalize layout, fonts, logo, alignments, QR code & custom messages
+            </Text> */}
+          </View>
+          <ChevronRight size={18} color="#94A3B8" />
+        </TouchableOpacity>
+
         {receiptPrintingEnabled && (
           <>
             {/* ========================================================================= */}
@@ -1362,5 +1390,47 @@ const styles = StyleSheet.create({
   architectureFooterText: {
     fontSize: 11,
     color: '#9CA3AF',
+  },
+
+  /* Customization Banner */
+  customizationBannerCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#cfcfcf',
+    marginBottom: 16,
+  },
+  customizationIconContainer: {
+    width: 42,
+    height: 42,
+    borderRadius: 10,
+    backgroundColor: '#FFF1EE',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 14,
+  },
+  customizationTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  customizationNewBadge: {
+    backgroundColor: '#FFF1EE',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 6,
+  },
+  customizationNewBadgeText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#FF5C39',
+  },
+  customizationSubtitle: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
   },
 });
