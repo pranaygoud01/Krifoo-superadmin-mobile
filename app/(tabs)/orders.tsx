@@ -357,17 +357,6 @@ const OrderCardItem: React.FC<OrderCardProps> = ({ order, onPress, onAssignDeliv
             <Text style={[styles.acceptBtnText, isTablet && styles.acceptBtnTextTablet]}>Accept</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.rejectBtn, isTablet && styles.rejectBtnTablet]}
-            onPress={(e: any) => {
-              e.stopPropagation?.();
-              onUpdateStatus(order._id, 'cancelled');
-            }}
-            activeOpacity={0.8}
-          >
-            <X size={isTablet ? 15 : 13} color="#EF4444" />
-            <Text style={[styles.rejectBtnText, isTablet && styles.rejectBtnTextTablet]}>Reject</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
             style={[styles.printIconBtn, isTablet && styles.printIconBtnTablet]}
             onPress={(e: any) => {
               e.stopPropagation?.();
@@ -375,7 +364,7 @@ const OrderCardItem: React.FC<OrderCardProps> = ({ order, onPress, onAssignDeliv
             }}
             activeOpacity={0.8}
           >
-            <Printer size={isTablet ? 16 : 14} color="#11181C" />
+            <Printer size={16} color="#11181C" />
           </TouchableOpacity>
         </View>
       );
@@ -384,7 +373,7 @@ const OrderCardItem: React.FC<OrderCardProps> = ({ order, onPress, onAssignDeliv
     // 3. In Kitchen / Preparing / Confirmed
     if (order.status === 'confirmed' || order.status === 'preparing') {
       if (fulfillmentType === 'dine_in') {
-        // Eat-In (Dine-In) Order in Kitchen: "Ready to Serve" button -> marks served/delivered & Cancel button
+        // Eat-In (Dine-In) Order in Kitchen: "Ready to Serve" button -> marks served/delivered
         return (
           <View style={[styles.actionButtonsRow, isTablet && styles.actionButtonsRowTablet]}>
             <TouchableOpacity
@@ -399,17 +388,6 @@ const OrderCardItem: React.FC<OrderCardProps> = ({ order, onPress, onAssignDeliv
               <Text style={[styles.acceptBtnText, isTablet && styles.acceptBtnTextTablet]}>Ready to Serve</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.rejectBtn, isTablet && styles.rejectBtnTablet]}
-              onPress={(e: any) => {
-                e.stopPropagation?.();
-                onUpdateStatus(order._id, 'cancelled');
-              }}
-              activeOpacity={0.8}
-            >
-              <X size={isTablet ? 15 : 13} color="#EF4444" />
-              <Text style={[styles.rejectBtnText, isTablet && styles.rejectBtnTextTablet]}>Cancel</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
               style={[styles.printIconBtn, isTablet && styles.printIconBtnTablet]}
               onPress={(e: any) => {
                 e.stopPropagation?.();
@@ -417,7 +395,7 @@ const OrderCardItem: React.FC<OrderCardProps> = ({ order, onPress, onAssignDeliv
               }}
               activeOpacity={0.8}
             >
-              <Printer size={isTablet ? 16 : 14} color="#11181C" />
+              <Printer size={16} color="#11181C" />
             </TouchableOpacity>
           </View>
         );
@@ -437,17 +415,6 @@ const OrderCardItem: React.FC<OrderCardProps> = ({ order, onPress, onAssignDeliv
               <Text style={[styles.acceptBtnText, isTablet && styles.acceptBtnTextTablet]}>Ready for Pickup</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.rejectBtn, isTablet && styles.rejectBtnTablet]}
-              onPress={(e: any) => {
-                e.stopPropagation?.();
-                onUpdateStatus(order._id, 'cancelled');
-              }}
-              activeOpacity={0.8}
-            >
-              <X size={isTablet ? 15 : 13} color="#EF4444" />
-              <Text style={[styles.rejectBtnText, isTablet && styles.rejectBtnTextTablet]}>Cancel</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
               style={[styles.printIconBtn, isTablet && styles.printIconBtnTablet]}
               onPress={(e: any) => {
                 e.stopPropagation?.();
@@ -455,7 +422,7 @@ const OrderCardItem: React.FC<OrderCardProps> = ({ order, onPress, onAssignDeliv
               }}
               activeOpacity={0.8}
             >
-              <Printer size={isTablet ? 16 : 14} color="#11181C" />
+              <Printer size={16} color="#11181C" />
             </TouchableOpacity>
           </View>
         );
@@ -485,7 +452,7 @@ const OrderCardItem: React.FC<OrderCardProps> = ({ order, onPress, onAssignDeliv
               }}
               activeOpacity={0.8}
             >
-              <Truck size={isTablet ? 15 : 13} color="#FFFFFF" />
+              <Truck size={15} color="#FFFFFF" />
               <Text style={[styles.outForDeliveryBtnText, isTablet && styles.outForDeliveryBtnTextTablet]}>Out for Delivery</Text>
             </TouchableOpacity>
 
@@ -497,7 +464,7 @@ const OrderCardItem: React.FC<OrderCardProps> = ({ order, onPress, onAssignDeliv
               }}
               activeOpacity={0.8}
             >
-              <Printer size={isTablet ? 16 : 14} color="#11181C" />
+              <Printer size={16} color="#11181C" />
             </TouchableOpacity>
           </View>
         );
@@ -520,17 +487,6 @@ const OrderCardItem: React.FC<OrderCardProps> = ({ order, onPress, onAssignDeliv
             <Text style={[styles.acceptBtnText, isTablet && styles.acceptBtnTextTablet]}>Delivered</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.rejectBtn, isTablet && styles.rejectBtnTablet]}
-            onPress={(e: any) => {
-              e.stopPropagation?.();
-              onUpdateStatus(order._id, 'cancelled');
-            }}
-            activeOpacity={0.8}
-          >
-            <X size={isTablet ? 15 : 13} color="#EF4444" />
-            <Text style={[styles.rejectBtnText, isTablet && styles.rejectBtnTextTablet]}>Cancel</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
             style={[styles.printIconBtn, isTablet && styles.printIconBtnTablet]}
             onPress={(e: any) => {
               e.stopPropagation?.();
@@ -538,7 +494,7 @@ const OrderCardItem: React.FC<OrderCardProps> = ({ order, onPress, onAssignDeliv
             }}
             activeOpacity={0.8}
           >
-            <Printer size={isTablet ? 16 : 14} color="#11181C" />
+            <Printer size={16} color="#11181C" />
           </TouchableOpacity>
         </View>
       );
@@ -580,7 +536,7 @@ const OrderCardItem: React.FC<OrderCardProps> = ({ order, onPress, onAssignDeliv
             }}
             activeOpacity={0.8}
           >
-            <Printer size={isTablet ? 16 : 14} color="#11181C" />
+            <Printer size={16} color="#11181C" />
           </TouchableOpacity>
         </View>
       );
@@ -602,17 +558,6 @@ const OrderCardItem: React.FC<OrderCardProps> = ({ order, onPress, onAssignDeliv
             <Text style={[styles.acceptBtnText, isTablet && styles.acceptBtnTextTablet]}>Delivered</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.rejectBtn, isTablet && styles.rejectBtnTablet]}
-            onPress={(e: any) => {
-              e.stopPropagation?.();
-              onUpdateStatus(order._id, 'cancelled');
-            }}
-            activeOpacity={0.8}
-          >
-            <X size={isTablet ? 15 : 13} color="#EF4444" />
-            <Text style={[styles.rejectBtnText, isTablet && styles.rejectBtnTextTablet]}>Cancel</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
             style={[styles.printIconBtn, isTablet && styles.printIconBtnTablet]}
             onPress={(e: any) => {
               e.stopPropagation?.();
@@ -620,7 +565,7 @@ const OrderCardItem: React.FC<OrderCardProps> = ({ order, onPress, onAssignDeliv
             }}
             activeOpacity={0.8}
           >
-            <Printer size={isTablet ? 16 : 14} color="#11181C" />
+            <Printer size={16} color="#11181C" />
           </TouchableOpacity>
         </View>
       );
@@ -1339,6 +1284,9 @@ export default function OrdersScreen() {
         onClose={() => setDetailModalVisible(false)}
         onAssignDelivery={(o) => { setSelectedOrder(o); setAssignModalVisible(true); }}
         onUpdateStatus={handleUpdateStatus}
+        onCancelOrder={async (orderId) => {
+          await executeUpdateStatus(orderId, 'cancelled');
+        }}
       />
       <AssignDeliveryModal
         visible={assignModalVisible}

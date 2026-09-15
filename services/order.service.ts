@@ -116,4 +116,32 @@ export const orderService = {
   async getRestaurantStats(): Promise<{ success: boolean; data?: any; message?: string }> {
     return apiRequest('/api/orders/restaurant/stats');
   },
+
+  /**
+   * GET restaurant sales report for date range.
+   * Restaurant Owner only.
+   */
+  async getSalesReport(params?: { startDate?: string; endDate?: string }): Promise<{ success: boolean; data?: any; message?: string }> {
+    const q = new URLSearchParams();
+    if (params?.startDate) q.append('startDate', params.startDate);
+    if (params?.endDate) q.append('endDate', params.endDate);
+    const qs = q.toString() ? `?${q.toString()}` : '';
+    return apiRequest(`/api/orders/restaurant/reports/sales${qs}`);
+  },
+
+  /**
+   * GET top menu item performance.
+   * Restaurant Owner only.
+   */
+  async getMenuPerformanceReport(): Promise<{ success: boolean; data?: any[]; message?: string }> {
+    return apiRequest('/api/orders/restaurant/reports/menu-performance');
+  },
+
+  /**
+   * GET orders status & type distribution report.
+   * Restaurant Owner only.
+   */
+  async getOrderDistributionReport(): Promise<{ success: boolean; data?: any; message?: string }> {
+    return apiRequest('/api/orders/restaurant/reports/orders');
+  },
 };

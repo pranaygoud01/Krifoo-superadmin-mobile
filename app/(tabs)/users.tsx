@@ -11,6 +11,7 @@ import {
   TouchableOpacity,
   Alert,
 } from 'react-native';
+import { useLocalSearchParams } from 'expo-router';
 import { Header } from '../../components/Header';
 import { FilterChip } from '../../components/FilterChip';
 import { StatusBadge } from '../../components/StatusBadge';
@@ -25,11 +26,20 @@ import { UserListSkeleton } from '../../components/Skeleton';
 
 export default function UsersScreen() {
   const { showToast } = useToast();
+  const params = useLocalSearchParams<{ role?: string; userType?: string }>();
+  const initialRole = params.role || params.userType || 'all';
+
   const [users, setUsers] = useState<UserAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedRole, setSelectedRole] = useState<string>('all');
+  const [selectedRole, setSelectedRole] = useState<string>(initialRole);
+
+  useEffect(() => {
+    if (params.role || params.userType) {
+      setSelectedRole(params.role || params.userType || 'all');
+    }
+  }, [params.role, params.userType]);
 
   // Detail Modal States
   const [selectedUser, setSelectedUser] = useState<UserAccount | null>(null);

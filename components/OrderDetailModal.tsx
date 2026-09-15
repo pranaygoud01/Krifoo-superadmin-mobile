@@ -3,7 +3,7 @@ import { Modal, View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIn
 import { Order } from '../types';
 import { Colors } from '../constants/colors';
 import { StatusBadge } from './StatusBadge';
-import { X, Store, User, MapPin, Bike, CreditCard, Phone, ShoppingBag, UtensilsCrossed, Tag, Receipt, CheckCircle2, Printer, Banknote, ChevronDown, ChevronUp, Check } from 'lucide-react-native';
+import { X, Store, User, MapPin, Bike, CreditCard, Phone, ShoppingBag, UtensilsCrossed, Tag, Receipt, CheckCircle2, Printer, Banknote, ChevronDown, ChevronUp, Check, AlertTriangle } from 'lucide-react-native';
 import { Linking } from 'react-native';
 import { orderService } from '../services/order.service';
 import { printThermalReceipt, getLastPrintJobReport } from '../services/thermal-print.service';
@@ -15,6 +15,7 @@ interface OrderDetailModalProps {
   onClose: () => void;
   onAssignDelivery: (order: Order) => void;
   onUpdateStatus?: (orderId: string, status: string) => Promise<void>;
+  onCancelOrder?: (orderId: string) => Promise<void>;
 }
 
 export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
@@ -23,6 +24,7 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
   onClose,
   onAssignDelivery,
   onUpdateStatus,
+  onCancelOrder,
 }) => {
   const [editingStatus, setEditingStatus] = React.useState(false);
   const [loadingStatus, setLoadingStatus] = React.useState(false);
@@ -30,6 +32,8 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
   const [loading, setLoading] = React.useState(false);
   const { showToast } = useToast();
   const [printing, setPrinting] = React.useState(false);
+  const [showCancelConfirm, setShowCancelConfirm] = React.useState(false);
+  const [cancelling, setCancelling] = React.useState(false);
 
   const handlePrint = async () => {
     if (!order) return;
@@ -88,6 +92,8 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
     } else if (!visible) {
       setFetchedOrder(null);
       setEditingStatus(false);
+      setShowCancelConfirm(false);
+      setCancelling(false);
     }
   }, [visible, propOrder?._id]);
 
@@ -105,6 +111,11 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
   ];
 
   const handleStatusSelect = async (newStatus: string) => {
+    if (newStatus === 'cancelled') {
+      setEditingStatus(false);
+      setShowCancelConfirm(true);
+      return;
+    }
     if (!onUpdateStatus || newStatus === order.status) {
       setEditingStatus(false);
       return;
@@ -116,6 +127,28 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
     } finally {
       setLoadingStatus(false);
       setEditingStatus(false);
+    }
+  };
+
+  const handleConfirmCancel = async () => {
+    if (!order) return;
+    setCancelling(true);
+    try {
+      if (onCancelOrder) {
+        await onCancelOrder(order._id);
+      } else if (onUpdateStatus) {
+        await onUpdateStatus(order._id, 'cancelled');
+      } else {
+        await orderService.updateOrderStatus(order._id, 'cancelled');
+        showToast({ title: 'Success', message: "Order status updated to 'cancelled'.", type: 'success' });
+      }
+      setShowCancelConfirm(false);
+      onClose();
+    } catch (err: any) {
+      console.error('Failed cancelling order:', err);
+      showToast({ title: 'Error', message: err?.message || 'Failed to cancel order.', type: 'error' });
+    } finally {
+      setCancelling(false);
     }
   };
 
@@ -204,7 +237,7 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
             {order.status === 'placed' ? (
               <View style={styles.acceptActionsRow}>
                 <TouchableOpacity
-                  style={styles.acceptButton}
+                  style={[styles.acceptButton, { flex: 1 }]}
                   onPress={() => handleStatusSelect('preparing')}
                   disabled={loadingStatus}
                 >
@@ -213,13 +246,6 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
                   ) : (
                     <Text style={styles.acceptButtonText}>Accept Order</Text>
                   )}
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.rejectButton}
-                  onPress={() => handleStatusSelect('cancelled')}
-                  disabled={loadingStatus}
-                >
-                  <Text style={styles.rejectButtonText}>Reject</Text>
                 </TouchableOpacity>
               </View>
             ) : (
@@ -592,21 +618,79 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
           </ScrollView>
           )}
 
-          {/* Footer Action for Active Delivery Orders */}
-          {isDeliveryOrder && order.status !== 'delivered' && order.status !== 'cancelled' && (
+          {/* Footer Actions for Active Orders (Assign Delivery & Cancel Order) */}
+          {order.status !== 'delivered' && order.status !== 'cancelled' && (
             <View style={styles.footerAction}>
+              {isDeliveryOrder && (
+                <TouchableOpacity
+                  style={styles.assignDriverBtn}
+                  onPress={() => {
+                    onClose();
+                    onAssignDelivery(order);
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <Bike size={18} color="#FFFFFF" />
+                  <Text style={styles.assignDriverText}>
+                    {deliveryPartner ? 'Reassign Delivery Partner' : 'Assign Delivery Partner'}
+                  </Text>
+                </TouchableOpacity>
+              )}
+
               <TouchableOpacity
-                style={styles.assignDriverBtn}
-                onPress={() => {
-                  onClose();
-                  onAssignDelivery(order);
-                }}
+                style={[
+                  styles.cancelOrderBtn,
+                  isDeliveryOrder && { marginTop: 8 },
+                ]}
+                onPress={() => setShowCancelConfirm(true)}
+                activeOpacity={0.75}
+                disabled={cancelling}
               >
-                <Bike size={18} color="#FFFFFF" />
-                <Text style={styles.assignDriverText}>
-                  {deliveryPartner ? 'Reassign Delivery Partner' : 'Assign Delivery Partner'}
-                </Text>
+                <X size={16} color="#EF4444" />
+                <Text style={styles.cancelOrderBtnText}>Cancel Order</Text>
               </TouchableOpacity>
+            </View>
+          )}
+
+          {/* In-Modal Confirmation to Cancel */}
+          {showCancelConfirm && (
+            <View style={styles.confirmOverlay}>
+              <View style={styles.confirmBox}>
+                <View style={styles.confirmHeaderRow}>
+                  <View style={styles.confirmIconContainer}>
+                    <AlertTriangle size={22} color="#EF4444" />
+                  </View>
+                  <Text style={styles.confirmTitle}>Cancel Order</Text>
+                </View>
+
+                <Text style={styles.confirmMessage}>
+                  Are you sure you want to cancel order #{order.orderNumber || order._id?.substring(0, 8).toUpperCase()}? This action cannot be undone.
+                </Text>
+
+                <View style={styles.confirmBtnRow}>
+                  <TouchableOpacity
+                    style={styles.confirmKeepBtn}
+                    onPress={() => setShowCancelConfirm(false)}
+                    disabled={cancelling}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.confirmKeepBtnText}>Keep Order</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.confirmCancelBtn}
+                    onPress={handleConfirmCancel}
+                    disabled={cancelling}
+                    activeOpacity={0.7}
+                  >
+                    {cancelling ? (
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                    ) : (
+                      <Text style={styles.confirmCancelBtnText}>Yes, Cancel</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </View>
             </View>
           )}
         </View>
@@ -1089,6 +1173,110 @@ const styles = StyleSheet.create({
     color: Colors.textMuted,
     fontSize: 11,
     marginTop: 1,
+  },
+
+  /* Cancel Order Button & Confirmation Overlay */
+  cancelOrderBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    paddingVertical: 12,
+    borderRadius: 10,
+  },
+  cancelOrderBtnText: {
+    color: '#EF4444',
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  confirmOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(15, 23, 42, 0.55)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    zIndex: 999,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+  },
+  confirmBox: {
+    width: '100%',
+    maxWidth: 340,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: Colors.cardBorder,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.15,
+    shadowRadius: 16,
+    elevation: 8,
+  },
+  confirmHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+    gap: 12,
+  },
+  confirmIconContainer: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    backgroundColor: '#FEF2F2',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  confirmTitle: {
+    color: Colors.text,
+    fontSize: 16,
+    fontWeight: '700',
+    flex: 1,
+  },
+  confirmMessage: {
+    color: Colors.textSubtle,
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '500',
+    marginBottom: 20,
+  },
+  confirmBtnRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+  },
+  confirmKeepBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.cardBorder,
+    backgroundColor: Colors.background,
+    justifyContent: 'center',
+    alignItems: 'center',
+    minWidth: 75,
+  },
+  confirmKeepBtnText: {
+    color: Colors.textMuted,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  confirmCancelBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    backgroundColor: '#EF4444',
+    justifyContent: 'center',
+    alignItems: 'center',
+    minWidth: 85,
+  },
+  confirmCancelBtnText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
   },
 });
 

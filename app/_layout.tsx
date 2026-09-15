@@ -15,7 +15,7 @@ import {
   InterTight_900Black,
 } from '@expo-google-fonts/inter-tight';
 import * as SplashScreen from 'expo-splash-screen';
-import { Text, StyleSheet } from 'react-native';
+import { Text, StyleSheet, Platform } from 'react-native';
 
 import { FontSizeProvider, globalFontScale } from '../context/FontSizeContext';
 import { SocketProvider } from '../context/SocketContext';
@@ -37,31 +37,35 @@ const getFontFamily = (style: any) => {
   return 'InterTight_400Regular';
 };
 
-// Global override on React Native's Text.render to apply Inter-Tight font and dynamic font scaling
-const oldRender = (Text as any).render;
-(Text as any).render = function (...args: any[]) {
-  const origin = oldRender.call(this, ...args);
-  if (origin && origin.props) {
-    const flattened = StyleSheet.flatten(origin.props.style) || {};
-    const fontFamily = getFontFamily(origin.props.style);
+// Global override on React Native's Text.render to apply Inter-Tight font and dynamic font scaling (Native only)
+if (Platform.OS !== 'web') {
+  const oldRender = (Text as any).render;
+  if (typeof oldRender === 'function') {
+    (Text as any).render = function (...args: any[]) {
+      const origin = oldRender.call(this, ...args);
+      if (origin && origin.props) {
+        const flattened = StyleSheet.flatten(origin.props.style) || {};
+        const fontFamily = getFontFamily(origin.props.style);
 
-    const extraStyle: any = { fontFamily };
+        const extraStyle: any = { fontFamily };
 
-    if (globalFontScale !== 1.0 && origin.props.allowFontScaling !== false) {
-      if (flattened.fontSize !== undefined && typeof flattened.fontSize === 'number') {
-        extraStyle.fontSize = Math.round(flattened.fontSize * globalFontScale);
+        if (globalFontScale !== 1.0 && origin.props.allowFontScaling !== false) {
+          if (flattened.fontSize !== undefined && typeof flattened.fontSize === 'number') {
+            extraStyle.fontSize = Math.round(flattened.fontSize * globalFontScale);
+          }
+          if (flattened.lineHeight !== undefined && typeof flattened.lineHeight === 'number') {
+            extraStyle.lineHeight = Math.round(flattened.lineHeight * globalFontScale);
+          }
+        }
+
+        return React.cloneElement(origin, {
+          style: [origin.props.style, extraStyle],
+        });
       }
-      if (flattened.lineHeight !== undefined && typeof flattened.lineHeight === 'number') {
-        extraStyle.lineHeight = Math.round(flattened.lineHeight * globalFontScale);
-      }
-    }
-
-    return React.cloneElement(origin, {
-      style: [origin.props.style, extraStyle],
-    });
+      return origin;
+    };
   }
-  return origin;
-};
+}
 
 export default function RootLayout() {
   const [fontsLoaded, fontError] = useFonts({
