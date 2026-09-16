@@ -3,7 +3,7 @@
     "name": "Krifoo Admin",
     "slug": "krifoo-admin",
     "owner": "krifoos-app",
-    "version": "1.0.5",
+    "version": "1.0.6",
     "orientation": "default",
     "icon": "./assets/logo.png",
     "scheme": "krifooadmin",
@@ -33,7 +33,9 @@
         "backgroundColor": "#FFFFFF"
       },
       "package": "com.krifoo.admin",
-      "versionCode": 10,
+      "versionCode": 12,
+      "supportsTablet": true,
+      "edgeToEdgeEnabled": true,
       "googleServicesFile": "./google-services.json",
       "permissions": [
         "RECEIVE_BOOT_COMPLETED",
