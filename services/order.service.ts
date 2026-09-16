@@ -36,6 +36,11 @@ export const orderService = {
     totalPages?: number;
     currentPage?: number;
     totalOrders?: number;
+    pagination?: {
+      total: number;
+      pages: number;
+      currentPage: number;
+    };
     message?: string;
   }> {
     const params = new URLSearchParams();
@@ -54,6 +59,92 @@ export const orderService = {
       : `/api/admin/orders${queryString}`;
 
     return apiRequest(url);
+  },
+
+  /**
+   * GET all orders across all pages automatically.
+   * If there are multiple pages (due to backend 200 pagination limit),
+   * it requests the first page (with limit=200), finds total pages,
+   * fetches all subsequent pages in parallel with Promise.all,
+   * and merges them into a single comprehensive list.
+   */
+  async fetchAllOrders(filters?: {
+    status?: string;
+    search?: string;
+    startDate?: string;
+    endDate?: string;
+  }): Promise<{
+    success: boolean;
+    data: Order[];
+    totalOrders: number;
+    message?: string;
+  }> {
+    const PAGE_LIMIT = 2000;
+    try {
+      const firstRes = await this.getAllOrders({
+        ...filters,
+        page: 1,
+        limit: PAGE_LIMIT,
+      });
+
+      if (!firstRes.success) {
+        return {
+          success: false,
+          data: [],
+          totalOrders: 0,
+          message: firstRes.message || 'Failed to fetch orders',
+        };
+      }
+
+      const firstList: Order[] = firstRes.data || (firstRes as any).orders || [];
+      const totalPages: number =
+        firstRes.totalPages ??
+        firstRes.pagination?.pages ??
+        (firstRes as any).pagination?.totalPages ??
+        (firstRes.totalOrders ? Math.ceil(firstRes.totalOrders / PAGE_LIMIT) :
+         firstRes.pagination?.total ? Math.ceil(firstRes.pagination.total / PAGE_LIMIT) : 1);
+
+      const totalCount: number =
+        firstRes.totalOrders ??
+        firstRes.pagination?.total ??
+        firstList.length;
+
+      if (totalPages <= 1) {
+        return {
+          success: true,
+          data: firstList,
+          totalOrders: totalCount,
+        };
+      }
+
+      // Fetch remaining pages in parallel
+      const pageNumbers = Array.from({ length: totalPages - 1 }, (_, i) => i + 2);
+      const remainingResults = await Promise.all(
+        pageNumbers.map((page) =>
+          this.getAllOrders({ ...filters, page, limit: PAGE_LIMIT })
+            .then((r) => ((r.data || (r as any).orders || []) as Order[]))
+            .catch((err) => {
+              console.warn(`Failed to fetch page ${page} of orders:`, err);
+              return [] as Order[];
+            })
+        )
+      );
+
+      const allOrders = [firstList, ...remainingResults].flat();
+      return {
+        success: true,
+        data: allOrders,
+        totalOrders: totalCount || allOrders.length,
+      };
+    } catch (e: any) {
+      console.warn('Error in fetchAllOrders:', e);
+      return {
+        success: false,
+        data: [],
+        totalOrders: 0,
+        message: e?.message || 'Failed to fetch all orders',
+      };
+    }
   },
 
   /**

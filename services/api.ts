@@ -122,7 +122,7 @@ export async function apiRequest<T = any>(
       ? `Cannot reach server. If testing on a device, use your PC's local IP instead of localhost.\nConfigured URL: ${baseUrl}`
       : error?.message || 'An unexpected error occurred.';
 
-    console.error('API Request failed:', error);
+    console.warn('API Request failed:', message);
     return {
       success: false,
       message,

@@ -10,6 +10,7 @@ import {
   Dimensions,
   Image,
   useWindowDimensions,
+  Modal,
 } from 'react-native';
 import { Colors } from '../constants/colors';
 import { Order } from '../types';
@@ -24,6 +25,7 @@ import {
   RefreshCw,
   Share2,
   Calendar,
+  CalendarDays,
   Bike,
   UtensilsCrossed,
   Award,
@@ -33,17 +35,20 @@ import {
   X,
   Sparkles,
   ChevronRight,
+  ChevronLeft,
   Flame,
 } from 'lucide-react-native';
 
-export type TimeframeKey = 'today' | '7d' | '30d' | 'month' | 'all';
+export type TimeframeKey = 'today' | '7d' | '30d' | 'custom' | 'all';
 export type ChartMetric = 'revenue' | 'orders' | 'payment';
 
 export interface DashboardAnalytics {
   totalRevenue: number;
   totalOrders: number;
   deliveredOrders: number;
+  deliveredRevenue: number;
   cancelledOrders: number;
+  cancelledRevenue: number;
   averageOrderValue: number;
   cashOrdersCount: number;
   cashRevenue: number;
@@ -61,7 +66,9 @@ export interface DashboardAnalytics {
   orderTypeBreakdown: Array<{
     id: string;
     name: string;
+    icon: string;
     count: number;
+    revenue: number;
     percentage: number;
   }>;
   statusReport: Array<{
@@ -74,7 +81,9 @@ export interface DashboardAnalytics {
 export function computeDashboardAnalytics(orders: Order[]): DashboardAnalytics {
   let totalRevenue = 0;
   let deliveredOrders = 0;
+  let deliveredRevenue = 0;
   let cancelledOrders = 0;
+  let cancelledRevenue = 0;
   let cashOrdersCount = 0;
   let cashRevenue = 0;
   let onlineOrdersCount = 0;
@@ -82,6 +91,7 @@ export function computeDashboardAnalytics(orders: Order[]): DashboardAnalytics {
 
   const dailyMap = new Map<string, any>();
   const fulfillmentMap: Record<string, number> = { delivery: 0, pickup: 0, dine_in: 0 };
+  const fulfillmentRevMap: Record<string, number> = { delivery: 0, pickup: 0, dine_in: 0 };
   const statusMap: Record<string, number> = {
     placed: 0,
     preparing: 0,
@@ -132,12 +142,15 @@ export function computeDashboardAnalytics(orders: Order[]): DashboardAnalytics {
 
     if (isValid) {
       totalRevenue += orderTotal;
+      fulfillmentRevMap[fType] = (fulfillmentRevMap[fType] || 0) + orderTotal;
     }
     if (isDelivered) {
       deliveredOrders += 1;
+      deliveredRevenue += orderTotal;
     }
     if (isCancelled) {
       cancelledOrders += 1;
+      cancelledRevenue += orderTotal;
     }
 
     if (isCash) {
@@ -189,19 +202,25 @@ export function computeDashboardAnalytics(orders: Order[]): DashboardAnalytics {
     {
       id: 'delivery',
       name: 'Delivery',
+      icon: '🛵',
       count: fulfillmentMap.delivery || 0,
+      revenue: fulfillmentRevMap.delivery || 0,
       percentage: totalOrdersCount > 0 ? Math.round(((fulfillmentMap.delivery || 0) / totalOrdersCount) * 100) : 0,
     },
     {
       id: 'pickup',
-      name: 'Pickup',
+      name: 'Self Pickup',
+      icon: '🛍️',
       count: fulfillmentMap.pickup || 0,
+      revenue: fulfillmentRevMap.pickup || 0,
       percentage: totalOrdersCount > 0 ? Math.round(((fulfillmentMap.pickup || 0) / totalOrdersCount) * 100) : 0,
     },
     {
       id: 'dine_in',
       name: 'Dine In',
+      icon: '🍽️',
       count: fulfillmentMap.dine_in || 0,
+      revenue: fulfillmentRevMap.dine_in || 0,
       percentage: totalOrdersCount > 0 ? Math.round(((fulfillmentMap.dine_in || 0) / totalOrdersCount) * 100) : 0,
     },
   ];
@@ -219,7 +238,9 @@ export function computeDashboardAnalytics(orders: Order[]): DashboardAnalytics {
     totalRevenue,
     totalOrders: totalOrdersCount,
     deliveredOrders,
+    deliveredRevenue,
     cancelledOrders,
+    cancelledRevenue,
     averageOrderValue,
     cashOrdersCount,
     cashRevenue,
@@ -255,7 +276,7 @@ const TIMEFRAMES: Array<{ id: TimeframeKey; label: string }> = [
   { id: 'today', label: 'Today' },
   { id: '7d', label: '7 Days' },
   { id: '30d', label: '30 Days' },
-  { id: 'month', label: 'This Month' },
+  { id: 'custom', label: 'Select Date' },
   { id: 'all', label: 'All Time' },
 ];
 
@@ -282,12 +303,125 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
   const [timeframeOrders, setTimeframeOrders] = useState<Order[]>(initialOrders);
   const [topDishes, setTopDishes] = useState<TopDishItem[]>([]);
 
+  // Selective Date (Custom Range) State
+  const [customStartDate, setCustomStartDate] = useState<Date>(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 7);
+    d.setHours(0, 0, 0, 0);
+    return d;
+  });
+  const [customEndDate, setCustomEndDate] = useState<Date>(() => {
+    const d = new Date();
+    d.setHours(23, 59, 59, 999);
+    return d;
+  });
+  const [dateRangeModalVisible, setDateRangeModalVisible] = useState(false);
+  const [pickerStartDate, setPickerStartDate] = useState<Date>(customStartDate);
+  const [pickerEndDate, setPickerEndDate] = useState<Date | null>(customEndDate);
+  const [calendarMonth, setCalendarMonth] = useState<Date>(new Date());
+
+  // Helper for generating calendar month days
+  const calendarDays = useMemo(() => {
+    const year = calendarMonth.getFullYear();
+    const month = calendarMonth.getMonth();
+    const firstDayIndex = new Date(year, month, 1).getDay(); // 0 = Sunday
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+    const days: { date: Date; isCurrentMonth: boolean }[] = [];
+
+    // Previous month padding
+    const prevMonthDays = new Date(year, month, 0).getDate();
+    for (let i = firstDayIndex - 1; i >= 0; i--) {
+      days.push({
+        date: new Date(year, month - 1, prevMonthDays - i),
+        isCurrentMonth: false,
+      });
+    }
+
+    // Current month days
+    for (let d = 1; d <= daysInMonth; d++) {
+      days.push({
+        date: new Date(year, month, d),
+        isCurrentMonth: true,
+      });
+    }
+
+    // Next month padding to complete row
+    const remaining = (7 - (days.length % 7)) % 7;
+    for (let d = 1; d <= remaining; d++) {
+      days.push({
+        date: new Date(year, month + 1, d),
+        isCurrentMonth: false,
+      });
+    }
+
+    return days;
+  }, [calendarMonth]);
+
+  const isDateSameDay = (d1: Date | null, d2: Date | null) => {
+    if (!d1 || !d2) return false;
+    return (
+      d1.getFullYear() === d2.getFullYear() &&
+      d1.getMonth() === d2.getMonth() &&
+      d1.getDate() === d2.getDate()
+    );
+  };
+
+  const isDateInRange = (d: Date, start: Date | null, end: Date | null) => {
+    if (!start || !end) return false;
+    const time = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    const startTime = new Date(start.getFullYear(), start.getMonth(), start.getDate()).getTime();
+    const endTime = new Date(end.getFullYear(), end.getMonth(), end.getDate()).getTime();
+    return time >= startTime && time <= endTime;
+  };
+
+  const handleSelectCalendarDate = (date: Date) => {
+    const normalized = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    if (!pickerEndDate && pickerStartDate && normalized.getTime() > pickerStartDate.getTime()) {
+      setPickerEndDate(normalized);
+    } else {
+      setPickerStartDate(normalized);
+      setPickerEndDate(null);
+    }
+  };
+
+  const applyPreset = (preset: 'today' | 'yesterday' | '7d' | '30d' | 'this_month' | 'last_month') => {
+    const now = new Date();
+    let s = new Date();
+    let e = new Date();
+
+    if (preset === 'today') {
+      s = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+      e = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+    } else if (preset === 'yesterday') {
+      s = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 0, 0, 0, 0);
+      e = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 23, 59, 59, 999);
+    } else if (preset === '7d') {
+      s = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6, 0, 0, 0, 0);
+      e = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+    } else if (preset === '30d') {
+      s = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 29, 0, 0, 0, 0);
+      e = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+    } else if (preset === 'this_month') {
+      s = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+      e = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+    } else if (preset === 'last_month') {
+      s = new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0, 0);
+      e = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+    }
+
+    setPickerStartDate(s);
+    setPickerEndDate(e);
+    setCalendarMonth(new Date(s));
+  };
+
   // Calculate timeframe bounds
-  const getTimeframeBounds = useCallback((tf: TimeframeKey) => {
+  const getTimeframeBounds = useCallback((tf: TimeframeKey, customStart = customStartDate, customEnd = customEndDate) => {
     const now = new Date();
     if (tf === 'today') {
       const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-      return { startDate: start.toISOString(), endDate: now.toISOString() };
+      const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+      return { startDate: start.toISOString(), endDate: end.toISOString() };
     }
     if (tf === '7d') {
       const start = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
@@ -297,21 +431,23 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
       const start = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
       return { startDate: start.toISOString(), endDate: now.toISOString() };
     }
-    if (tf === 'month') {
-      const start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
-      return { startDate: start.toISOString(), endDate: now.toISOString() };
+    if (tf === 'custom') {
+      const s = new Date(customStart);
+      s.setHours(0, 0, 0, 0);
+      const e = new Date(customEnd);
+      e.setHours(23, 59, 59, 999);
+      return { startDate: s.toISOString(), endDate: e.toISOString() };
     }
     return {};
-  }, []);
+  }, [customStartDate, customEndDate]);
 
   const fetchAnalyticsData = useCallback(
-    async (tf: TimeframeKey) => {
+    async (tf: TimeframeKey, overrideStart?: Date, overrideEnd?: Date) => {
       setLoading(true);
       try {
-        const bounds = getTimeframeBounds(tf);
+        const bounds = getTimeframeBounds(tf, overrideStart || customStartDate, overrideEnd || customEndDate);
         const [ordersRes, menuRes] = await Promise.allSettled([
-          orderService.getAllOrders({
-            limit: 200,
+          orderService.fetchAllOrders({
             startDate: bounds.startDate,
             endDate: bounds.endDate,
           }),
@@ -353,17 +489,40 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
           setTopDishes(sorted.slice(0, 5));
         }
       } catch (err) {
-        console.error('Failed fetching analytics data:', err);
+        console.warn('Failed fetching analytics data:', err);
       } finally {
         setLoading(false);
       }
     },
-    [getTimeframeBounds, initialOrders]
+    [getTimeframeBounds, initialOrders, customStartDate, customEndDate]
   );
+
+  const handleApplyCustomRange = () => {
+    if (pickerStartDate) {
+      const s = new Date(pickerStartDate);
+      s.setHours(0, 0, 0, 0);
+      const e = pickerEndDate ? new Date(pickerEndDate) : new Date(pickerStartDate);
+      e.setHours(23, 59, 59, 999);
+      setCustomStartDate(s);
+      setCustomEndDate(e);
+      setTimeframe('custom');
+      setSelectedDayIndex(null);
+      setDateRangeModalVisible(false);
+      fetchAnalyticsData('custom', s, e);
+    }
+  };
 
   useEffect(() => {
     fetchAnalyticsData(timeframe);
   }, [timeframe, fetchAnalyticsData]);
+
+  useEffect(() => {
+    if (initialOrders && initialOrders.length > 0) {
+      if (timeframe === 'all') {
+        setTimeframeOrders(initialOrders);
+      }
+    }
+  }, [initialOrders, timeframe]);
 
   // Compute analytics
   const analytics = useMemo(() => {
@@ -522,18 +681,44 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.timeframeBar}>
           {TIMEFRAMES.map((tf) => {
             const isSelected = timeframe === tf.id;
+            const isCustom = tf.id === 'custom';
+            const customLabel =
+              isCustom && timeframe === 'custom'
+                ? isDateSameDay(customStartDate, customEndDate)
+                  ? customStartDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+                  : `${customStartDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} - ${customEndDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}`
+                : tf.label;
+
             return (
               <TouchableOpacity
                 key={tf.id}
-                style={[styles.timeframePill, isSelected && styles.timeframePillActive]}
+                style={[
+                  styles.timeframePill,
+                  isSelected && styles.timeframePillActive,
+                  isCustom && styles.timeframePillCustom,
+                ]}
                 onPress={() => {
-                  setTimeframe(tf.id);
-                  setSelectedDayIndex(null);
+                  if (isCustom) {
+                    setPickerStartDate(customStartDate);
+                    setPickerEndDate(customEndDate);
+                    setCalendarMonth(new Date(customStartDate));
+                    setDateRangeModalVisible(true);
+                  } else {
+                    setTimeframe(tf.id);
+                    setSelectedDayIndex(null);
+                  }
                 }}
                 activeOpacity={0.8}
               >
+                {isCustom && (
+                  <CalendarDays
+                    size={13}
+                    color={isSelected ? '#FFFFFF' : '#4B5563'}
+                    style={{ marginRight: 5 }}
+                  />
+                )}
                 <Text style={[styles.timeframePillText, isSelected && styles.timeframePillTextActive]}>
-                  {tf.label}
+                  {customLabel}
                 </Text>
               </TouchableOpacity>
             );
@@ -961,43 +1146,134 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
         </View>
       </View>
 
-      {/* 4. Fulfillment Types Breakdown & Order Lifecycle */}
-      <View style={[styles.sideBySideRow, isSmallScreen ? { flexDirection: 'column', gap: 12 } : { gap: 12 }]}>
-        {/* Fulfillment Types */}
-        <View style={styles.halfCard}>
-          <Text style={styles.cardSectionTitleSmall}>Fulfillment Modes</Text>
-          <View style={styles.fulfillmentList}>
-            {analytics.orderTypeBreakdown.map((f) => {
-              const iconColor = f.id === 'delivery' ? '#2563EB' : f.id === 'pickup' ? '#EA580C' : '#7C3AED';
-              return (
-                <View key={f.id} style={styles.fulfillmentRow}>
-                  <View style={styles.fulfillmentRowHeader}>
-                    <Text style={styles.fulfillmentLabel}>
-                      {f.id === 'delivery' ? '🛵 ' : f.id === 'pickup' ? '🛍️ ' : '🍽️ '}
-                      {f.name}
-                    </Text>
-                    <Text style={styles.fulfillmentVal}>
-                      {f.count} ({f.percentage}%)
-                    </Text>
-                  </View>
-                  <View style={styles.progressTrackSmall}>
-                    <View
-                      style={[
-                        styles.progressFillSmall,
-                        { width: `${Math.min(f.percentage, 100)}%`, backgroundColor: iconColor },
-                      ]}
-                    />
+      {/* 4. Store Performance: Orders & Fulfillment Breakdown Table */}
+      <View style={styles.cardSection}>
+        <View style={styles.tableHeaderSection}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <Receipt size={18} color="#FF5C39" />
+            <Text style={styles.cardSectionTitle}>Store Performance & Order Breakdown</Text>
+          </View>
+          <Text style={styles.cardSectionSub}>
+            Complete breakdown of delivered orders, cancelled orders, and order channels
+          </Text>
+        </View>
+
+        {/* Breakdown Table */}
+        <View style={styles.analyticsTable}>
+          {/* Table Header Row */}
+          <View style={styles.tableHeadRow}>
+            <Text style={[styles.tableHeadCell, { flex: 2.2 }]}>Category / Type</Text>
+            <Text style={[styles.tableHeadCell, { flex: 1, textAlign: 'center' }]}>Orders</Text>
+            <Text style={[styles.tableHeadCell, { flex: 1, textAlign: 'center' }]}>Share</Text>
+            <Text style={[styles.tableHeadCell, { flex: 1.4, textAlign: 'right' }]}>Revenue</Text>
+          </View>
+
+          {/* Table Section: Order Types */}
+          <View style={styles.tableGroupHeader}>
+            <Text style={styles.tableGroupHeaderText}>FULFILLMENT CHANNELS (TYPE OF ORDER)</Text>
+          </View>
+
+          {analytics.orderTypeBreakdown.map((item, idx) => {
+            const isLast = idx === analytics.orderTypeBreakdown.length - 1;
+            return (
+              <View key={item.id} style={[styles.tableRow, isLast && styles.tableRowDivider]}>
+                <View style={[styles.tableCellCol, { flex: 2.2 }]}>
+                  <Text style={styles.tableCellMainText}>
+                    {item.icon} {item.name}
+                  </Text>
+                </View>
+                <Text style={[styles.tableCellText, { flex: 1, textAlign: 'center', fontWeight: '700' }]}>
+                  {item.count}
+                </Text>
+                <View style={[styles.tableCellCol, { flex: 1, alignItems: 'center' }]}>
+                  <View style={styles.shareBadge}>
+                    <Text style={styles.shareBadgeText}>{item.percentage}%</Text>
                   </View>
                 </View>
-              );
-            })}
+                <Text style={[styles.tableCellAmount, { flex: 1.4, textAlign: 'right' }]}>
+                  £{item.revenue.toFixed(2)}
+                </Text>
+              </View>
+            );
+          })}
+
+          {/* Table Section: Order Outcomes */}
+          <View style={styles.tableGroupHeader}>
+            <Text style={styles.tableGroupHeaderText}>ORDER OUTCOMES & FULFILLMENT</Text>
+          </View>
+
+          {/* Delivered Orders Row */}
+          <View style={styles.tableRow}>
+            <View style={[styles.tableCellCol, { flex: 2.2 }]}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                <CheckCircle2 size={15} color="#059669" />
+                <Text style={[styles.tableCellMainText, { color: '#065F46' }]}>Delivered Orders</Text>
+              </View>
+              <Text style={styles.tableCellSubText}>Successfully fulfilled</Text>
+            </View>
+            <Text style={[styles.tableCellText, { flex: 1, textAlign: 'center', fontWeight: '800', color: '#059669' }]}>
+              {analytics.deliveredOrders}
+            </Text>
+            <View style={[styles.tableCellCol, { flex: 1, alignItems: 'center' }]}>
+              <View style={[styles.shareBadge, { backgroundColor: '#ECFDF5', borderColor: '#A7F3D0' }]}>
+                <Text style={[styles.shareBadgeText, { color: '#047857' }]}>
+                  {analytics.totalOrders > 0 ? Math.round((analytics.deliveredOrders / analytics.totalOrders) * 100) : 0}%
+                </Text>
+              </View>
+            </View>
+            <Text style={[styles.tableCellAmount, { flex: 1.4, textAlign: 'right', color: '#059669' }]}>
+              £{analytics.deliveredRevenue.toFixed(2)}
+            </Text>
+          </View>
+
+          {/* Cancelled Orders Row */}
+          <View style={[styles.tableRow, styles.tableRowDivider]}>
+            <View style={[styles.tableCellCol, { flex: 2.2 }]}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                <X size={15} color="#DC2626" />
+                <Text style={[styles.tableCellMainText, { color: '#991B1B' }]}>Cancelled Orders</Text>
+              </View>
+              <Text style={styles.tableCellSubText}>Rejected or cancelled</Text>
+            </View>
+            <Text style={[styles.tableCellText, { flex: 1, textAlign: 'center', fontWeight: '800', color: '#DC2626' }]}>
+              {analytics.cancelledOrders}
+            </Text>
+            <View style={[styles.tableCellCol, { flex: 1, alignItems: 'center' }]}>
+              <View style={[styles.shareBadge, { backgroundColor: '#FEF2F2', borderColor: '#FECACA' }]}>
+                <Text style={[styles.shareBadgeText, { color: '#B91C1C' }]}>
+                  {analytics.totalOrders > 0 ? Math.round((analytics.cancelledOrders / analytics.totalOrders) * 100) : 0}%
+                </Text>
+              </View>
+            </View>
+            <Text style={[styles.tableCellAmount, { flex: 1.4, textAlign: 'right', color: '#DC2626' }]}>
+              {analytics.cancelledRevenue > 0 ? `-£${analytics.cancelledRevenue.toFixed(2)}` : '£0.00'}
+            </Text>
+          </View>
+
+          {/* Table Total Summary Row */}
+          <View style={styles.tableTotalRow}>
+            <View style={[styles.tableCellCol, { flex: 2.2 }]}>
+              <Text style={styles.tableTotalLabel}>Total Orders</Text>
+              <Text style={styles.tableCellSubText}>All recorded activity</Text>
+            </View>
+            <Text style={[styles.tableTotalVal, { flex: 1, textAlign: 'center' }]}>
+              {analytics.totalOrders}
+            </Text>
+            <View style={[styles.tableCellCol, { flex: 1, alignItems: 'center' }]}>
+              <View style={[styles.shareBadge, { backgroundColor: '#F1F5F9', borderColor: '#CBD5E1' }]}>
+                <Text style={[styles.shareBadgeText, { color: '#0F172A', fontWeight: '800' }]}>100%</Text>
+              </View>
+            </View>
+            <Text style={[styles.tableTotalAmount, { flex: 1.4, textAlign: 'right' }]}>
+              £{analytics.totalRevenue.toFixed(2)}
+            </Text>
           </View>
         </View>
 
-        {/* Order Lifecycle Pipeline */}
-        <View style={styles.halfCard}>
-          <Text style={styles.cardSectionTitleSmall}>Lifecycle Pipeline</Text>
-          <View style={styles.lifecycleGrid}>
+        {/* Compact Lifecycle Pipeline Status Pills */}
+        <View style={styles.lifecycleRowContainer}>
+          <Text style={styles.lifecycleHeaderLabel}>Live Status Distribution</Text>
+          <View style={styles.lifecyclePillsRow}>
             {analytics.statusReport.map((st) => {
               const bg =
                 st.id === 'delivered'
@@ -1020,9 +1296,9 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
                         ? '#2563EB'
                         : '#4B5563';
               return (
-                <View key={st.id} style={[styles.lifecycleChip, { backgroundColor: bg }]}>
-                  <Text style={[styles.lifecycleCount, { color: textCol }]}>{st.count}</Text>
-                  <Text style={styles.lifecycleLabel}>{st.name}</Text>
+                <View key={st.id} style={[styles.lifecycleChipCompact, { backgroundColor: bg }]}>
+                  <Text style={[styles.lifecycleCountCompact, { color: textCol }]}>{st.count}</Text>
+                  <Text style={styles.lifecycleLabelCompact}>{st.name}</Text>
                 </View>
               );
             })}
@@ -1095,11 +1371,357 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
           <ChevronRight size={20} color="#FF5C39" />
         </TouchableOpacity>
       ) : null} */}
+      {/* Date Range Picker Modal */}
+      <Modal
+        visible={dateRangeModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setDateRangeModalVisible(false)}
+      >
+        <View style={styles.dateModalOverlay}>
+          <View style={styles.dateModalCard}>
+            {/* Modal Header */}
+            <View style={styles.dateModalHeader}>
+              <View style={styles.dateModalTitleRow}>
+                <CalendarDays size={18} color="#0F172A" />
+                <Text style={styles.dateModalTitle}>Select Date Range</Text>
+              </View>
+              <TouchableOpacity
+                style={styles.dateModalCloseBtn}
+                onPress={() => setDateRangeModalVisible(false)}
+                activeOpacity={0.7}
+              >
+                <X size={18} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Quick Presets */}
+            <Text style={styles.modalSectionLabel}>Quick Presets</Text>
+            <View style={styles.presetsGrid}>
+              {[
+                { id: 'today', label: 'Today' },
+                { id: 'yesterday', label: 'Yesterday' },
+                { id: '7d', label: 'Last 7 Days' },
+                { id: '30d', label: 'Last 30 Days' },
+                { id: 'this_month', label: 'This Month' },
+                { id: 'last_month', label: 'Last Month' },
+              ].map((p) => (
+                <TouchableOpacity
+                  key={p.id}
+                  style={styles.presetChip}
+                  onPress={() => applyPreset(p.id as any)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.presetChipText}>{p.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {/* Selected Range Display */}
+            <View style={styles.rangeSummaryBox}>
+              <Text style={styles.rangeSummaryLabel}>Range:</Text>
+              <Text style={styles.rangeSummaryDates}>
+                {pickerStartDate
+                  ? `${pickerStartDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} - ${
+                      pickerEndDate
+                        ? pickerEndDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+                        : pickerStartDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+                    }`
+                  : 'Select dates'}
+              </Text>
+            </View>
+
+            {/* Calendar Navigation */}
+            <View style={styles.calendarNavRow}>
+              <TouchableOpacity
+                style={styles.calendarNavBtn}
+                onPress={() =>
+                  setCalendarMonth((prev) => new Date(prev.getFullYear(), prev.getMonth() - 1, 1))
+                }
+                activeOpacity={0.7}
+              >
+                <ChevronLeft size={16} color="#0F172A" />
+              </TouchableOpacity>
+              <Text style={styles.calendarMonthTitle}>
+                {calendarMonth.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })}
+              </Text>
+              <TouchableOpacity
+                style={styles.calendarNavBtn}
+                onPress={() =>
+                  setCalendarMonth((prev) => new Date(prev.getFullYear(), prev.getMonth() + 1, 1))
+                }
+                activeOpacity={0.7}
+              >
+                <ChevronRight size={16} color="#0F172A" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Weekday headers */}
+            <View style={styles.weekdaysRow}>
+              {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map((day) => (
+                <Text key={day} style={styles.weekdayText}>
+                  {day}
+                </Text>
+              ))}
+            </View>
+
+            {/* Calendar Day Grid */}
+            <View style={styles.calendarDaysGrid}>
+              {calendarDays.map((item, idx) => {
+                const isStart = isDateSameDay(item.date, pickerStartDate);
+                const isEnd = isDateSameDay(item.date, pickerEndDate);
+                const inRange = isDateInRange(item.date, pickerStartDate, pickerEndDate);
+                const isSingle = isStart && (!pickerEndDate || isDateSameDay(pickerStartDate, pickerEndDate));
+
+                return (
+                  <TouchableOpacity
+                    key={idx}
+                    style={[
+                      styles.calendarDayCell,
+                      inRange && !isStart && !isEnd && styles.calendarDayCellInRange,
+                      isStart && !isSingle && styles.calendarDayCellSelectedStart,
+                      isEnd && !isSingle && styles.calendarDayCellSelectedEnd,
+                      isSingle && styles.calendarDayCellSingle,
+                    ]}
+                    onPress={() => handleSelectCalendarDate(item.date)}
+                    activeOpacity={0.8}
+                  >
+                    <Text
+                      style={[
+                        styles.calendarDayText,
+                        !item.isCurrentMonth && styles.calendarDayTextMuted,
+                        (isStart || isEnd) && styles.calendarDayTextSelected,
+                      ]}
+                    >
+                      {item.date.getDate()}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {/* Actions */}
+            <View style={styles.modalFooterRow}>
+              <TouchableOpacity
+                style={styles.cancelBtn}
+                onPress={() => setDateRangeModalVisible(false)}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.cancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.applyBtn}
+                onPress={handleApplyCustomRange}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.applyBtnText}>Apply Range</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 };
 
 const styles = StyleSheet.create({
+  timeframePillCustom: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  /* Date Range Picker Modal Styles */
+  dateModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.65)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 16,
+  },
+  dateModalCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    width: '100%',
+    maxWidth: 380,
+    padding: 18,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.15,
+    shadowRadius: 24,
+    elevation: 8,
+  },
+  dateModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 14,
+  },
+  dateModalTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  dateModalTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  dateModalCloseBtn: {
+    padding: 5,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
+  },
+  modalSectionLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748B',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 8,
+  },
+  presetsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: 14,
+  },
+  presetChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  presetChipText: {
+    fontSize: 11.5,
+    fontWeight: '600',
+    color: '#334155',
+  },
+  rangeSummaryBox: {
+    backgroundColor: '#F0FDF4',
+    borderColor: '#BBF7D0',
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 14,
+  },
+  rangeSummaryLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#166534',
+  },
+  rangeSummaryDates: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#15803D',
+  },
+  calendarNavRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+    paddingHorizontal: 4,
+  },
+  calendarMonthTitle: {
+    fontSize: 13.5,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  calendarNavBtn: {
+    padding: 6,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
+  },
+  weekdaysRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  weekdayText: {
+    width: '14.28%',
+    textAlign: 'center',
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#94A3B8',
+  },
+  calendarDaysGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginBottom: 14,
+  },
+  calendarDayCell: {
+    width: '14.28%',
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginVertical: 1,
+  },
+  calendarDayCellSelectedStart: {
+    backgroundColor: '#0F172A',
+    borderTopLeftRadius: 8,
+    borderBottomLeftRadius: 8,
+  },
+  calendarDayCellSelectedEnd: {
+    backgroundColor: '#0F172A',
+    borderTopRightRadius: 8,
+    borderBottomRightRadius: 8,
+  },
+  calendarDayCellSingle: {
+    backgroundColor: '#0F172A',
+    borderRadius: 8,
+  },
+  calendarDayCellInRange: {
+    backgroundColor: '#E2E8F0',
+  },
+  calendarDayText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#1E293B',
+  },
+  calendarDayTextMuted: {
+    color: '#CBD5E1',
+  },
+  calendarDayTextSelected: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+  },
+  modalFooterRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 4,
+  },
+  cancelBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+  },
+  cancelBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  applyBtn: {
+    flex: 1.4,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: '#0F172A',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  applyBtnText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
   container: {
     marginTop: 4,
     marginBottom: 8,
@@ -1550,75 +2172,148 @@ const styles = StyleSheet.create({
     marginTop: 1,
   },
 
-  /* Side by Side Section */
-  sideBySideRow: {
-    flexDirection: 'row',
+  /* Store Performance & Order Breakdown Table Styles */
+  tableHeaderSection: {
+    marginBottom: 12,
+  },
+  analyticsTable: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    overflow: 'hidden',
     marginBottom: 14,
   },
-  halfCard: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    shadowColor: '#0F172A',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 6,
-    elevation: 2,
-  },
-  fulfillmentList: {
-    gap: 10,
-  },
-  fulfillmentRow: {
-    gap: 4,
-  },
-  fulfillmentRowHeader: {
+  tableHeadRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
   },
-  fulfillmentLabel: {
+  tableHeadCell: {
     fontSize: 11,
+    fontWeight: '800',
+    color: '#475569',
+    letterSpacing: 0.2,
+    textTransform: 'uppercase',
+  },
+  tableGroupHeader: {
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+  },
+  tableGroupHeaderText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#64748B',
+    letterSpacing: 0.4,
+  },
+  tableRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  tableRowDivider: {
+    borderBottomWidth: 1.5,
+    borderBottomColor: '#E2E8F0',
+  },
+  tableCellCol: {
+    justifyContent: 'center',
+  },
+  tableCellMainText: {
+    fontSize: 12,
     fontWeight: '700',
-    color: Colors.text,
+    color: '#1E293B',
   },
-  fulfillmentVal: {
-    fontSize: 10.5,
+  tableCellSubText: {
+    fontSize: 9.5,
+    color: '#94A3B8',
+    marginTop: 1,
+  },
+  tableCellText: {
+    fontSize: 12.5,
+    color: '#334155',
+  },
+  tableCellAmount: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  shareBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  shareBadgeText: {
+    fontSize: 10,
     fontWeight: '700',
-    color: Colors.textMuted,
+    color: '#475569',
   },
-  progressTrackSmall: {
-    height: 6,
-    backgroundColor: '#F3F4F6',
-    borderRadius: 3,
-    overflow: 'hidden',
+  tableTotalRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 12,
+    paddingVertical: 11,
   },
-  progressFillSmall: {
-    height: '100%',
-    borderRadius: 3,
+  tableTotalLabel: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  tableTotalVal: {
+    fontSize: 13.5,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  tableTotalAmount: {
+    fontSize: 13.5,
+    fontWeight: '800',
+    color: '#FF5C39',
   },
 
-  /* Lifecycle Grid */
-  lifecycleGrid: {
+  /* Compact Lifecycle Row */
+  lifecycleRowContainer: {
+    paddingTop: 4,
+  },
+  lifecycleHeaderLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748B',
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+    marginBottom: 8,
+  },
+  lifecyclePillsRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 6,
   },
-  lifecycleChip: {
-    width: '47%',
+  lifecycleChipCompact: {
+    flexGrow: 1,
+    flexBasis: '30%',
     borderRadius: 8,
     paddingVertical: 6,
     paddingHorizontal: 8,
     alignItems: 'center',
   },
-  lifecycleCount: {
-    fontSize: 15,
+  lifecycleCountCompact: {
+    fontSize: 13.5,
     fontWeight: '800',
   },
-  lifecycleLabel: {
-    fontSize: 9.5,
+  lifecycleLabelCompact: {
+    fontSize: 9,
     fontWeight: '700',
     color: '#6B7280',
     marginTop: 1,

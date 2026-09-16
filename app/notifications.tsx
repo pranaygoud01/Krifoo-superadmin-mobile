@@ -46,8 +46,8 @@ export default function NotificationsScreen() {
   const fetchNotificationsData = async () => {
     try {
       const [orderRes, restRes] = await Promise.all([
-        orderService.getAllOrders(),
-        restaurantService.getRestaurants(),
+        orderService.fetchAllOrders(),
+        restaurantService.getRestaurants({ limit: 1000 }),
       ]);
 
       const list: NotificationItem[] = [];

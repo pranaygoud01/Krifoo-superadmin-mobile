@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -11,6 +11,8 @@ import {
   TouchableOpacity,
   useWindowDimensions,
   DeviceEventEmitter,
+  Modal,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
@@ -39,6 +41,9 @@ import {
   MapPin,
   UtensilsCrossed,
   Printer,
+  Globe,
+  Calendar,
+  CalendarDays,
 } from 'lucide-react-native';
 import { printThermalReceipt, isAutoPrintEnabled, getLastPrintJobReport } from '../../services/thermal-print.service';
 
@@ -805,6 +810,17 @@ export default function OrdersScreen() {
   const [activeTab, setActiveTab] = useState<string>('all');
   const [viewMode, setViewMode] = useState<'tabs' | 'board'>('tabs');
 
+  // Channel dropdown
+  const [channelDropdownOpen, setChannelDropdownOpen] = useState(false);
+
+  // Date filter
+  const [datePreset, setDatePreset] = useState<'all' | 'today' | 'yesterday' | 'week' | 'custom'>('all');
+  const [customDateFrom, setCustomDateFrom] = useState('');
+  const [customDateTo, setCustomDateTo] = useState('');
+  const [customDateModalOpen, setCustomDateModalOpen] = useState(false);
+  const [tempDateFrom, setTempDateFrom] = useState('');
+  const [tempDateTo, setTempDateTo] = useState('');
+
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [detailModalVisible, setDetailModalVisible] = useState(false);
   const [assignModalVisible, setAssignModalVisible] = useState(false);
@@ -814,11 +830,14 @@ export default function OrdersScreen() {
   const fetchOrders = useCallback(async (isRefresh = false) => {
     try {
       if (!isRefresh) setLoading(true);
-      const res = await orderService.getAllOrders({ page: 1, limit: 200 });
-      const orderList = res.data || (res as any).orders;
-      if (res.success && orderList) setOrders(orderList);
+      const res = await orderService.fetchAllOrders();
+      if (res.success && res.data) {
+        setOrders(res.data);
+      } else {
+        console.warn('Failed fetching orders:', res.message);
+      }
     } catch (e) {
-      console.error('Failed fetching orders:', e);
+      console.warn('Failed fetching orders:', e);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -864,6 +883,30 @@ export default function OrdersScreen() {
   const onRefresh = () => { setRefreshing(true); fetchOrders(true); };
 
   const filteredOrders = useMemo(() => {
+    // Compute date range for the selected preset
+    const now = new Date();
+    const startOfDay = (d: Date) => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; };
+    const endOfDay = (d: Date) => { const x = new Date(d); x.setHours(23, 59, 59, 999); return x; };
+
+    let dateFrom: Date | null = null;
+    let dateTo: Date | null = null;
+
+    if (datePreset === 'today') {
+      dateFrom = startOfDay(now);
+      dateTo = endOfDay(now);
+    } else if (datePreset === 'yesterday') {
+      const y = new Date(now); y.setDate(now.getDate() - 1);
+      dateFrom = startOfDay(y);
+      dateTo = endOfDay(y);
+    } else if (datePreset === 'week') {
+      const w = new Date(now); w.setDate(now.getDate() - 6);
+      dateFrom = startOfDay(w);
+      dateTo = endOfDay(now);
+    } else if (datePreset === 'custom' && customDateFrom && customDateTo) {
+      dateFrom = startOfDay(new Date(customDateFrom));
+      dateTo = endOfDay(new Date(customDateTo));
+    }
+
     return orders.filter((order) => {
       const sourceDetails = getOrderSourceDetails(order);
       if (searchQuery.trim()) {
@@ -875,19 +918,21 @@ export default function OrdersScreen() {
         if (!idMatch && !restMatch && !custMatch && !domainMatch) return false;
       }
       const fType = getOrderFulfillmentType(order);
-      if (typeFilter !== 'all' && fType !== typeFilter) {
-        return false;
-      }
+      if (typeFilter !== 'all' && fType !== typeFilter) return false;
+
       const isExt = sourceDetails.isExternal;
-      if (sourceFilter === 'external' && !isExt) {
-        return false;
+      if (sourceFilter === 'external' && !isExt) return false;
+      if (sourceFilter === 'krifoo' && isExt) return false;
+
+      // Date filter
+      if (dateFrom && dateTo && order.createdAt) {
+        const created = new Date(order.createdAt);
+        if (created < dateFrom || created > dateTo) return false;
       }
-      if (sourceFilter === 'krifoo' && isExt) {
-        return false;
-      }
+
       return true;
     });
-  }, [orders, searchQuery, typeFilter, sourceFilter]);
+  }, [orders, searchQuery, typeFilter, sourceFilter, datePreset, customDateFrom, customDateTo]);
 
   const tabCounts = useMemo(() => {
     const counts: Record<string, number> = {
@@ -1069,39 +1114,38 @@ export default function OrdersScreen() {
 
       {/* Controls */}
       <View style={styles.controlsRow}>
-        <View style={styles.searchBox}>
-          <Search size={14} color={Colors.textSubtle} />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Search #ORD, customer, item..."
-            placeholderTextColor={Colors.textSubtle}
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-          />
-        </View>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.typeFilters}>
-          {[
-            { label: 'All Channels', value: 'all', icon: '🌐' },
-            { label: 'Marketplace', value: 'krifoo', icon: '📱' },
-            { label: 'External Web', value: 'external', icon: '💻' },
-          ].map((sf) => (
-            <TouchableOpacity
-              key={sf.value}
-              style={[
-                styles.sourceFilterChip,
-                sourceFilter === sf.value && styles.sourceFilterChipActive
-              ]}
-              onPress={() => setSourceFilter(sf.value as any)}
-              activeOpacity={0.7}
+        {/* Search + Channel Dropdown row */}
+        <View style={styles.searchAndChannelRow}>
+          <View style={[styles.searchBox, { flex: 1 }]}>
+            <Search size={14} color={Colors.textSubtle} />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search #ORD, customer, item..."
+              placeholderTextColor={Colors.textSubtle}
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+            />
+          </View>
+
+          {/* Channel Dropdown Button */}
+          <TouchableOpacity
+            style={styles.channelDropdownBtn}
+            onPress={() => setChannelDropdownOpen(true)}
+            activeOpacity={0.8}
+          >
+            <Globe size={12} color={sourceFilter === 'all' ? '#687076' : '#FF5C39'} />
+            <Text
+              style={[styles.channelDropdownBtnText, sourceFilter !== 'all' && { color: '#FF5C39' }]}
+              numberOfLines={1}
             >
-              <Text style={{ fontSize: 11, marginRight: 4 }}>{sf.icon}</Text>
-              <Text style={[styles.sourceFilterChipText, sourceFilter === sf.value && styles.sourceFilterChipTextActive]}>
-                {sf.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={[styles.typeFilters, { marginTop: 6 }]}>
+              {sourceFilter === 'all' ? 'All Channels' : sourceFilter === 'krifoo' ? 'Marketplace' : 'External'}
+            </Text>
+            <ChevronDown size={11} color={sourceFilter === 'all' ? '#9BA1A6' : '#FF5C39'} />
+          </TouchableOpacity>
+        </View>
+
+        {/* Type Filters */}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={[styles.typeFilters, { marginTop: 4 }]}>
           {TYPE_FILTERS.map((f) => {
             const isSelected = typeFilter === f.value;
             const { Icon } = f;
@@ -1152,7 +1196,181 @@ export default function OrdersScreen() {
             );
           })}
         </ScrollView>
+
+        {/* Date Filter Row */}
+        <View style={styles.dateFilterRow}>
+          <CalendarDays size={13} color='#9BA1A6' style={{ flexShrink: 0 }} />
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flex: 1 }} contentContainerStyle={styles.datePresetList}>
+            {([
+              { label: 'All Time', value: 'all' },
+              { label: 'Today', value: 'today' },
+              { label: 'Yesterday', value: 'yesterday' },
+              { label: 'This Week', value: 'week' },
+              { label: 'Custom', value: 'custom' },
+            ] as const).map((dp) => (
+              <TouchableOpacity
+                key={dp.value}
+                style={[
+                  styles.datePresetChip,
+                  datePreset === dp.value && styles.datePresetChipActive,
+                ]}
+                onPress={() => {
+                  if (dp.value === 'custom') {
+                    setTempDateFrom(customDateFrom || new Date().toISOString().slice(0, 10));
+                    setTempDateTo(customDateTo || new Date().toISOString().slice(0, 10));
+                    setCustomDateModalOpen(true);
+                  } else {
+                    setDatePreset(dp.value);
+                  }
+                }}
+                activeOpacity={0.7}
+              >
+                {dp.value === 'today' && <View style={styles.todayDot} />}
+                <Text style={[styles.datePresetChipText, datePreset === dp.value && styles.datePresetChipTextActive]}>
+                  {dp.value === 'custom' && datePreset === 'custom' && customDateFrom && customDateTo
+                    ? `${customDateFrom} → ${customDateTo}`
+                    : dp.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
       </View>
+
+      {/* Channel Dropdown Modal */}
+      <Modal
+        visible={channelDropdownOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setChannelDropdownOpen(false)}
+      >
+        <TouchableOpacity
+          style={styles.dropdownOverlay}
+          activeOpacity={1}
+          onPress={() => setChannelDropdownOpen(false)}
+        >
+          <View style={styles.channelDropdownSheet}>
+            <Text style={styles.channelDropdownTitle}>Filter by Channel</Text>
+            {([
+              { label: 'All Channels', value: 'all', icon: '🌐', desc: 'Show orders from every source' },
+              { label: 'Marketplace (krifoo.co.uk)', value: 'krifoo', icon: '📱', desc: 'Orders placed on krifoo marketplace' },
+              { label: 'External / Own Website', value: 'external', icon: '💻', desc: 'Orders from your branded website' },
+            ] as const).map((sf) => (
+              <TouchableOpacity
+                key={sf.value}
+                style={[
+                  styles.channelDropdownItem,
+                  sourceFilter === sf.value && styles.channelDropdownItemActive,
+                ]}
+                onPress={() => { setSourceFilter(sf.value); setChannelDropdownOpen(false); }}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.channelDropdownItemIcon}>{sf.icon}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.channelDropdownItemLabel, sourceFilter === sf.value && { color: '#FF5C39' }]}>
+                    {sf.label}
+                  </Text>
+                  <Text style={styles.channelDropdownItemDesc}>{sf.desc}</Text>
+                </View>
+                {sourceFilter === sf.value && (
+                  <View style={styles.channelDropdownCheck}>
+                    <Check size={12} color='#FFFFFF' />
+                  </View>
+                )}
+              </TouchableOpacity>
+            ))}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Custom Date Range Modal */}
+      <Modal
+        visible={customDateModalOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setCustomDateModalOpen(false)}
+      >
+        <TouchableOpacity
+          style={styles.dropdownOverlay}
+          activeOpacity={1}
+          onPress={() => setCustomDateModalOpen(false)}
+        >
+          <TouchableOpacity activeOpacity={1} onPress={() => {}}>
+            <View style={styles.customDateSheet}>
+              <View style={styles.customDateHeader}>
+                <Calendar size={16} color='#FF5C39' />
+                <Text style={styles.customDateTitle}>Select Date Range</Text>
+              </View>
+
+              <Text style={styles.customDateLabel}>From Date</Text>
+              <TextInput
+                style={styles.customDateInput}
+                value={tempDateFrom}
+                onChangeText={setTempDateFrom}
+                placeholder="YYYY-MM-DD"
+                placeholderTextColor='#C4C9CE'
+                keyboardType='numeric'
+                maxLength={10}
+              />
+
+              <Text style={[styles.customDateLabel, { marginTop: 12 }]}>To Date</Text>
+              <TextInput
+                style={styles.customDateInput}
+                value={tempDateTo}
+                onChangeText={setTempDateTo}
+                placeholder="YYYY-MM-DD"
+                placeholderTextColor='#C4C9CE'
+                keyboardType='numeric'
+                maxLength={10}
+              />
+
+              <View style={styles.customDatePresets}>
+                {[
+                  { label: 'Last 7 days', days: 7 },
+                  { label: 'Last 30 days', days: 30 },
+                  { label: 'Last 90 days', days: 90 },
+                ].map((p) => (
+                  <TouchableOpacity
+                    key={p.days}
+                    style={styles.quickPresetBtn}
+                    onPress={() => {
+                      const to = new Date();
+                      const from = new Date(); from.setDate(from.getDate() - (p.days - 1));
+                      setTempDateFrom(from.toISOString().slice(0, 10));
+                      setTempDateTo(to.toISOString().slice(0, 10));
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.quickPresetBtnText}>{p.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              <View style={styles.customDateActions}>
+                <TouchableOpacity
+                  style={styles.customDateCancel}
+                  onPress={() => setCustomDateModalOpen(false)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.customDateCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.customDateApply}
+                  onPress={() => {
+                    setCustomDateFrom(tempDateFrom);
+                    setCustomDateTo(tempDateTo);
+                    setDatePreset('custom');
+                    setCustomDateModalOpen(false);
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.customDateApplyText}>Apply Filter</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
 
       {/* Status Tabs Navigation Bar (Shown in Tabs mode) */}
       {viewMode === 'tabs' && (
@@ -1381,6 +1599,233 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   typeChipCountText: { fontSize: 10, fontWeight: '800' },
+
+  // Channel dropdown & date filter
+  searchAndChannelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  channelDropdownBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    borderRadius: 8,
+    backgroundColor: '#F8F9FA',
+    borderWidth: 1,
+    borderColor: '#EEEEEE',
+    width: 118,
+    flexShrink: 0,
+  },
+  channelDropdownBtnText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#687076',
+    flex: 1,
+  },
+  dropdownOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'flex-end',
+  },
+  channelDropdownSheet: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 36,
+    gap: 4,
+    shadowColor: '#000',
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 10,
+  },
+  channelDropdownTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#11181C',
+    marginBottom: 12,
+    letterSpacing: -0.2,
+  },
+  channelDropdownItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 13,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: 'transparent',
+    marginBottom: 6,
+    backgroundColor: '#F8F9FA',
+  },
+  channelDropdownItemActive: {
+    borderColor: '#FF5C39',
+    backgroundColor: '#FFF4F2',
+  },
+  channelDropdownItemIcon: {
+    fontSize: 22,
+  },
+  channelDropdownItemLabel: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#11181C',
+  },
+  channelDropdownItemDesc: {
+    fontSize: 11,
+    color: '#9BA1A6',
+    marginTop: 2,
+  },
+  channelDropdownCheck: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: '#FF5C39',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  // Date filter
+  dateFilterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 4,
+  },
+  datePresetList: {
+    flexDirection: 'row',
+    gap: 6,
+    alignItems: 'center',
+  },
+  datePresetChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 11,
+    paddingVertical: 5,
+    borderRadius: 16,
+    backgroundColor: '#F8F9FA',
+    borderWidth: 1,
+    borderColor: '#EEEEEE',
+  },
+  datePresetChipActive: {
+    backgroundColor: '#11181C',
+    borderColor: '#11181C',
+  },
+  datePresetChipText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#687076',
+  },
+  datePresetChipTextActive: {
+    color: '#FFFFFF',
+  },
+  todayDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#10B981',
+  },
+
+  // Custom date range modal
+  customDateSheet: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 36,
+    shadowColor: '#000',
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 10,
+  },
+  customDateHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 18,
+  },
+  customDateTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#11181C',
+    letterSpacing: -0.2,
+  },
+  customDateLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#687076',
+    marginBottom: 6,
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+  customDateInput: {
+    height: 44,
+    borderWidth: 1.5,
+    borderColor: '#EEEEEE',
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    fontSize: 15,
+    color: '#11181C',
+    fontWeight: '600',
+    backgroundColor: '#F8F9FA',
+  },
+  customDatePresets: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 16,
+    flexWrap: 'wrap',
+  },
+  quickPresetBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    backgroundColor: '#F0F0F0',
+    borderWidth: 1,
+    borderColor: '#EEEEEE',
+  },
+  quickPresetBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#687076',
+  },
+  customDateActions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 20,
+  },
+  customDateCancel: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    borderRadius: 10,
+    backgroundColor: '#F0F0F0',
+    borderWidth: 1,
+    borderColor: '#EEEEEE',
+  },
+  customDateCancelText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#687076',
+  },
+  customDateApply: {
+    flex: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    borderRadius: 10,
+    backgroundColor: '#FF5C39',
+  },
+  customDateApplyText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
 
   statusTabsBarContainer: {
     backgroundColor: '#FFFFFF', borderBottomWidth: 1, borderBottomColor: '#EEEEEE', paddingVertical: 8, paddingHorizontal: 12,

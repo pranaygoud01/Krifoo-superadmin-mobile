@@ -48,8 +48,8 @@ export const Header: React.FC<HeaderProps> = ({
     const fetchBadgeCount = async () => {
       try {
         const [orderRes, restRes] = await Promise.all([
-          orderService.getAllOrders().catch(() => ({ success: false, data: [] })),
-          restaurantService.getRestaurants().catch(() => ({ success: false, data: [] })),
+          orderService.fetchAllOrders({ status: 'placed,preparing' }).catch(() => ({ success: false, data: [] })),
+          restaurantService.getRestaurants({ limit: 1000 }).catch(() => ({ success: false, data: [] })),
         ]);
 
         let count = 0;

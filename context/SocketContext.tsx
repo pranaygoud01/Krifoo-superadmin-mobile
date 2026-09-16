@@ -160,7 +160,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     async function checkForNewOrders() {
       if (!active || !user) return;
       try {
-        const res = await orderService.getAllOrders({ limit: 15 });
+        const res = await orderService.getAllOrders({ status: 'placed', limit: 100 });
         if (res.success && res.data) {
           const freshOrders = res.data;
 

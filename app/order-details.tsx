@@ -102,7 +102,7 @@ export default function OrderDetailsScreen() {
       }
 
       // Fallback: search in recent orders if the single order endpoint is not deployed yet
-      const fallbackRes = await orderService.getAllOrders({ limit: 100 });
+      const fallbackRes = await orderService.fetchAllOrders();
       if (fallbackRes.success && fallbackRes.data) {
         const found = fallbackRes.data.find((o) => o._id === orderId);
         if (found) {

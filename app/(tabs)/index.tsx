@@ -77,7 +77,7 @@ export default function DashboardScreen() {
       if (isSuperAdmin) {
         const [restRes, orderRes, userRes] = await Promise.all([
           restaurantService.getRestaurants({ limit: 1000 }),
-          orderService.getAllOrders({ limit: 1000 }),
+          orderService.fetchAllOrders(),
           userService.getAllUsers({ limit: 1000 }),
         ]);
 
@@ -103,7 +103,7 @@ export default function DashboardScreen() {
       } else {
         const [statsRes, orderRes, tablesRes] = await Promise.all([
           orderService.getRestaurantStats(),
-          orderService.getAllOrders({ limit: 50 }),
+          orderService.fetchAllOrders(),
           restaurantOwnerService.getTables(),
         ]);
 
@@ -130,7 +130,7 @@ export default function DashboardScreen() {
         }
       }
     } catch (e) {
-      console.error('Failed loading dashboard data:', e);
+      console.warn('Failed loading dashboard data:', e);
     } finally {
       setRefreshing(false);
     }
@@ -886,7 +886,7 @@ export default function DashboardScreen() {
                     }}
                     activeOpacity={0.7}
                   >
-                    <Calendar size={11} color="#EA580C" style={{ marginRight: 3 }} />
+                    {/* <Calendar size={11} color="#EA580C" style={{ marginRight: 3 }} /> */}
                     <Text style={styles.rangePillBadgeText}>{selectedRangeLabel}</Text>
                   </TouchableOpacity>
                 </View>
