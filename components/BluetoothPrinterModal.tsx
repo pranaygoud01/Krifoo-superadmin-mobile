@@ -227,11 +227,11 @@ export const BluetoothPrinterModal: React.FC<BluetoothPrinterModalProps> = ({
       visible={visible}
       animationType="slide"
       presentationStyle="fullScreen"
-      statusBarTranslucent={false}
+      statusBarTranslucent={true}
       onRequestClose={onClose}
     >
       <SafeAreaView style={styles.fullScreenSafeArea} edges={['top', 'bottom', 'left', 'right']}>
-        <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+        <StatusBar barStyle="dark-content" />
 
         {/* ============================================================= */}
         {/* FULL SCREEN UBER EATS TOP NAVIGATION BAR                     */}

@@ -93,7 +93,7 @@ export default function RootLayout() {
         <AuthProvider>
           <ToastProvider>
             <SocketProvider>
-              <StatusBar style="dark" backgroundColor={Colors.background} />
+              <StatusBar style="dark" />
               <Stack
                 screenOptions={{
                   headerShown: false,

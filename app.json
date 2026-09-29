@@ -32,7 +32,9 @@
       "package": "com.krifoo.admin",
       "versionCode": 12,
       "supportsTablet": true,
-      "edgeToEdgeEnabled": true,
+      "androidNavigationBar": {
+        "enforceContrast": false
+      },
       "googleServicesFile": "./google-services.json",
       "permissions": [
         "RECEIVE_BOOT_COMPLETED",

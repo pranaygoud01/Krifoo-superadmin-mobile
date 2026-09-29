@@ -238,7 +238,7 @@ function AdminTabBar({ state, descriptors, navigation }: any) {
 export default function TabLayout() {
   return (
     <>
-      <StatusBar style="dark" backgroundColor={Colors.background} />
+      <StatusBar style="dark" />
       <Tabs
         tabBar={(props) => <AdminTabBar {...props} />}
         screenOptions={{

@@ -333,15 +333,15 @@ export default function SettingsScreen() {
                 <TouchableOpacity
                   style={[
                     styles.orientationPill,
-                    appOrientation === 'default' && styles.orientationPillActive,
+                    appOrientation === 'auto' && styles.orientationPillActive,
                   ]}
-                  onPress={() => handleSetOrientation('default')}
+                  onPress={() => handleSetOrientation('auto')}
                   activeOpacity={0.7}
                 >
                   <Text
                     style={[
                       styles.orientationPillText,
-                      appOrientation === 'default' && styles.orientationPillTextActive,
+                      appOrientation === 'auto' && styles.orientationPillTextActive,
                     ]}
                   >
                     Auto

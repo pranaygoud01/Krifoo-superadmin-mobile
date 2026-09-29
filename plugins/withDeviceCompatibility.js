@@ -1,10 +1,11 @@
-const { withAndroidManifest } = require('expo/config-plugins');
+const { withAndroidManifest, withAndroidStyles } = require('expo/config-plugins');
 
 module.exports = function withDeviceCompatibility(config) {
-  return withAndroidManifest(config, async (config) => {
+  // 1. Manifest adjustments: hardware compatibility, queries, and large screen resizability
+  config = withAndroidManifest(config, async (config) => {
     const androidManifest = config.modResults.manifest;
 
-    // 1. Declare optional hardware features so Google Play Store allows ALL devices (Sunmi, tablets, POS terminals)
+    // A. Declare optional hardware features so Google Play Store allows ALL devices (Sunmi, tablets, POS terminals)
     const optionalFeatures = [
       'android.hardware.bluetooth',
       'android.hardware.bluetooth_le',
@@ -43,7 +44,7 @@ module.exports = function withDeviceCompatibility(config) {
       }
     });
 
-    // 2. Add queries for Sunmi & external POS printer services (Required on Android 11+)
+    // B. Add queries for Sunmi & external POS printer services (Required on Android 11+)
     if (!androidManifest.queries) {
       androidManifest.queries = [];
     }
@@ -76,6 +77,54 @@ module.exports = function withDeviceCompatibility(config) {
 
     androidManifest.queries[0] = queriesObj;
 
+    // C. Android 16+ Large Screen Support:
+    // Remove orientation locks and ensure resizeableActivity is true across application and activities
+    const application = androidManifest.application && androidManifest.application[0];
+    if (application) {
+      application.$ = application.$ || {};
+      application.$['android:resizeableActivity'] = 'true';
+
+      if (application.activity && Array.isArray(application.activity)) {
+        application.activity.forEach((act) => {
+          if (act.$) {
+            act.$['android:resizeableActivity'] = 'true';
+            // Remove hardcoded portrait/landscape orientation restriction
+            delete act.$['android:screenOrientation'];
+          }
+        });
+      }
+    }
+
     return config;
   });
+
+  // 2. Styles adjustments: Android 15 Edge-to-Edge compliance
+  // Remove deprecated statusBarColor, navigationBarColor, and enforceNavigationBarContrast
+  config = withAndroidStyles(config, async (config) => {
+    const { style = [] } = config.modResults.resources;
+    const mainTheme = style.find((s) => s.$ && s.$.name === 'AppTheme');
+    if (mainTheme && mainTheme.item) {
+      // Filter out deprecated parameters
+      mainTheme.item = mainTheme.item.filter(
+        (item) =>
+          item.$ &&
+          item.$.name !== 'android:enforceNavigationBarContrast' &&
+          item.$.name !== 'android:statusBarColor' &&
+          item.$.name !== 'android:navigationBarColor'
+      );
+
+      // Add transparent system bars for standard edge-to-edge
+      mainTheme.item.push({
+        $: { name: 'android:statusBarColor' },
+        _: '@android:color/transparent'
+      });
+      mainTheme.item.push({
+        $: { name: 'android:navigationBarColor' },
+        _: '@android:color/transparent'
+      });
+    }
+    return config;
+  });
+
+  return config;
 };
