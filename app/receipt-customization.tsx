@@ -44,6 +44,7 @@ import {
   formatRestaurantAddress,
 } from '../services/receipt-customization.service';
 import { printTestReceiptTemplate } from '../services/thermal-print.service';
+import { getPosPrinterConfig, savePosPrinterConfig } from '../services/pos-config.service';
 import { restaurantService } from '../services/restaurant.service';
 import { restaurantOwnerService } from '../services/restaurant-owner.service';
 import { ConfirmModal } from '../components/ConfirmModal';
@@ -161,6 +162,18 @@ export default function ReceiptCustomizationScreen() {
     try {
       const all = await getAllReceiptTemplates(restaurantId);
       const active = await getActiveReceiptTemplate(restaurantId);
+
+      // Check if POS printer hardware config has a paperWidth and sync if needed
+      try {
+        const posCfg = await getPosPrinterConfig(restaurantId);
+        if (posCfg.paperWidth && active.layout?.paperWidth !== posCfg.paperWidth) {
+          active.layout.paperWidth = posCfg.paperWidth;
+          await saveReceiptTemplate(active, restaurantId, true);
+        }
+      } catch (syncErr) {
+        console.warn('[ReceiptCustomization] Could not sync posConfig on load:', syncErr);
+      }
+
       setTemplates(all);
       setActiveTemplateId(active.id);
       setCurrentTemplate(active);
@@ -219,9 +232,19 @@ export default function ReceiptCustomizationScreen() {
     setActiveTemplateId(template.id);
     setCurrentTemplate(template);
     await setActiveReceiptTemplateId(template.id, restaurantId);
+
+    // Synchronize POS printer hardware config with newly activated template's paperWidth
+    try {
+      if (template.layout?.paperWidth) {
+        await savePosPrinterConfig({ paperWidth: template.layout.paperWidth }, restaurantId);
+      }
+    } catch (err) {
+      console.warn('[ReceiptCustomization] Failed to sync POS printer paperWidth on activate:', err);
+    }
+
     showToast({
       title: 'Active Template Updated ✅',
-      message: `'${template.name}' is now active for all receipt prints.`,
+      message: `'${template.name}' (${template.layout.paperWidth}) is now active for all receipt prints.`,
       type: 'success',
     });
   };
@@ -300,6 +323,15 @@ export default function ReceiptCustomizationScreen() {
     setCurrentTemplate(updated);
     setOpenDropdownId(null);
 
+    // If paper roll width changed, immediately synchronize to POS printer hardware settings
+    if (partialLayout.paperWidth) {
+      try {
+        await savePosPrinterConfig({ paperWidth: partialLayout.paperWidth }, restaurantId);
+      } catch (err) {
+        console.warn('[ReceiptCustomization] Failed to sync POS printer paperWidth:', err);
+      }
+    }
+
     // If currently active template, immediately persist globally
     if (activeTemplateId === currentTemplate.id) {
       try {
@@ -308,7 +340,7 @@ export default function ReceiptCustomizationScreen() {
         setTemplates(all);
         showToast({
           title: `${label} Active Globally ✅`,
-          message: `Active template updated for all receipt prints in the app.`,
+          message: `Synchronized paper roll to ${partialLayout.paperWidth || updated.layout.paperWidth} for printer & template.`,
           type: 'success',
         });
       } catch (e) {
@@ -352,9 +384,15 @@ export default function ReceiptCustomizationScreen() {
       setTemplates(all);
       setCurrentTemplate(saved);
       setActiveTemplateId(saved.id);
+
+      // Synchronize POS printer hardware config
+      if (saved.layout?.paperWidth) {
+        await savePosPrinterConfig({ paperWidth: saved.layout.paperWidth }, restaurantId);
+      }
+
       showToast({
         title: 'Template Saved ✅',
-        message: `'${saved.name}' has been updated and applied to all receipt prints.`,
+        message: `'${saved.name}' (${saved.layout.paperWidth}) updated and synchronized with printer settings.`,
         type: 'success',
       });
     } catch (err: any) {
@@ -2445,7 +2483,7 @@ export default function ReceiptCustomizationScreen() {
                             >
                               80mm (Standard)
                             </Text>
-                            <Text style={styles.topFloatingMenuSub}>48 cols • Standard roll</Text>
+                            <Text style={styles.topFloatingMenuSub}>48 cols • Synced with printer settings</Text>
                           </View>
                           {currentTemplate.layout.paperWidth === '80mm' && <Check size={13} color="#FF5C39" />}
                         </TouchableOpacity>
@@ -2467,7 +2505,7 @@ export default function ReceiptCustomizationScreen() {
                             >
                               58mm (Compact)
                             </Text>
-                            <Text style={styles.topFloatingMenuSub}>32 cols • Handheld / Mobile</Text>
+                            <Text style={styles.topFloatingMenuSub}>32 cols • Synced with printer settings</Text>
                           </View>
                           {currentTemplate.layout.paperWidth === '58mm' && <Check size={13} color="#FF5C39" />}
                         </TouchableOpacity>

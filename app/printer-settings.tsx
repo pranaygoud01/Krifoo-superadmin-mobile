@@ -62,6 +62,10 @@ import {
   PrinterProfile,
 } from '../services/pos-config.service';
 import { BluetoothPrinterModal, DiscoveredPrinterDevice } from '../components/BluetoothPrinterModal';
+import {
+  getActiveReceiptTemplate,
+  saveReceiptTemplate,
+} from '../services/receipt-customization.service';
 
 export default function PrinterSettingsScreen() {
   const router = useRouter();
@@ -92,7 +96,17 @@ export default function PrinterSettingsScreen() {
 
   // Fetch initial config and check hardware
   useEffect(() => {
-    getPosPrinterConfig(restaurantId).then((cfg) => {
+    getPosPrinterConfig(restaurantId).then(async (cfg) => {
+      // Synchronize with active receipt template if present
+      try {
+        const activeTpl = await getActiveReceiptTemplate(restaurantId);
+        if (activeTpl && activeTpl.layout?.paperWidth && activeTpl.layout.paperWidth !== cfg.paperWidth) {
+          cfg = await savePosPrinterConfig({ paperWidth: activeTpl.layout.paperWidth }, restaurantId);
+        }
+      } catch (e) {
+        console.warn('[PrinterSettings] Error checking template paper width sync:', e);
+      }
+
       setPosConfig(cfg);
       setReceiptPrintingEnabled(cfg.autoPrint !== false || isProfileConfigured(cfg));
       setPrinterIpInput(cfg.ipAddress || '');
@@ -289,9 +303,31 @@ export default function PrinterSettingsScreen() {
 
   // Setting handlers
   const handleSetPaperWidth = async (width: '80mm' | '58mm') => {
+    // 1. Update POS printer hardware config
     const updated = await savePosPrinterConfig({ paperWidth: width }, restaurantId);
     setPosConfig(updated);
-    showToast({ title: 'Paper Roll Updated', message: `Format set to ${width}`, type: 'info' });
+
+    // 2. Synchronize active receipt template so receipt layout matches printer roll
+    try {
+      const activeTpl = await getActiveReceiptTemplate(restaurantId);
+      if (activeTpl && activeTpl.layout.paperWidth !== width) {
+        await saveReceiptTemplate(
+          {
+            ...activeTpl,
+            layout: {
+              ...activeTpl.layout,
+              paperWidth: width,
+            },
+          },
+          restaurantId,
+          true
+        );
+      }
+    } catch (e) {
+      console.warn('[PrinterSettings] Failed to sync template paper width:', e);
+    }
+
+    showToast({ title: 'Paper Roll Updated', message: `Synchronized format to ${width}`, type: 'info' });
   };
 
   const handleSetCopies = async (copies: number) => {
@@ -708,7 +744,7 @@ export default function PrinterSettingsScreen() {
                 <View style={styles.preferenceRow}>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.prefTitle}>Paper roll width</Text>
-                    <Text style={styles.prefSubtitle}>Standard 80mm roll or compact 58mm roll</Text>
+                    <Text style={styles.prefSubtitle}>Synchronized with Receipt Customization (80mm or 58mm)</Text>
                   </View>
                   <View style={styles.segmentGroup}>
                     <TouchableOpacity
