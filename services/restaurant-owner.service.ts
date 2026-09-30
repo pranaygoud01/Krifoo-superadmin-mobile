@@ -95,10 +95,16 @@ export const restaurantOwnerService = {
   async getRestaurantProfile(): Promise<{ success: boolean; data?: any; message?: string }> {
     return apiRequest('/api/restaurants/me', { method: 'GET' });
   },
-  async updateRestaurantProfile(payload: any): Promise<{ success: boolean; message?: string }> {
+  async updateRestaurantProfile(payload: any): Promise<{ success: boolean; data?: any; message?: string }> {
     return apiRequest('/api/restaurants/profile', {
       method: 'PUT',
       body: payload,
+    });
+  },
+  async toggleRestaurantStatus(isActive?: boolean): Promise<{ success: boolean; data?: any; message?: string }> {
+    return apiRequest('/api/restaurants/toggle-status', {
+      method: 'PATCH',
+      body: typeof isActive === 'boolean' ? { isActive } : undefined,
     });
   },
   async updateRestaurantSettings(payload: any): Promise<{ success: boolean; message?: string }> {

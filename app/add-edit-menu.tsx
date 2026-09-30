@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -18,7 +18,28 @@ import { Header } from '../components/Header';
 import { Colors } from '../constants/colors';
 import { menuService } from '../services/menu.service';
 import { Category } from '../types';
-import { ArrowLeft, Save, Plus, Trash2, Check, HelpCircle, AlertTriangle, X } from 'lucide-react-native';
+import {
+  Save,
+  Plus,
+  Trash2,
+  Check,
+  X,
+  Sparkles,
+  Percent,
+  Truck,
+  Store,
+  ShoppingBag,
+  Tag,
+  Utensils,
+  Layers,
+  Camera,
+  Coins,
+  Package,
+  CheckCircle2,
+  Info,
+  Gift,
+  Scale,
+} from 'lucide-react-native';
 import { useAuth } from '../context/AuthContext';
 import * as ImagePicker from 'expo-image-picker';
 
@@ -27,11 +48,15 @@ export default function AddEditMenuScreen() {
   const { id } = useLocalSearchParams();
   const isEditMode = !!id;
   const { user } = useAuth();
-  const restaurantId = (typeof user?.restaurantId === 'object' ? user?.restaurantId?._id : user?.restaurantId) || user?._id || '';
+  const restaurantId =
+    (typeof user?.restaurantId === 'object' ? user?.restaurantId?._id : user?.restaurantId) ||
+    user?._id ||
+    '';
 
   const [activeTab, setActiveTab] = useState<'basic' | 'custom'>('basic');
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [categories, setCategories] = useState<Category[]>([]);
 
   // Form State
@@ -93,8 +118,8 @@ export default function AddEditMenuScreen() {
         const res = await menuService.getAllCategories();
         if (res.success && res.data) {
           setCategories(res.data);
-          if (res.data.length > 0 && !formState.category) {
-            setFormState((prev) => ({ ...prev, category: res.data[0].categoryName }));
+          if (res.data && res.data.length > 0 && !formState.category) {
+            setFormState((prev) => ({ ...prev, category: res.data![0].categoryName }));
           }
         }
       } catch (e) {
@@ -110,7 +135,7 @@ export default function AddEditMenuScreen() {
       if (!restaurantId) return;
       setLoading(true);
       try {
-        const res = await menuService.getRestaurantMenu(restaurantId); // Pass restaurantId
+        const res = await menuService.getRestaurantMenu(restaurantId);
         const item = res.data?.find((i) => i._id === id);
         if (item) {
           setFormState({
@@ -142,7 +167,7 @@ export default function AddEditMenuScreen() {
           setVariantGroups(item.variantGroups || []);
           setAddonGroups(item.addonGroups || []);
           if (item.displayImageUrl || item.displayImage) {
-            setExistingImageUrl(item.displayImageUrl || item.displayImage);
+            setExistingImageUrl(item.displayImageUrl || item.displayImage || null);
           }
         }
       } catch (e) {
@@ -161,7 +186,10 @@ export default function AddEditMenuScreen() {
 
   // --- Weight Variants Handlers ---
   const addWeightVariant = () => {
-    setWeightVariants((prev) => [...prev, { variantName: '', weight: '', unit: formState.weightUnit, price: '' }]);
+    setWeightVariants((prev) => [
+      ...prev,
+      { variantName: '', weight: '', unit: formState.weightUnit, price: '' },
+    ]);
   };
 
   const updateWeightVariant = (index: number, field: string, value: any) => {
@@ -176,7 +204,10 @@ export default function AddEditMenuScreen() {
 
   // --- Portion Options (Variant Groups) Handlers ---
   const addVariantGroup = () => {
-    setVariantGroups((prev) => [...prev, { groupTitle: '', variants: [{ variantName: '', additionalPrice: '' }] }]);
+    setVariantGroups((prev) => [
+      ...prev,
+      { groupTitle: '', variants: [{ variantName: '', additionalPrice: '' }] },
+    ]);
   };
 
   const updateVariantGroupTitle = (index: number, title: string) => {
@@ -188,7 +219,9 @@ export default function AddEditMenuScreen() {
   const addVariantOption = (groupIndex: number) => {
     setVariantGroups((prev) =>
       prev.map((g, idx) =>
-        idx === groupIndex ? { ...g, variants: [...g.variants, { variantName: '', additionalPrice: '' }] } : g
+        idx === groupIndex
+          ? { ...g, variants: [...g.variants, { variantName: '', additionalPrice: '' }] }
+          : g
       )
     );
   };
@@ -222,7 +255,13 @@ export default function AddEditMenuScreen() {
   const addAddonGroup = () => {
     setAddonGroups((prev) => [
       ...prev,
-      { groupTitle: '', customizationBehavior: 'optional', minSelection: '0', maxSelection: '5', addons: [{ optionTitle: '', price: '' }] },
+      {
+        groupTitle: '',
+        customizationBehavior: 'optional',
+        minSelection: '0',
+        maxSelection: '5',
+        addons: [{ optionTitle: '', price: '' }],
+      },
     ]);
   };
 
@@ -265,18 +304,27 @@ export default function AddEditMenuScreen() {
     setAddonGroups((prev) => prev.filter((_, idx) => idx !== index));
   };
 
+  // --- Live Discounted Price Computation ---
+  const calculatedDiscountedPrice = useMemo(() => {
+    const base = parseFloat(formState.basePrice);
+    const disc = parseFloat(formState.discountPercentage);
+    if (isNaN(base) || base <= 0) return null;
+    if (isNaN(disc) || disc <= 0) return base;
+    return Math.max(0, base * (1 - disc / 100));
+  }, [formState.basePrice, formState.discountPercentage]);
+
   // --- Form Submit ---
   const handleSaveItem = async () => {
     const f = formState;
-    if (!f.itemName.trim()) return Alert.alert('Error', 'Item name is required.');
+    if (!f.itemName.trim()) return Alert.alert('Missing Field', 'Please enter a name for this dish.');
     if (f.pricingType === 'fixed') {
       if (!f.basePrice.trim() || isNaN(Number(f.basePrice))) {
-        return Alert.alert('Error', 'Please enter a valid base price.');
+        return Alert.alert('Invalid Price', 'Please enter a valid base price.');
       }
     }
 
     if (!f.availableForDelivery && !f.availableForEatIn && !f.availableForCollection) {
-      return Alert.alert('Error', 'At least one availability option must be enabled.');
+      return Alert.alert('Channel Required', 'At least one fulfillment channel (Delivery, Dine-In, or Pickup) must be enabled.');
     }
 
     setSubmitting(true);
@@ -292,6 +340,7 @@ export default function AddEditMenuScreen() {
 
       uploadData.append('minimumQuantity', f.minimumQuantity);
       uploadData.append('maximumQuantity', f.maximumQuantity);
+      uploadData.append('discountPercentage', f.discountPercentage || '0');
       uploadData.append('isBestseller', String(f.isBestseller));
       uploadData.append('isBuyOneGetOne', String(f.isBuyOneGetOne));
       uploadData.append('offerTag', f.offerTag || '');
@@ -321,7 +370,7 @@ export default function AddEditMenuScreen() {
         uploadData.append('basePrice', String(cleanedWeightVariants[0]?.price || 0));
       }
 
-      // Add Customizations
+      // Customizations
       const cleanedVariantGroups = variantGroups
         .map((g) => ({
           groupTitle: g.groupTitle.trim(),
@@ -373,7 +422,12 @@ export default function AddEditMenuScreen() {
           { text: 'OK', onPress: () => router.back() },
         ]);
       } else {
-        Alert.alert('Error', res.message || 'Failed to save menu item.');
+        Alert.alert(
+          'Save Failed',
+          res.message?.includes('Owner access required')
+            ? 'Owner access required. Please sign in with the Restaurant Owner account to create or edit menu items.'
+            : (res.message || 'Failed to save menu item.')
+        );
       }
     } catch (e: any) {
       Alert.alert('Error', e.message || 'An unexpected error occurred.');
@@ -382,57 +436,142 @@ export default function AddEditMenuScreen() {
     }
   };
 
+  const handleDeleteThisItem = () => {
+    if (!id) return;
+    Alert.alert(
+      'Delete Menu Item',
+      `Are you sure you want to permanently delete "${formState.itemName || 'this item'}"? This action cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete Item',
+          style: 'destructive',
+          onPress: async () => {
+            setDeleting(true);
+            try {
+              const res = await menuService.deleteMenuItem(id as string);
+              if (res.success) {
+                Alert.alert('Deleted', 'Menu item deleted successfully.', [
+                  { text: 'OK', onPress: () => router.back() },
+                ]);
+              } else {
+                Alert.alert(
+                  'Delete Failed',
+                  res.message?.includes('Owner access required')
+                    ? 'Owner access required. Please sign in with the Restaurant Owner account to delete this item.'
+                    : (res.message || 'Failed to delete item.')
+                );
+              }
+            } catch (err: any) {
+              Alert.alert('Error', err.message || 'Failed to delete item.');
+            } finally {
+              setDeleting(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const totalCustomizationsCount = variantGroups.length + addonGroups.length;
+
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       style={styles.container}
     >
-      <Header title={isEditMode ? 'Edit Menu Item' : 'New Menu Item'} showBackButton={true} />
+      <Header
+        title={isEditMode ? 'Edit Menu Item' : 'Add New Item'}
+        showBackButton={true}
+        rightElement={
+          isEditMode ? (
+            <TouchableOpacity
+              onPress={handleDeleteThisItem}
+              disabled={deleting || submitting}
+              style={styles.headerDeleteBtn}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Trash2 size={17} color="#DC2626" />
+            </TouchableOpacity>
+          ) : undefined
+        }
+      />
 
-      {/* Tabs */}
-      <View style={styles.tabsHeader}>
-        {[
-          { id: 'basic', label: 'Basic Info & Pricing' },
-          { id: 'custom', label: 'Options & Customizations' },
-        ].map((tab) => (
+      {/* Modern Segmented Navigation Tabs */}
+      <View style={styles.tabsHeaderContainer}>
+        <View style={styles.tabsHeader}>
           <TouchableOpacity
-            key={tab.id}
-            style={[styles.tabBtn, activeTab === tab.id && styles.tabBtnActive]}
-            onPress={() => setActiveTab(tab.id as any)}
-            activeOpacity={0.7}
+            style={[styles.tabBtn, activeTab === 'basic' && styles.tabBtnActive]}
+            onPress={() => setActiveTab('basic')}
+            activeOpacity={0.8}
           >
-            <Text style={[styles.tabLabel, activeTab === tab.id && styles.tabLabelActive]}>
-              {tab.label}
+            <Utensils size={14} color={activeTab === 'basic' ? '#FFFFFF' : '#64748B'} style={{ marginRight: 6 }} />
+            <Text style={[styles.tabLabel, activeTab === 'basic' && styles.tabLabelActive]}>
+              Basic & Pricing
             </Text>
           </TouchableOpacity>
-        ))}
+
+          <TouchableOpacity
+            style={[styles.tabBtn, activeTab === 'custom' && styles.tabBtnActive]}
+            onPress={() => setActiveTab('custom')}
+            activeOpacity={0.8}
+          >
+            <Layers size={14} color={activeTab === 'custom' ? '#FFFFFF' : '#64748B'} style={{ marginRight: 6 }} />
+            <Text style={[styles.tabLabel, activeTab === 'custom' && styles.tabLabelActive]}>
+              Variants & Addons
+            </Text>
+            {totalCustomizationsCount > 0 && (
+              <View style={[styles.tabBadge, activeTab === 'custom' ? styles.tabBadgeActive : styles.tabBadgeInactive]}>
+                <Text style={[styles.tabBadgeText, activeTab === 'custom' && { color: '#0F172A' }]}>
+                  {totalCustomizationsCount}
+                </Text>
+              </View>
+            )}
+          </TouchableOpacity>
+        </View>
       </View>
 
       {loading ? (
         <View style={styles.centerBox}>
-          <ActivityIndicator size="large" color={Colors.primary} />
-          <Text style={styles.loadingText}>Fetching menu details...</Text>
+          <ActivityIndicator size="large" color="#FF5C39" />
+          <Text style={styles.loadingText}>Fetching dish details...</Text>
         </View>
       ) : (
-        <ScrollView style={styles.formBody} showsVerticalScrollIndicator={false}>
+        <ScrollView style={styles.formBody} contentContainerStyle={{ paddingBottom: 70 }} showsVerticalScrollIndicator={false}>
           {/* TAB 1: BASIC INFO & PRICING */}
           {activeTab === 'basic' && (
             <View style={styles.tabContent}>
-              {/* Image Picker Box */}
-              <View style={styles.imagePickerContainer}>
-                <Text style={styles.label}>Product Image</Text>
-                <TouchableOpacity style={styles.imageBox} onPress={pickImage} activeOpacity={0.85}>
+              {/* CARD 1: Image Upload Box */}
+              <View style={styles.cardSection}>
+                <View style={styles.sectionHeaderRow}>
+                  <Camera size={16} color="#FF5C39" />
+                  <Text style={styles.sectionHeading}>Dish Photograph</Text>
+                </View>
+                <Text style={styles.sectionSub}>Upload a crisp, mouth-watering photo for customer app display</Text>
+
+                <TouchableOpacity style={styles.imageBox} onPress={pickImage} activeOpacity={0.88}>
                   {imageUri ? (
                     <Image source={{ uri: imageUri }} style={styles.imagePreview} />
                   ) : existingImageUrl ? (
                     <Image source={{ uri: existingImageUrl }} style={styles.imagePreview} />
                   ) : (
                     <View style={styles.imagePlaceholder}>
-                      <Plus size={20} color={Colors.textSubtle} style={{ marginBottom: 4 }} />
-                      <Text style={styles.imagePlaceholderText}>Upload Display Image</Text>
+                      <View style={styles.uploadIconCircle}>
+                        <Camera size={24} color="#FF5C39" />
+                      </View>
+                      <Text style={styles.imagePlaceholderTitle}>Upload Dish Cover</Text>
+                      <Text style={styles.imagePlaceholderSub}>PNG, JPG or WEBP (Max 5MB)</Text>
+                    </View>
+                  )}
+
+                  {(imageUri || existingImageUrl) && (
+                    <View style={styles.imageOverlayAction}>
+                      <Camera size={13} color="#FFFFFF" style={{ marginRight: 4 }} />
+                      <Text style={styles.imageOverlayActionText}>Change Photo</Text>
                     </View>
                   )}
                 </TouchableOpacity>
+
                 {(imageUri || existingImageUrl) && (
                   <TouchableOpacity
                     style={styles.removeImageBtn}
@@ -441,67 +580,134 @@ export default function AddEditMenuScreen() {
                       setExistingImageUrl(null);
                     }}
                   >
-                    <Text style={styles.removeImageText}>Remove Image</Text>
+                    <Trash2 size={13} color="#DC2626" style={{ marginRight: 4 }} />
+                    <Text style={styles.removeImageText}>Remove Photo</Text>
                   </TouchableOpacity>
                 )}
               </View>
 
-              <View style={styles.inputGroup}>
-                <Text style={styles.label}>Dish / Item Name *</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="e.g. Classic Margherita Pizza"
-                  value={formState.itemName}
-                  onChangeText={(val) => handleChange('itemName', val)}
-                />
+              {/* CARD 2: General Details */}
+              <View style={styles.cardSection}>
+                <View style={styles.sectionHeaderRow}>
+                  <Utensils size={16} color="#0F172A" />
+                  <Text style={styles.sectionHeading}>Dish Information</Text>
+                </View>
+
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>
+                    Dish / Item Name <Text style={styles.requiredMark}>*</Text>
+                  </Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="e.g. Gourmet Truffle Smash Burger"
+                    placeholderTextColor="#94A3B8"
+                    value={formState.itemName}
+                    onChangeText={(val) => handleChange('itemName', val)}
+                  />
+                </View>
+
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>Category</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.categoryScroll}>
+                    {categories.map((cat) => {
+                      const isSelected = formState.category === cat.categoryName;
+                      return (
+                        <TouchableOpacity
+                          key={cat._id}
+                          style={[styles.catChip, isSelected && styles.catChipActive]}
+                          onPress={() => handleChange('category', cat.categoryName)}
+                          activeOpacity={0.7}
+                        >
+                          {isSelected && <Check size={13} color="#FFFFFF" style={{ marginRight: 4 }} />}
+                          <Text style={[styles.catChipLabel, isSelected && styles.catChipLabelActive]}>
+                            {cat.categoryName}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+                </View>
+
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>Description</Text>
+                  <TextInput
+                    style={[styles.input, styles.textArea]}
+                    placeholder="Describe flavour profile, core ingredients, allergen alerts, and serving size..."
+                    placeholderTextColor="#94A3B8"
+                    multiline
+                    numberOfLines={4}
+                    value={formState.description}
+                    onChangeText={(val) => handleChange('description', val)}
+                  />
+                </View>
               </View>
 
-              <View style={styles.inputGroup}>
-                <Text style={styles.label}>Category</Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.categoryRow}>
-                  {categories.map((cat) => (
-                    <TouchableOpacity
-                      key={cat._id}
-                      style={[
-                        styles.catChip,
-                        formState.category === cat.categoryName && styles.catChipActive,
-                      ]}
-                      onPress={() => handleChange('category', cat.categoryName)}
-                    >
-                      <Text
-                        style={[
-                          styles.catChipLabel,
-                          formState.category === cat.categoryName && styles.catChipLabelActive,
-                        ]}
-                      >
-                        {cat.categoryName}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
-              </View>
+              {/* CARD 3: Dietary Classification */}
+              <View style={styles.cardSection}>
+                <View style={styles.sectionHeaderRow}>
+                  <Tag size={16} color="#16A34A" />
+                  <Text style={styles.sectionHeading}>Dietary Classification</Text>
+                </View>
+                <Text style={styles.sectionSub}>Indicates food badge color and filtering options for customers</Text>
 
-              {/* Pricing Scheme */}
-              <View style={styles.inputGroup}>
-                <Text style={styles.label}>Pricing Scheme</Text>
-                <View style={styles.radioRow}>
+                <View style={styles.dietaryRow}>
                   {[
-                    { label: 'Fixed Price', value: 'fixed' },
-                    { label: 'By Weight', value: 'weight' },
-                    { label: 'By Portion Size', value: 'portion' },
+                    { id: 'veg', label: 'Pure Veg', color: '#16A34A', bg: '#DCFCE7', border: '#86EFAC', icon: '🟢' },
+                    { id: 'non-veg', label: 'Non-Veg', color: '#DC2626', bg: '#FEE2E2', border: '#FCA5A5', icon: '🔴' },
+                    { id: 'egg', label: 'Contains Egg', color: '#D97706', bg: '#FEF3C7', border: '#FDE68A', icon: '🟡' },
+                  ].map((diet) => {
+                    const isSelected = formState.itemType === diet.id;
+                    return (
+                      <TouchableOpacity
+                        key={diet.id}
+                        style={[
+                          styles.dietaryCard,
+                          isSelected && { borderColor: diet.color, backgroundColor: diet.bg },
+                        ]}
+                        onPress={() => handleChange('itemType', diet.id)}
+                        activeOpacity={0.75}
+                      >
+                        <Text style={{ fontSize: 18, marginBottom: 4 }}>{diet.icon}</Text>
+                        <Text style={[styles.dietaryCardLabel, isSelected && { color: diet.color, fontWeight: '800' }]}>
+                          {diet.label}
+                        </Text>
+                        {isSelected && (
+                          <View style={[styles.dietarySelectedDot, { backgroundColor: diet.color }]}>
+                            <Check size={10} color="#FFFFFF" strokeWidth={3} />
+                          </View>
+                        )}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+
+              {/* CARD 4: Pricing Scheme & Live Price Preview */}
+              <View style={styles.cardSection}>
+                <View style={styles.sectionHeaderRow}>
+                  <Coins size={16} color="#0F172A" />
+                  <Text style={styles.sectionHeading}>Pricing & Channels</Text>
+                </View>
+
+                {/* Scheme Segmented Buttons */}
+                <View style={styles.pricingSchemePills}>
+                  {[
+                    { id: 'fixed', label: 'Fixed Price' },
+                    { id: 'weight', label: 'By Weight' },
+                    { id: 'portion', label: 'By Portion' },
                   ].map((mode) => (
                     <TouchableOpacity
-                      key={mode.value}
+                      key={mode.id}
                       style={[
-                        styles.radioItem,
-                        formState.pricingType === mode.value && styles.radioItemActive,
+                        styles.pricingSchemePill,
+                        formState.pricingType === mode.id && styles.pricingSchemePillActive,
                       ]}
-                      onPress={() => handleChange('pricingType', mode.value)}
+                      onPress={() => handleChange('pricingType', mode.id)}
                     >
                       <Text
                         style={[
-                          styles.radioLabel,
-                          formState.pricingType === mode.value && styles.radioLabelActive,
+                          styles.pricingSchemePillText,
+                          formState.pricingType === mode.id && styles.pricingSchemePillTextActive,
                         ]}
                       >
                         {mode.label}
@@ -509,419 +715,592 @@ export default function AddEditMenuScreen() {
                     </TouchableOpacity>
                   ))}
                 </View>
-              </View>
 
-              {formState.pricingType === 'fixed' ? (
-                <View style={styles.subSection}>
-                  <View style={styles.inputGroup}>
-                    <Text style={styles.label}>Base Price (£) *</Text>
-                    <TextInput
-                      style={styles.input}
-                      keyboardType="numeric"
-                      placeholder="e.g. 9.99"
-                      value={formState.basePrice}
-                      onChangeText={(val) => handleChange('basePrice', val)}
-                    />
-                  </View>
+                {formState.pricingType === 'fixed' ? (
+                  <View style={{ gap: 14 }}>
+                    <View style={styles.rowInputs}>
+                      <View style={[styles.inputGroup, { flex: 1.2 }]}>
+                        <Text style={styles.inputLabel}>
+                          Base Price (£) <Text style={styles.requiredMark}>*</Text>
+                        </Text>
+                        <View style={styles.priceInputWrapper}>
+                          <Text style={styles.currencyPrefix}>£</Text>
+                          <TextInput
+                            style={styles.priceInput}
+                            keyboardType="numeric"
+                            placeholder="9.99"
+                            placeholderTextColor="#94A3B8"
+                            value={formState.basePrice}
+                            onChangeText={(val) => handleChange('basePrice', val)}
+                          />
+                        </View>
+                      </View>
 
-                  <View style={{ flexDirection: 'row', gap: 8 }}>
-                    <View style={[styles.inputGroup, { flex: 1 }]}>
-                      <Text style={styles.label}>Delivery Price (£)</Text>
-                      <TextInput
-                        style={styles.input}
-                        keyboardType="numeric"
-                        placeholder="Optional"
-                        value={formState.deliveryPrice}
-                        onChangeText={(val) => handleChange('deliveryPrice', val)}
-                      />
+                      <View style={[styles.inputGroup, { flex: 1 }]}>
+                        <Text style={styles.inputLabel}>Discount (%)</Text>
+                        <View style={styles.priceInputWrapper}>
+                          <TextInput
+                            style={[styles.priceInput, { paddingLeft: 12 }]}
+                            keyboardType="numeric"
+                            placeholder="0"
+                            placeholderTextColor="#94A3B8"
+                            value={formState.discountPercentage}
+                            onChangeText={(val) => handleChange('discountPercentage', val)}
+                          />
+                          <Text style={styles.percentSuffix}>%</Text>
+                        </View>
+                      </View>
                     </View>
-                    <View style={[styles.inputGroup, { flex: 1 }]}>
-                      <Text style={styles.label}>Collection Price (£)</Text>
-                      <TextInput
-                        style={styles.input}
-                        keyboardType="numeric"
-                        placeholder="Optional"
-                        value={formState.collectionPrice}
-                        onChangeText={(val) => handleChange('collectionPrice', val)}
-                      />
-                    </View>
-                    <View style={[styles.inputGroup, { flex: 1 }]}>
-                      <Text style={styles.label}>Eat-in Price (£)</Text>
-                      <TextInput
-                        style={styles.input}
-                        keyboardType="numeric"
-                        placeholder="Optional"
-                        value={formState.eatInPrice}
-                        onChangeText={(val) => handleChange('eatInPrice', val)}
-                      />
-                    </View>
-                  </View>
 
-                  <View style={styles.inputGroup}>
-                    <Text style={styles.label}>Inventory Stock Count</Text>
-                    <TextInput
-                      style={styles.input}
-                      keyboardType="numeric"
-                      placeholder="Leave empty for unlimited stock"
-                      value={formState.stock}
-                      onChangeText={(val) => handleChange('stock', val)}
-                    />
-                  </View>
-
-                  <View style={styles.toggleItem}>
-                    <View>
-                      <Text style={styles.toggleTitle}>Platform Bestseller</Text>
-                      <Text style={styles.toggleSub}>Highlight item with bestseller tag</Text>
-                    </View>
-                    <Switch
-                      value={formState.isBestseller}
-                      onValueChange={(val) => handleChange('isBestseller', val)}
-                      trackColor={{ true: Colors.primaryLight, false: Colors.cardBorder }}
-                      thumbColor={formState.isBestseller ? Colors.primary : Colors.textSubtle}
-                    />
-                  </View>
-
-                  <View style={styles.toggleItem}>
-                    <View>
-                      <Text style={styles.toggleTitle}>Buy 1 Get 1 Free (BOGO)</Text>
-                      <Text style={styles.toggleSub}>Double delivery quantity automatically</Text>
-                    </View>
-                    <Switch
-                      value={formState.isBuyOneGetOne}
-                      onValueChange={(val) => handleChange('isBuyOneGetOne', val)}
-                      trackColor={{ true: Colors.primaryLight, false: Colors.cardBorder }}
-                      thumbColor={formState.isBuyOneGetOne ? Colors.primary : Colors.textSubtle}
-                    />
-                  </View>
-
-                  <View style={styles.inputGroup}>
-                    <Text style={styles.label}>Custom Offer Tag / Promotion Text</Text>
-                    <TextInput
-                      style={styles.input}
-                      placeholder="e.g. 10% OFF WEEKEND"
-                      value={formState.offerTag}
-                      onChangeText={(val) => handleChange('offerTag', val)}
-                    />
-                  </View>
-                </View>
-              ) : formState.pricingType === 'weight' ? (
-                <View style={styles.subSection}>
-                  <View style={styles.inputGroup}>
-                    <Text style={styles.label}>Weight Unit</Text>
-                    <View style={styles.radioRow}>
-                      {['gm', 'kg', 'ml', 'l', 'pcs', 'pack'].map((unit) => (
-                        <TouchableOpacity
-                          key={unit}
-                          style={[
-                            styles.radioItem,
-                            formState.weightUnit === unit && styles.radioItemActive,
-                          ]}
-                          onPress={() => handleChange('weightUnit', unit)}
-                        >
-                          <Text
-                            style={[
-                              styles.radioLabel,
-                              formState.weightUnit === unit && styles.radioLabelActive,
-                            ]}
-                          >
-                            {unit.toUpperCase()}
+                    {/* Live Pricing Preview Pill */}
+                    {calculatedDiscountedPrice !== null && (
+                      <View style={styles.livePriceBanner}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <Percent size={14} color="#16A34A" />
+                          <Text style={styles.livePriceText}>
+                            Base: <Text style={{ fontWeight: '700' }}>£{Number(formState.basePrice || 0).toFixed(2)}</Text>
+                            {Number(formState.discountPercentage) > 0 && (
+                              <Text style={{ color: '#DC2626' }}> -{formState.discountPercentage}% OFF</Text>
+                            )}
                           </Text>
-                        </TouchableOpacity>
-                      ))}
+                        </View>
+                        <View style={styles.livePriceFinalPill}>
+                          <Text style={styles.livePriceFinalText}>
+                            Final: £{Number(calculatedDiscountedPrice).toFixed(2)}
+                          </Text>
+                        </View>
+                      </View>
+                    )}
+
+                    {/* Specific Channel Overrides */}
+                    <Text style={[styles.inputLabel, { marginTop: 6 }]}>Channel-Specific Prices (Optional)</Text>
+                    <View style={styles.rowInputs}>
+                      <View style={[styles.inputGroup, { flex: 1 }]}>
+                        <View style={styles.channelLabelRow}>
+                          <Truck size={11} color="#64748B" />
+                          <Text style={styles.channelInputLabel}>Delivery</Text>
+                        </View>
+                        <TextInput
+                          style={styles.channelInput}
+                          keyboardType="numeric"
+                          placeholder="Auto"
+                          placeholderTextColor="#94A3B8"
+                          value={formState.deliveryPrice}
+                          onChangeText={(val) => handleChange('deliveryPrice', val)}
+                        />
+                      </View>
+
+                      <View style={[styles.inputGroup, { flex: 1 }]}>
+                        <View style={styles.channelLabelRow}>
+                          <ShoppingBag size={11} color="#64748B" />
+                          <Text style={styles.channelInputLabel}>Pickup</Text>
+                        </View>
+                        <TextInput
+                          style={styles.channelInput}
+                          keyboardType="numeric"
+                          placeholder="Auto"
+                          placeholderTextColor="#94A3B8"
+                          value={formState.collectionPrice}
+                          onChangeText={(val) => handleChange('collectionPrice', val)}
+                        />
+                      </View>
+
+                      <View style={[styles.inputGroup, { flex: 1 }]}>
+                        <View style={styles.channelLabelRow}>
+                          <Store size={11} color="#64748B" />
+                          <Text style={styles.channelInputLabel}>Dine-in</Text>
+                        </View>
+                        <TextInput
+                          style={styles.channelInput}
+                          keyboardType="numeric"
+                          placeholder="Auto"
+                          placeholderTextColor="#94A3B8"
+                          value={formState.eatInPrice}
+                          onChangeText={(val) => handleChange('eatInPrice', val)}
+                        />
+                      </View>
                     </View>
                   </View>
+                ) : formState.pricingType === 'weight' ? (
+                  <View style={{ gap: 14 }}>
+                    <View style={styles.inputGroup}>
+                      <Text style={styles.inputLabel}>Weight Unit Metric</Text>
+                      <View style={styles.weightUnitRow}>
+                        {['gm', 'kg', 'ml', 'l', 'pcs', 'pack'].map((unit) => (
+                          <TouchableOpacity
+                            key={unit}
+                            style={[
+                              styles.weightUnitChip,
+                              formState.weightUnit === unit && styles.weightUnitChipActive,
+                            ]}
+                            onPress={() => handleChange('weightUnit', unit)}
+                          >
+                            <Text
+                              style={[
+                                styles.weightUnitText,
+                                formState.weightUnit === unit && styles.weightUnitTextActive,
+                              ]}
+                            >
+                              {unit.toUpperCase()}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    </View>
 
-                  <View style={styles.arrayHeader}>
-                    <Text style={styles.arrayTitle}>Weight / Size Tiers</Text>
-                    <TouchableOpacity style={styles.arrayAddBtn} onPress={addWeightVariant}>
-                      <Plus size={14} color="#FFFFFF" style={{ marginRight: 4 }} />
-                      <Text style={styles.arrayAddText}>Add Tier</Text>
-                    </TouchableOpacity>
-                  </View>
-
-                  {weightVariants.length === 0 ? (
-                    <Text style={styles.arrayEmptyText}>No weight pricing tiers defined.</Text>
-                  ) : (
-                    weightVariants.map((wv, index) => (
-                      <View key={index} style={styles.arrayItemRow}>
-                        <TextInput
-                          style={[styles.input, { flex: 2, marginRight: 8 }]}
-                          placeholder="e.g. 250"
-                          keyboardType="numeric"
-                          value={String(wv.weight || '')}
-                          onChangeText={(val) => updateWeightVariant(index, 'weight', val)}
-                        />
-                        <Text style={styles.unitText}>{formState.weightUnit}</Text>
-                        <TextInput
-                          style={[styles.input, { flex: 2, marginLeft: 8, marginRight: 8 }]}
-                          placeholder="€ Price"
-                          keyboardType="numeric"
-                          value={String(wv.price || '')}
-                          onChangeText={(val) => updateWeightVariant(index, 'price', val)}
-                        />
-                        <TouchableOpacity onPress={() => removeWeightVariant(index)}>
-                          <Trash2 size={16} color={Colors.danger} />
+                    <View style={styles.arrayHeader}>
+                      <View style={styles.arrayTitleRow}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
+                          <Scale size={16} color="#0F172A" />
+                          <Text style={styles.sectionHeading}>Weight Tiers</Text>
+                        </View>
+                        <TouchableOpacity style={styles.arrayAddBtn} onPress={addWeightVariant} activeOpacity={0.8}>
+                          <Plus size={13} color="#FFFFFF" style={{ marginRight: 4 }} />
+                          <Text style={styles.arrayAddText}>Add Tier</Text>
                         </TouchableOpacity>
                       </View>
-                    ))
-                  )}
-                </View>
-              ) : (
-                <View style={styles.subSection}>
-                  <Text style={styles.infoText}>
-                    Portion-wise pricing uses custom options configured in the "Options & Customizations" tab. Set the base prices in variant options.
-                  </Text>
-                </View>
-              )}
+                      <Text style={styles.arraySub}>Define custom weights and specific prices</Text>
+                    </View>
 
-              <View style={styles.inputGroup}>
-                <Text style={styles.label}>Description</Text>
-                <TextInput
-                  style={[styles.input, styles.textArea]}
-                  placeholder="Describe ingredients, allergen warnings, or size descriptions..."
-                  multiline
-                  numberOfLines={4}
-                  value={formState.description}
-                  onChangeText={(val) => handleChange('description', val)}
-                />
+                    {weightVariants.length === 0 ? (
+                      <View style={styles.emptyArrayBox}>
+                        <Scale size={24} color="#94A3B8" />
+                        <Text style={styles.emptyArrayText}>No weight tiers added yet</Text>
+                      </View>
+                    ) : (
+                      weightVariants.map((wv, index) => (
+                        <View key={index} style={styles.weightRowCard}>
+                          <TextInput
+                            style={[styles.input, { flex: 2, marginRight: 8 }]}
+                            placeholder="e.g. 250"
+                            placeholderTextColor="#94A3B8"
+                            keyboardType="numeric"
+                            value={String(wv.weight || '')}
+                            onChangeText={(val) => updateWeightVariant(index, 'weight', val)}
+                          />
+                          <Text style={styles.unitText}>{formState.weightUnit}</Text>
+                          <TextInput
+                            style={[styles.input, { flex: 2, marginLeft: 8, marginRight: 8 }]}
+                            placeholder="£ Price"
+                            placeholderTextColor="#94A3B8"
+                            keyboardType="numeric"
+                            value={String(wv.price || '')}
+                            onChangeText={(val) => updateWeightVariant(index, 'price', val)}
+                          />
+                          <TouchableOpacity onPress={() => removeWeightVariant(index)}>
+                            <Trash2 size={16} color="#DC2626" />
+                          </TouchableOpacity>
+                        </View>
+                      ))
+                    )}
+                  </View>
+                ) : (
+                  <View style={styles.portionNoticeCard}>
+                    <Info size={16} color="#3B82F6" />
+                    <Text style={styles.portionNoticeText}>
+                      Portion pricing is controlled via the <Text style={{ fontWeight: '800' }}>Variants & Addons</Text> tab. Configure sizes (e.g. Small, Regular, Large) with distinct prices there.
+                    </Text>
+                  </View>
+                )}
               </View>
 
-              <View style={styles.inputGroup}>
-                <Text style={styles.label}>Dietary Type</Text>
-                <View style={styles.radioRow}>
-                  {[
-                    { label: 'Vegetarian', value: 'veg' },
-                    { label: 'Non-Vegetarian', value: 'non-veg' },
-                    { label: 'Contains Egg', value: 'egg' },
-                  ].map((type) => (
-                    <TouchableOpacity
-                      key={type.value}
-                      style={[
-                        styles.radioItem,
-                        formState.itemType === type.value && styles.radioItemActive,
-                      ]}
-                      onPress={() => handleChange('itemType', type.value)}
-                    >
-                      <Text
-                        style={[
-                          styles.radioLabel,
-                          formState.itemType === type.value && styles.radioLabelActive,
-                        ]}
-                      >
-                        {type.label}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
+              {/* CARD 5: Marketing & Promotional Tags */}
+              <View style={styles.cardSection}>
+                <View style={styles.sectionHeaderRow}>
+                  <Sparkles size={16} color="#D97706" />
+                  <Text style={styles.sectionHeading}>Promotions & Badges</Text>
+                </View>
+
+                {/* Bestseller Toggle Card */}
+                <View style={styles.promoToggleCard}>
+                  <View style={{ flex: 1, paddingRight: 10 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Text style={{ fontSize: 15 }}>⭐</Text>
+                      <Text style={styles.promoToggleTitle}>Platform Bestseller</Text>
+                    </View>
+                    <Text style={styles.promoToggleSub}>Highlight this dish with a glowing Bestseller badge in the catalog</Text>
+                  </View>
+                  <Switch
+                    value={formState.isBestseller}
+                    onValueChange={(val) => handleChange('isBestseller', val)}
+                    trackColor={{ true: '#F59E0B', false: '#E2E8F0' }}
+                    thumbColor="#FFFFFF"
+                  />
+                </View>
+
+                {/* BOGO Toggle Card */}
+                <View style={[styles.promoToggleCard, { marginTop: 10 }]}>
+                  <View style={{ flex: 1, paddingRight: 10 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Gift size={16} color="#7C3AED" />
+                      <Text style={styles.promoToggleTitle}>Buy 1 Get 1 Free (BOGO)</Text>
+                    </View>
+                    <Text style={styles.promoToggleSub}>Applies promotional 2-for-1 discount automatically at checkout</Text>
+                  </View>
+                  <Switch
+                    value={formState.isBuyOneGetOne}
+                    onValueChange={(val) => handleChange('isBuyOneGetOne', val)}
+                    trackColor={{ true: '#7C3AED', false: '#E2E8F0' }}
+                    thumbColor="#FFFFFF"
+                  />
+                </View>
+
+                {/* Custom Offer Tag */}
+                <View style={[styles.inputGroup, { marginTop: 12 }]}>
+                  <Text style={styles.inputLabel}>Custom Offer Tag</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="e.g. CHEF SPECIAL or WEEKEND OFFER"
+                    placeholderTextColor="#94A3B8"
+                    value={formState.offerTag}
+                    onChangeText={(val) => handleChange('offerTag', val)}
+                  />
                 </View>
               </View>
 
-              <View style={styles.rowInputs}>
-                <View style={[styles.inputGroup, { flex: 1, marginRight: 8 }]}>
-                  <Text style={styles.label}>Min Order Qty</Text>
+              {/* CARD 6: Stock & Limits */}
+              <View style={styles.cardSection}>
+                <View style={styles.sectionHeaderRow}>
+                  <Package size={16} color="#0F172A" />
+                  <Text style={styles.sectionHeading}>Inventory & Order Limits</Text>
+                </View>
+
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>Stock Count</Text>
                   <TextInput
                     style={styles.input}
                     keyboardType="numeric"
-                    value={formState.minimumQuantity}
-                    onChangeText={(val) => handleChange('minimumQuantity', val)}
+                    placeholder="Leave empty for unlimited stock"
+                    placeholderTextColor="#94A3B8"
+                    value={formState.stock}
+                    onChangeText={(val) => handleChange('stock', val)}
                   />
                 </View>
-                <View style={[styles.inputGroup, { flex: 1 }]}>
-                  <Text style={styles.label}>Max Order Qty</Text>
-                  <TextInput
-                    style={styles.input}
-                    keyboardType="numeric"
-                    value={formState.maximumQuantity}
-                    onChangeText={(val) => handleChange('maximumQuantity', val)}
-                  />
+
+                <View style={styles.rowInputs}>
+                  <View style={[styles.inputGroup, { flex: 1 }]}>
+                    <Text style={styles.inputLabel}>Min Order Qty</Text>
+                    <TextInput
+                      style={styles.input}
+                      keyboardType="numeric"
+                      value={formState.minimumQuantity}
+                      onChangeText={(val) => handleChange('minimumQuantity', val)}
+                    />
+                  </View>
+                  <View style={[styles.inputGroup, { flex: 1 }]}>
+                    <Text style={styles.inputLabel}>Max Order Qty</Text>
+                    <TextInput
+                      style={styles.input}
+                      keyboardType="numeric"
+                      value={formState.maximumQuantity}
+                      onChangeText={(val) => handleChange('maximumQuantity', val)}
+                    />
+                  </View>
                 </View>
               </View>
 
-              {/* Fulfilment Availabilities */}
-              <View style={[styles.inputGroup, { marginTop: 12 }]}>
-                <Text style={styles.label}>Availability Methods</Text>
-                <View style={styles.toggleItem}>
-                  <Text style={styles.toggleTitle}>Available for Delivery</Text>
-                  <Switch
-                    value={formState.availableForDelivery}
-                    onValueChange={(val) => handleChange('availableForDelivery', val)}
-                    trackColor={{ true: Colors.primaryLight, false: Colors.cardBorder }}
-                    thumbColor={formState.availableForDelivery ? Colors.primary : Colors.textSubtle}
-                  />
+              {/* CARD 7: Fulfillment Channels */}
+              <View style={styles.cardSection}>
+                <View style={styles.sectionHeaderRow}>
+                  <Truck size={16} color="#0F172A" />
+                  <Text style={styles.sectionHeading}>Order Fulfillment Channels</Text>
                 </View>
-                <View style={styles.toggleItem}>
-                  <Text style={styles.toggleTitle}>Available for Eat-In</Text>
-                  <Switch
-                    value={formState.availableForEatIn}
-                    onValueChange={(val) => handleChange('availableForEatIn', val)}
-                    trackColor={{ true: Colors.primaryLight, false: Colors.cardBorder }}
-                    thumbColor={formState.availableForEatIn ? Colors.primary : Colors.textSubtle}
-                  />
-                </View>
-                <View style={styles.toggleItem}>
-                  <Text style={styles.toggleTitle}>Available for Collection</Text>
-                  <Switch
-                    value={formState.availableForCollection}
-                    onValueChange={(val) => handleChange('availableForCollection', val)}
-                    trackColor={{ true: Colors.primaryLight, false: Colors.cardBorder }}
-                    thumbColor={formState.availableForCollection ? Colors.primary : Colors.textSubtle}
-                  />
+                <Text style={styles.sectionSub}>Enable or disable which customer channels can order this dish</Text>
+
+                <View style={{ gap: 8 }}>
+                  <View style={styles.channelToggleRow}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                      <View style={[styles.channelIconBox, { backgroundColor: '#EFF6FF' }]}>
+                        <Truck size={16} color="#2563EB" />
+                      </View>
+                      <View>
+                        <Text style={styles.channelRowTitle}>Delivery</Text>
+                        <Text style={styles.channelRowSub}>Available for home & office delivery</Text>
+                      </View>
+                    </View>
+                    <Switch
+                      value={formState.availableForDelivery}
+                      onValueChange={(val) => handleChange('availableForDelivery', val)}
+                      trackColor={{ true: '#10B981', false: '#E2E8F0' }}
+                      thumbColor="#FFFFFF"
+                    />
+                  </View>
+
+                  <View style={styles.channelToggleRow}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                      <View style={[styles.channelIconBox, { backgroundColor: '#F0FDF4' }]}>
+                        <Store size={16} color="#16A34A" />
+                      </View>
+                      <View>
+                        <Text style={styles.channelRowTitle}>Dine-in</Text>
+                        <Text style={styles.channelRowSub}>Available for table order & QR menu</Text>
+                      </View>
+                    </View>
+                    <Switch
+                      value={formState.availableForEatIn}
+                      onValueChange={(val) => handleChange('availableForEatIn', val)}
+                      trackColor={{ true: '#10B981', false: '#E2E8F0' }}
+                      thumbColor="#FFFFFF"
+                    />
+                  </View>
+
+                  <View style={styles.channelToggleRow}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                      <View style={[styles.channelIconBox, { backgroundColor: '#FAF5FF' }]}>
+                        <ShoppingBag size={16} color="#7C3AED" />
+                      </View>
+                      <View>
+                        <Text style={styles.channelRowTitle}>Pickup / Collection</Text>
+                        <Text style={styles.channelRowSub}>Available for takeaway pickup</Text>
+                      </View>
+                    </View>
+                    <Switch
+                      value={formState.availableForCollection}
+                      onValueChange={(val) => handleChange('availableForCollection', val)}
+                      trackColor={{ true: '#10B981', false: '#E2E8F0' }}
+                      thumbColor="#FFFFFF"
+                    />
+                  </View>
                 </View>
               </View>
             </View>
           )}
 
-          {/* TAB 3: CUSTOM OPTIONS & CUSTOMIZATIONS */}
+          {/* TAB 2: OPTIONS & CUSTOMIZATIONS */}
           {activeTab === 'custom' && (
             <View style={styles.tabContent}>
-              {/* Variant Groups Section */}
-              <View style={styles.arrayHeader}>
-                <View>
-                  <Text style={styles.arrayTitle}>Portion Options (Sizes)</Text>
-                  <Text style={styles.arraySub}>Customer chooses one size option (e.g. Regular, Large)</Text>
-                </View>
-                <TouchableOpacity style={styles.arrayAddBtn} onPress={addVariantGroup}>
-                  <Plus size={14} color="#FFFFFF" style={{ marginRight: 4 }} />
-                  <Text style={styles.arrayAddText}>Add Group</Text>
-                </TouchableOpacity>
-              </View>
-
-              {variantGroups.map((g, gidx) => (
-                <View key={gidx} style={styles.groupCard}>
-                  <View style={styles.groupHeader}>
-                    <TextInput
-                      style={[styles.input, { flex: 1, marginRight: 10 }]}
-                      placeholder="Group Title (e.g. Portion Size)"
-                      value={g.groupTitle}
-                      onChangeText={(val) => updateVariantGroupTitle(gidx, val)}
-                    />
-                    <TouchableOpacity onPress={() => removeVariantGroup(gidx)}>
-                      <Trash2 size={16} color={Colors.danger} />
-                    </TouchableOpacity>
-                  </View>
-
-                  <Text style={styles.optionsLabel}>Size Choices & Additional Prices:</Text>
-                  {g.variants?.map((v: any, vidx: number) => (
-                    <View key={vidx} style={styles.optionRow}>
-                      <TextInput
-                        style={[styles.input, { flex: 3, marginRight: 8 }]}
-                        placeholder="Option Name (e.g. Large)"
-                        value={v.variantName}
-                        onChangeText={(val) => updateVariantOption(gidx, vidx, 'variantName', val)}
-                      />
-                      <TextInput
-                        style={[styles.input, { flex: 2, marginRight: 8 }]}
-                        placeholder="+€ Extra Fee"
-                        keyboardType="numeric"
-                        value={String(v.additionalPrice || '')}
-                        onChangeText={(val) => updateVariantOption(gidx, vidx, 'additionalPrice', val)}
-                      />
-                      <TouchableOpacity onPress={() => removeVariantOption(gidx, vidx)}>
-                        <X size={16} color={Colors.textSubtle} />
-                      </TouchableOpacity>
+              {/* Variant Groups (Sizes) Section */}
+              <View style={styles.cardSection}>
+                <View style={styles.arrayHeader}>
+                  <View style={styles.arrayTitleRow}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
+                      <Layers size={16} color="#0F172A" />
+                      <Text style={styles.sectionHeading}>Portion Sizes</Text>
                     </View>
-                  ))}
-
-                  <TouchableOpacity style={styles.addOptionBtn} onPress={() => addVariantOption(gidx)}>
-                    <Plus size={12} color={Colors.primary} style={{ marginRight: 4 }} />
-                    <Text style={styles.addOptionText}>Add Choice</Text>
-                  </TouchableOpacity>
-                </View>
-              ))}
-
-              <View style={styles.divider} />
-
-              {/* Addon Groups Section */}
-              <View style={styles.arrayHeader}>
-                <View>
-                  <Text style={styles.arrayTitle}>Extras / Add-on Customizations</Text>
-                  <Text style={styles.arraySub}>Customer chooses multiple additions (e.g. Extra Cheese)</Text>
-                </View>
-                <TouchableOpacity style={[styles.arrayAddBtn, { backgroundColor: '#7C3AED' }]} onPress={addAddonGroup}>
-                  <Plus size={14} color="#FFFFFF" style={{ marginRight: 4 }} />
-                  <Text style={styles.arrayAddText}>Add Extras</Text>
-                </TouchableOpacity>
-              </View>
-
-              {addonGroups.map((g, gidx) => (
-                <View key={gidx} style={[styles.groupCard, { borderColor: '#DDD6FE' }]}>
-                  <View style={styles.groupHeader}>
-                    <TextInput
-                      style={[styles.input, { flex: 1, marginRight: 10 }]}
-                      placeholder="Extras Title (e.g. Toppings)"
-                      value={g.groupTitle}
-                      onChangeText={(val) => updateAddonGroupField(gidx, 'groupTitle', val)}
-                    />
-                    <TouchableOpacity onPress={() => removeAddonGroup(gidx)}>
-                      <Trash2 size={16} color={Colors.danger} />
+                    <TouchableOpacity style={styles.arrayAddBtn} onPress={addVariantGroup} activeOpacity={0.8}>
+                      <Plus size={13} color="#FFFFFF" style={{ marginRight: 4 }} />
+                      <Text style={styles.arrayAddText}>Add Size Group</Text>
                     </TouchableOpacity>
                   </View>
+                  <Text style={styles.arraySub}>Customer selects one size option (e.g. Regular, Large)</Text>
+                </View>
 
-                  <View style={styles.addonSettingRow}>
-                    <Text style={styles.addonSettingLabel}>Selection Mode:</Text>
-                    <View style={styles.selectorSmall}>
-                      {['compulsory', 'optional'].map((mode) => (
-                        <TouchableOpacity
-                          key={mode}
-                          style={[
-                            styles.selectorSmallItem,
-                            g.customizationBehavior === mode && styles.selectorSmallItemActive,
-                          ]}
-                          onPress={() => updateAddonGroupField(gidx, 'customizationBehavior', mode)}
-                        >
-                          <Text style={[styles.selectorSmallLabel, g.customizationBehavior === mode && { color: '#7C3AED' }]}>
-                            {mode.toUpperCase()}
-                          </Text>
+                {variantGroups.length === 0 ? (
+                  <View style={styles.emptyArrayBox}>
+                    <Layers size={28} color="#94A3B8" />
+                    <Text style={styles.emptyArrayText}>No size variations configured.</Text>
+                    <Text style={styles.emptyArraySub}>Add a portion group like "Pizza Size" or "Portion".</Text>
+                  </View>
+                ) : (
+                  variantGroups.map((g, gidx) => (
+                    <View key={gidx} style={styles.customGroupCard}>
+                      <View style={styles.groupHeader}>
+                        <TextInput
+                          style={[styles.input, { flex: 1, marginRight: 10, fontWeight: '700' }]}
+                          placeholder="Group Title (e.g. Portion Size)"
+                          placeholderTextColor="#94A3B8"
+                          value={g.groupTitle}
+                          onChangeText={(val) => updateVariantGroupTitle(gidx, val)}
+                        />
+                        <TouchableOpacity onPress={() => removeVariantGroup(gidx)} style={styles.groupTrashBtn}>
+                          <Trash2 size={16} color="#DC2626" />
                         </TouchableOpacity>
-                      ))}
-                    </View>
-                  </View>
+                      </View>
 
-                  <Text style={styles.optionsLabel}>Add-on Items & Extra Price:</Text>
-                  {g.addons?.map((a: any, aidx: number) => (
-                    <View key={aidx} style={styles.optionRow}>
-                      <TextInput
-                        style={[styles.input, { flex: 3, marginRight: 8 }]}
-                        placeholder="Choice Title (e.g. Cheese)"
-                        value={a.optionTitle}
-                        onChangeText={(val) => updateAddonOption(gidx, aidx, 'optionTitle', val)}
-                      />
-                      <TextInput
-                        style={[styles.input, { flex: 2, marginRight: 8 }]}
-                        placeholder="€ Price"
-                        keyboardType="numeric"
-                        value={String(a.price || '')}
-                        onChangeText={(val) => updateAddonOption(gidx, aidx, 'price', val)}
-                      />
-                      <TouchableOpacity onPress={() => removeAddonOption(gidx, aidx)}>
-                        <X size={16} color={Colors.textSubtle} />
+                      <Text style={styles.optionsLabel}>Size Choices & Additional Price (£):</Text>
+                      {g.variants?.map((v: any, vidx: number) => (
+                        <View key={vidx} style={styles.optionRow}>
+                          <TextInput
+                            style={[styles.input, { flex: 3, marginRight: 8 }]}
+                            placeholder="Option Name (e.g. Large)"
+                            placeholderTextColor="#94A3B8"
+                            value={v.variantName}
+                            onChangeText={(val) => updateVariantOption(gidx, vidx, 'variantName', val)}
+                          />
+                          <TextInput
+                            style={[styles.input, { flex: 2, marginRight: 8 }]}
+                            placeholder="+£ Extra"
+                            placeholderTextColor="#94A3B8"
+                            keyboardType="numeric"
+                            value={String(v.additionalPrice || '')}
+                            onChangeText={(val) => updateVariantOption(gidx, vidx, 'additionalPrice', val)}
+                          />
+                          <TouchableOpacity onPress={() => removeVariantOption(gidx, vidx)} style={styles.optionRemoveBtn}>
+                            <X size={15} color="#94A3B8" />
+                          </TouchableOpacity>
+                        </View>
+                      ))}
+
+                      <TouchableOpacity style={styles.addOptionBtn} onPress={() => addVariantOption(gidx)}>
+                        <Plus size={12} color="#0F172A" style={{ marginRight: 4 }} />
+                        <Text style={styles.addOptionText}>Add Another Size Choice</Text>
                       </TouchableOpacity>
                     </View>
-                  ))}
+                  ))
+                )}
+              </View>
 
-                  <TouchableOpacity style={styles.addOptionBtn} onPress={() => addAddonOption(gidx)}>
-                    <Plus size={12} color="#7C3AED" style={{ marginRight: 4 }} />
-                    <Text style={[styles.addOptionText, { color: '#7C3AED' }]}>Add Extras Choice</Text>
-                  </TouchableOpacity>
+              {/* Addon Groups (Extras) Section */}
+              <View style={styles.cardSection}>
+                <View style={styles.arrayHeader}>
+                  <View style={styles.arrayTitleRow}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
+                      <Plus size={16} color="#7C3AED" />
+                      <Text style={styles.sectionHeading}>Extras & Add-ons</Text>
+                    </View>
+                    <TouchableOpacity
+                      style={[styles.arrayAddBtn, { backgroundColor: '#7C3AED' }]}
+                      onPress={addAddonGroup}
+                      activeOpacity={0.8}
+                    >
+                      <Plus size={13} color="#FFFFFF" style={{ marginRight: 4 }} />
+                      <Text style={styles.arrayAddText}>Add Add-on Group</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <Text style={styles.arraySub}>Customer can pick multiple toppings or additions</Text>
                 </View>
-              ))}
+
+                {addonGroups.length === 0 ? (
+                  <View style={styles.emptyArrayBox}>
+                    <Tag size={28} color="#94A3B8" />
+                    <Text style={styles.emptyArrayText}>No extras or add-ons defined.</Text>
+                    <Text style={styles.emptyArraySub}>Add groups like "Extra Cheese", "Sauces" or "Dips".</Text>
+                  </View>
+                ) : (
+                  addonGroups.map((g, gidx) => (
+                    <View key={gidx} style={[styles.customGroupCard, { borderColor: '#DDD6FE' }]}>
+                      <View style={styles.groupHeader}>
+                        <TextInput
+                          style={[styles.input, { flex: 1, marginRight: 10, fontWeight: '700' }]}
+                          placeholder="Extras Title (e.g. Extra Toppings)"
+                          placeholderTextColor="#94A3B8"
+                          value={g.groupTitle}
+                          onChangeText={(val) => updateAddonGroupField(gidx, 'groupTitle', val)}
+                        />
+                        <TouchableOpacity onPress={() => removeAddonGroup(gidx)} style={styles.groupTrashBtn}>
+                          <Trash2 size={16} color="#DC2626" />
+                        </TouchableOpacity>
+                      </View>
+
+                      <View style={styles.addonSettingRow}>
+                        <Text style={styles.addonSettingLabel}>Selection Requirement:</Text>
+                        <View style={styles.selectorSmall}>
+                          {['compulsory', 'optional'].map((mode) => (
+                            <TouchableOpacity
+                              key={mode}
+                              style={[
+                                styles.selectorSmallItem,
+                                g.customizationBehavior === mode && styles.selectorSmallItemActive,
+                              ]}
+                              onPress={() => updateAddonGroupField(gidx, 'customizationBehavior', mode)}
+                            >
+                              <Text
+                                style={[
+                                  styles.selectorSmallLabel,
+                                  g.customizationBehavior === mode && { color: '#7C3AED', fontWeight: '800' },
+                                ]}
+                              >
+                                {mode.toUpperCase()}
+                              </Text>
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                      </View>
+
+                      <View style={styles.rowInputs}>
+                        <View style={[styles.inputGroup, { flex: 1 }]}>
+                          <Text style={styles.addonSettingLabel}>Min Picks</Text>
+                          <TextInput
+                            style={[styles.input, { height: 40 }]}
+                            keyboardType="numeric"
+                            value={String(g.minSelection ?? '0')}
+                            onChangeText={(val) => updateAddonGroupField(gidx, 'minSelection', val)}
+                          />
+                        </View>
+                        <View style={[styles.inputGroup, { flex: 1 }]}>
+                          <Text style={styles.addonSettingLabel}>Max Picks</Text>
+                          <TextInput
+                            style={[styles.input, { height: 40 }]}
+                            keyboardType="numeric"
+                            value={String(g.maxSelection ?? '5')}
+                            onChangeText={(val) => updateAddonGroupField(gidx, 'maxSelection', val)}
+                          />
+                        </View>
+                      </View>
+
+                      <Text style={[styles.optionsLabel, { marginTop: 10 }]}>Add-on Items & Extra Price (£):</Text>
+                      {g.addons?.map((a: any, aidx: number) => (
+                        <View key={aidx} style={styles.optionRow}>
+                          <TextInput
+                            style={[styles.input, { flex: 3, marginRight: 8 }]}
+                            placeholder="Choice Name (e.g. Mozzarella)"
+                            placeholderTextColor="#94A3B8"
+                            value={a.optionTitle}
+                            onChangeText={(val) => updateAddonOption(gidx, aidx, 'optionTitle', val)}
+                          />
+                          <TextInput
+                            style={[styles.input, { flex: 2, marginRight: 8 }]}
+                            placeholder="+£ Price"
+                            placeholderTextColor="#94A3B8"
+                            keyboardType="numeric"
+                            value={String(a.price || '')}
+                            onChangeText={(val) => updateAddonOption(gidx, aidx, 'price', val)}
+                          />
+                          <TouchableOpacity onPress={() => removeAddonOption(gidx, aidx)} style={styles.optionRemoveBtn}>
+                            <X size={15} color="#94A3B8" />
+                          </TouchableOpacity>
+                        </View>
+                      ))}
+
+                      <TouchableOpacity style={styles.addOptionBtn} onPress={() => addAddonOption(gidx)}>
+                        <Plus size={12} color="#7C3AED" style={{ marginRight: 4 }} />
+                        <Text style={[styles.addOptionText, { color: '#7C3AED' }]}>Add Extras Choice</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ))
+                )}
+              </View>
             </View>
           )}
 
-          {/* Save Button */}
-          <TouchableOpacity
-            style={[styles.saveBtn, submitting && { opacity: 0.7 }]}
-            disabled={submitting}
-            onPress={handleSaveItem}
-          >
-            {submitting ? (
-              <ActivityIndicator color="#FFFFFF" />
-            ) : (
-              <>
-                <Text style={styles.saveBtnText}>Save Product Catalog</Text>
-                <Save size={18} color="#FFFFFF" style={{ marginLeft: 6 }} />
-              </>
+          {/* Form Actions Footer */}
+          <View style={styles.formFooterActions}>
+            <TouchableOpacity
+              style={[styles.saveBtn, (submitting || deleting) && { opacity: 0.7 }]}
+              disabled={submitting || deleting}
+              onPress={handleSaveItem}
+              activeOpacity={0.85}
+            >
+              {submitting ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <>
+                  <Save size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
+                  <Text style={styles.saveBtnText}>
+                    {isEditMode ? 'Update Dish Details' : 'Publish Dish to Catalog'}
+                  </Text>
+                </>
+              )}
+            </TouchableOpacity>
+
+            {isEditMode && (
+              <TouchableOpacity
+                style={[styles.deleteItemBtn, (deleting || submitting) && { opacity: 0.6 }]}
+                disabled={deleting || submitting}
+                onPress={handleDeleteThisItem}
+                activeOpacity={0.8}
+              >
+                {deleting ? (
+                  <ActivityIndicator size="small" color="#DC2626" />
+                ) : (
+                  <>
+                    <Trash2 size={16} color="#DC2626" style={{ marginRight: 6 }} />
+                    <Text style={styles.deleteItemBtnText}>Permanently Delete This Dish</Text>
+                  </>
+                )}
+              </TouchableOpacity>
             )}
-          </TouchableOpacity>
+          </View>
         </ScrollView>
       )}
     </KeyboardAvoidingView>
@@ -931,7 +1310,13 @@ export default function AddEditMenuScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: Colors.background,
+    backgroundColor: '#F8FAFC',
+  },
+  headerDeleteBtn: {
+    padding: 7,
+    borderRadius: 8,
+    backgroundColor: '#FEE2E2',
+    marginRight: 4,
   },
   centerBox: {
     flex: 1,
@@ -940,37 +1325,68 @@ const styles = StyleSheet.create({
     padding: 40,
   },
   loadingText: {
-    color: Colors.textMuted,
+    color: '#64748B',
     fontSize: 13,
     marginTop: 10,
+    fontWeight: '600',
+  },
+  tabsHeaderContainer: {
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
   },
   tabsHeader: {
     flexDirection: 'row',
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.cardBorder,
-    paddingHorizontal: 8,
-    paddingVertical: 10,
-    gap: 6,
+    backgroundColor: '#F1F5F9',
+    borderRadius: 12,
+    padding: 4,
+    gap: 4,
   },
   tabBtn: {
     flex: 1,
-    paddingVertical: 8,
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 8,
+    paddingVertical: 9,
+    borderRadius: 9,
   },
   tabBtnActive: {
-    backgroundColor: Colors.primaryLight,
+    backgroundColor: '#0F172A',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
   },
   tabLabel: {
-    fontSize: 11,
+    fontSize: 12.5,
     fontWeight: '700',
-    color: Colors.textMuted,
-    textAlign: 'center',
+    color: '#64748B',
   },
   tabLabelActive: {
-    color: Colors.primary,
+    color: '#FFFFFF',
+  },
+  tabBadge: {
+    marginLeft: 6,
+    borderRadius: 10,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    minWidth: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tabBadgeActive: {
+    backgroundColor: '#FFFFFF',
+  },
+  tabBadgeInactive: {
+    backgroundColor: '#CBD5E1',
+  },
+  tabBadgeText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#FFFFFF',
   },
   formBody: {
     flex: 1,
@@ -979,183 +1395,413 @@ const styles = StyleSheet.create({
   tabContent: {
     gap: 16,
   },
-  inputGroup: {
+  cardSection: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 16,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.03,
+    shadowRadius: 6,
+    elevation: 1,
+  },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
     marginBottom: 4,
   },
-  label: {
-    fontSize: 13,
+  sectionHeading: {
+    fontSize: 14.5,
+    fontWeight: '800',
+    color: '#0F172A',
+    letterSpacing: -0.2,
+  },
+  sectionSub: {
+    fontSize: 12,
+    color: '#64748B',
+    lineHeight: 16,
+    marginBottom: 14,
+  },
+  inputGroup: {
+    marginBottom: 12,
+  },
+  inputLabel: {
+    fontSize: 12.5,
     fontWeight: '700',
-    color: Colors.text,
-    marginBottom: 8,
+    color: '#334155',
+    marginBottom: 6,
+  },
+  requiredMark: {
+    color: '#DC2626',
+    fontWeight: '800',
   },
   input: {
-    backgroundColor: '#FFFFFF',
-    borderColor: Colors.cardBorder,
-    borderWidth: 1.5,
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    height: 48,
-    fontSize: 14,
-    color: Colors.text,
+    backgroundColor: '#F8FAFC',
+    borderColor: '#E2E8F0',
+    borderWidth: 1.2,
+    borderRadius: 11,
+    paddingHorizontal: 13,
+    height: 46,
+    fontSize: 13.5,
+    color: '#0F172A',
   },
   textArea: {
-    height: 90,
-    paddingTop: 12,
+    height: 95,
+    paddingTop: 11,
     textAlignVertical: 'top',
+    lineHeight: 19,
   },
   rowInputs: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    gap: 10,
   },
-  categoryRow: {
+  categoryScroll: {
     flexDirection: 'row',
-    paddingVertical: 4,
+    paddingVertical: 2,
   },
   catChip: {
-    backgroundColor: Colors.cardSurface,
-    borderColor: Colors.cardBorder,
-    borderWidth: 1.5,
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderColor: '#E2E8F0',
+    borderWidth: 1.2,
+    borderRadius: 20,
+    paddingHorizontal: 13,
+    paddingVertical: 7,
     marginRight: 8,
   },
   catChipActive: {
-    borderColor: Colors.primary,
-    backgroundColor: Colors.primaryLight,
+    borderColor: '#0F172A',
+    backgroundColor: '#0F172A',
   },
   catChipLabel: {
     fontSize: 12,
-    fontWeight: '700',
-    color: Colors.textMuted,
+    fontWeight: '600',
+    color: '#475569',
   },
   catChipLabelActive: {
-    color: Colors.primary,
+    color: '#FFFFFF',
+    fontWeight: '700',
   },
-  radioRow: {
+  dietaryRow: {
     flexDirection: 'row',
-    gap: 8,
+    gap: 10,
   },
-  radioItem: {
+  dietaryCard: {
     flex: 1,
-    backgroundColor: Colors.cardSurface,
+    backgroundColor: '#F8FAFC',
     borderWidth: 1.5,
-    borderColor: Colors.cardBorder,
-    borderRadius: 10,
-    paddingVertical: 10,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+    position: 'relative',
+  },
+  dietaryCardLabel: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  dietarySelectedDot: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  radioItemActive: {
-    borderColor: Colors.primary,
-    backgroundColor: Colors.primaryLight,
-  },
-  radioLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: Colors.textMuted,
-  },
-  radioLabelActive: {
-    color: Colors.primary,
-  },
-  subSection: {
-    gap: 16,
-  },
-  toggleItem: {
+  pricingSchemePills: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    backgroundColor: '#F1F5F9',
+    borderRadius: 10,
+    padding: 3,
+    marginBottom: 14,
+  },
+  pricingSchemePill: {
+    flex: 1,
+    paddingVertical: 8,
     alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 8,
+  },
+  pricingSchemePillActive: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: Colors.cardBorder,
-    padding: 12,
-    marginVertical: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 2,
+    elevation: 1,
   },
-  toggleTitle: {
-    fontSize: 13,
+  pricingSchemePillText: {
+    fontSize: 11.5,
     fontWeight: '700',
-    color: Colors.text,
+    color: '#64748B',
   },
-  toggleSub: {
-    fontSize: 11,
-    color: Colors.textSubtle,
-    marginTop: 2,
+  pricingSchemePillTextActive: {
+    color: '#0F172A',
   },
-  infoText: {
-    fontSize: 12,
-    color: Colors.textMuted,
-    lineHeight: 18,
-    backgroundColor: Colors.cardSurface,
-    borderWidth: 1,
-    borderColor: Colors.cardBorder,
-    padding: 12,
-    borderRadius: 12,
-  },
-  arrayHeader: {
+  priceInputWrapper: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginVertical: 8,
+    backgroundColor: '#F8FAFC',
+    borderColor: '#E2E8F0',
+    borderWidth: 1.2,
+    borderRadius: 11,
+    overflow: 'hidden',
   },
-  arrayTitle: {
+  currencyPrefix: {
+    paddingLeft: 13,
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#475569',
+  },
+  percentSuffix: {
+    paddingRight: 13,
     fontSize: 14,
     fontWeight: '800',
-    color: Colors.text,
-    letterSpacing: -0.2,
+    color: '#475569',
   },
-  arraySub: {
-    fontSize: 10.5,
-    color: Colors.textSubtle,
-    marginTop: 2,
-    maxWidth: 240,
+  priceInput: {
+    flex: 1,
+    height: 46,
+    paddingHorizontal: 8,
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0F172A',
   },
-  arrayAddBtn: {
+  livePriceBanner: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.primary,
+    justifyContent: 'space-between',
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+  },
+  livePriceText: {
+    fontSize: 12,
+    color: '#166534',
+  },
+  livePriceFinalPill: {
+    backgroundColor: '#16A34A',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  livePriceFinalText: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+    fontSize: 11.5,
+  },
+  channelLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginBottom: 5,
+  },
+  channelInputLabel: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  channelInput: {
+    backgroundColor: '#F8FAFC',
+    borderColor: '#E2E8F0',
+    borderWidth: 1.2,
+    borderRadius: 9,
+    paddingHorizontal: 10,
+    height: 40,
+    fontSize: 13,
+    color: '#0F172A',
+  },
+  weightUnitRow: {
+    flexDirection: 'row',
+    gap: 6,
+    flexWrap: 'wrap',
+  },
+  weightUnitChip: {
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 8,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
   },
-  arrayAddText: {
-    color: '#FFFFFF',
+  weightUnitChipActive: {
+    backgroundColor: '#0F172A',
+    borderColor: '#0F172A',
+  },
+  weightUnitText: {
     fontSize: 11,
-    fontWeight: '800',
+    fontWeight: '700',
+    color: '#475569',
   },
-  arrayEmptyText: {
-    fontSize: 12,
-    color: Colors.textSubtle,
-    textAlign: 'center',
-    marginVertical: 14,
+  weightUnitTextActive: {
+    color: '#FFFFFF',
   },
-  arrayItemRow: {
+  weightRowCard: {
     flexDirection: 'row',
     alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 10,
+    padding: 10,
     marginBottom: 8,
   },
   unitText: {
     fontSize: 12,
-    fontWeight: '700',
-    color: Colors.textMuted,
+    fontWeight: '800',
+    color: '#64748B',
   },
-  groupCard: {
+  emptyArrayBox: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 24,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderStyle: 'dashed',
+  },
+  emptyArrayText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#475569',
+    marginTop: 6,
+  },
+  emptyArraySub: {
+    fontSize: 11.5,
+    color: '#94A3B8',
+    marginTop: 2,
+  },
+  portionNoticeCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    borderRadius: 10,
+    padding: 12,
+  },
+  portionNoticeText: {
+    flex: 1,
+    fontSize: 12,
+    color: '#1E40AF',
+    lineHeight: 17,
+  },
+  promoToggleCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    padding: 12,
+  },
+  promoToggleTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  promoToggleSub: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2,
+    lineHeight: 15,
+  },
+  channelToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    padding: 12,
+  },
+  channelIconBox: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  channelRowTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  channelRowSub: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 1,
+  },
+  arrayHeader: {
+    marginBottom: 14,
+  },
+  arrayTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  arrayTitle: {
+    fontSize: 13.5,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  arraySub: {
+    fontSize: 11.5,
+    color: '#64748B',
+    marginTop: 4,
+    lineHeight: 16,
+  },
+  arrayAddBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0F172A',
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+    borderRadius: 8,
+    flexShrink: 0,
+  },
+  arrayAddText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  customGroupCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 14,
     borderWidth: 1.5,
-    borderColor: Colors.cardBorder,
+    borderColor: '#E2E8F0',
     padding: 14,
-    marginBottom: 16,
+    marginBottom: 14,
   },
   groupHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 12,
   },
+  groupTrashBtn: {
+    padding: 6,
+    borderRadius: 8,
+    backgroundColor: '#FEE2E2',
+  },
   optionsLabel: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: Colors.textMuted,
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#475569',
     marginBottom: 8,
   },
   optionRow: {
@@ -1163,21 +1809,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 8,
   },
+  optionRemoveBtn: {
+    padding: 6,
+  },
   addOptionBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 6,
-    paddingVertical: 4,
+    marginTop: 4,
+    paddingVertical: 5,
   },
   addOptionText: {
     fontSize: 12,
-    fontWeight: '800',
-    color: Colors.primary,
-  },
-  divider: {
-    height: 1,
-    backgroundColor: Colors.cardBorder,
-    marginVertical: 16,
+    fontWeight: '700',
+    color: '#0F172A',
   },
   addonSettingRow: {
     flexDirection: 'row',
@@ -1186,22 +1830,22 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     paddingBottom: 10,
     borderBottomWidth: 1,
-    borderBottomColor: Colors.cardBorder,
+    borderBottomColor: '#F1F5F9',
   },
   addonSettingLabel: {
     fontSize: 12,
-    fontWeight: '800',
-    color: Colors.text,
+    fontWeight: '700',
+    color: '#334155',
   },
   selectorSmall: {
     flexDirection: 'row',
-    backgroundColor: Colors.cardSurface,
-    padding: 3,
+    backgroundColor: '#F1F5F9',
+    padding: 2,
     borderRadius: 8,
   },
   selectorSmallItem: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
     borderRadius: 6,
   },
   selectorSmallItemActive: {
@@ -1213,39 +1857,22 @@ const styles = StyleSheet.create({
     elevation: 1,
   },
   selectorSmallLabel: {
-    fontSize: 9,
-    fontWeight: '800',
-    color: Colors.textSubtle,
-  },
-  saveBtn: {
-    backgroundColor: Colors.success,
-    borderRadius: 12,
-    height: 48,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 20,
-    marginBottom: 50,
-  },
-  saveBtnText: {
-    color: '#FFFFFF',
-    fontWeight: '800',
-    fontSize: 15,
-  },
-  imagePickerContainer: {
-    marginBottom: 16,
+    fontSize: 9.5,
+    fontWeight: '700',
+    color: '#64748B',
   },
   imageBox: {
     width: '100%',
-    height: 160,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
+    height: 180,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 14,
     borderWidth: 2,
-    borderColor: Colors.cardBorder,
+    borderColor: '#E2E8F0',
     borderStyle: 'dashed',
     justifyContent: 'center',
     alignItems: 'center',
     overflow: 'hidden',
+    position: 'relative',
   },
   imagePreview: {
     width: '100%',
@@ -1255,14 +1882,46 @@ const styles = StyleSheet.create({
   imagePlaceholder: {
     alignItems: 'center',
     justifyContent: 'center',
+    padding: 16,
   },
-  imagePlaceholderText: {
-    fontSize: 12,
+  uploadIconCircle: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#FFF1EE',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
+  imagePlaceholderTitle: {
+    fontSize: 13.5,
     fontWeight: '700',
-    color: Colors.textMuted,
-    marginTop: 4,
+    color: '#334155',
+  },
+  imagePlaceholderSub: {
+    fontSize: 11,
+    color: '#94A3B8',
+    marginTop: 2,
+  },
+  imageOverlayAction: {
+    position: 'absolute',
+    bottom: 10,
+    right: 10,
+    backgroundColor: 'rgba(15, 23, 42, 0.75)',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  imageOverlayActionText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '700',
   },
   removeImageBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
     alignSelf: 'center',
     marginTop: 8,
     paddingVertical: 4,
@@ -1271,6 +1930,44 @@ const styles = StyleSheet.create({
   removeImageText: {
     fontSize: 12,
     fontWeight: '700',
-    color: Colors.danger,
+    color: '#DC2626',
+  },
+  formFooterActions: {
+    marginTop: 16,
+    marginBottom: 24,
+    gap: 12,
+  },
+  saveBtn: {
+    backgroundColor: '#0F172A',
+    borderRadius: 14,
+    height: 52,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 4,
+  },
+  saveBtnText: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+    fontSize: 15,
+  },
+  deleteItemBtn: {
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1.5,
+    borderColor: '#FECACA',
+    borderRadius: 14,
+    height: 50,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  deleteItemBtnText: {
+    color: '#DC2626',
+    fontWeight: '800',
+    fontSize: 14,
   },
 });

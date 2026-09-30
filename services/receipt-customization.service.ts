@@ -84,7 +84,7 @@ export const DEFAULT_RECEIPT_TEMPLATE: ReceiptTemplate = {
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
   layout: {
-    paperWidth: '80mm',
+    paperWidth: '58mm',
     fontSize: 'medium',
     fontFamily: 'fontA',
     lineSpacing: 'normal',

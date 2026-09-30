@@ -13,18 +13,23 @@ import {
   DeviceEventEmitter,
   Modal,
   Platform,
+  AppState,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
 import { OrderDetailModal } from '../../components/OrderDetailModal';
 import { AssignDeliveryModal } from '../../components/AssignDeliveryModal';
 import { ConfirmModal } from '../../components/ConfirmModal';
+import { ErrorState } from '../../components/ErrorState';
+import { ApiErrorType } from '../../services/api';
 import { Colors } from '../../constants/colors';
 import { orderService } from '../../services/order.service';
 import { useToast } from '../../context/ToastContext';
 import { Order, OrderStatus } from '../../types';
+import { Skeleton } from '../../components/Skeleton';
 import {
   Search,
+  WifiOff,
   RefreshCw,
   ChevronDown,
   ChevronUp,
@@ -44,8 +49,15 @@ import {
   Globe,
   Calendar,
   CalendarDays,
+  SlidersHorizontal,
+  RotateCcw,
+  CreditCard,
+  Banknote,
+  Sparkles,
 } from 'lucide-react-native';
-import { printThermalReceipt, isAutoPrintEnabled, getLastPrintJobReport } from '../../services/thermal-print.service';
+import { printThermalReceipt, isAutoPrintEnabled, getLastPrintJobReport, getOrderScheduleInfo } from '../../services/thermal-print.service';
+import { getPosPrinterConfig } from '../../services/pos-config.service';
+import { getActiveReceiptTemplate } from '../../services/receipt-customization.service';
 
 const TABLET_BREAKPOINT = 768;
 
@@ -53,7 +65,7 @@ const STATUS_TABS = [
   { id: 'all', label: 'All Orders', subtitle: 'All Statuses', statuses: [] as OrderStatus[], accentColor: '#11181C', Icon: List },
   { id: 'new', label: 'New Orders', subtitle: 'Awaiting Acceptance', statuses: ['placed'] as OrderStatus[], accentColor: '#F59E0B', Icon: Inbox },
   { id: 'kitchen', label: 'In Kitchen', subtitle: 'Preparing & Cooking', statuses: ['confirmed', 'preparing'] as OrderStatus[], accentColor: '#3B82F6', Icon: Truck },
-  { id: 'pickup', label: 'Self Pickup', subtitle: 'Ready for Collection', statuses: ['ready_for_pickup'] as OrderStatus[], accentColor: '#FF5C39', Icon: ShoppingBag },
+  { id: 'pickup', label: 'Self Pickup / Takeaway', subtitle: 'Ready for Collection', statuses: ['ready_for_pickup'] as OrderStatus[], accentColor: '#FF5C39', Icon: ShoppingBag },
   { id: 'delivery', label: 'Out for Delivery', subtitle: 'Rider on the Way', statuses: ['out_for_delivery'] as OrderStatus[], accentColor: '#8B5CF6', Icon: Bike },
   { id: 'completed', label: 'Completed', subtitle: 'Delivered Successfully', statuses: ['delivered'] as OrderStatus[], accentColor: '#10B981', Icon: CheckCircle2 },
   { id: 'cancelled', label: 'Cancelled', subtitle: 'Not Fulfilled', statuses: ['cancelled'] as OrderStatus[], accentColor: '#EF4444', Icon: RefreshCw },
@@ -153,6 +165,25 @@ export function getOrderSourceDetails(order: Order): {
   const restSubdomain = restExt?.subdomain ? `${restExt.subdomain}.krifoo.com` : '';
   const fallbackExtDomain = restCustomDomain || restSubdomain;
 
+  const custName = (order.customerDetails?.name || (order.customerId as any)?.fullName || '').toLowerCase();
+  const phone = (order.customerDetails?.phoneNumber || (order.customerId as any)?.phoneNumber || '').replace(/\D/g, '');
+  const oType = ((order.orderType || (order as any).deliveryType || '') as string).toLowerCase();
+
+  const isTakeawayApp =
+    oType === 'takeaway' ||
+    rawDomain.toLowerCase().includes('swaad-takeaway') ||
+    rawDomain.toLowerCase().includes('swaadtakeaway') ||
+    custName.includes('takeaway') ||
+    custName.includes('swaad takeaway') ||
+    phone.includes('7783448291');
+
+  if (isTakeawayApp) {
+    return {
+      isExternal: true,
+      domainUrl: 'Swaad Takeaway App',
+    };
+  }
+
   // 1. Explicit krifoo marketplace check
   if (
     rawDomain.toLowerCase().includes('krifoo.co.uk') ||
@@ -221,10 +252,34 @@ function formatPaymentLabel(order: Order) {
   return 'Payment : Online (Stripe/Card)';
 }
 
-function getOrderFulfillmentType(order: Order): 'delivery' | 'pickup' | 'dine_in' {
+export function getOrderStatusColor(status?: string): string {
+  const s = (status || '').toLowerCase().trim();
+  switch (s) {
+    case 'placed':
+      return '#F59E0B'; // Amber - New Orders / Awaiting Acceptance
+    case 'confirmed':
+    case 'preparing':
+      return '#3B82F6'; // Kitchen Blue - In Kitchen Cooking
+    case 'ready_for_pickup':
+      return '#FF5C39'; // Brand Coral - Ready for Pickup / Takeaway
+    case 'out_for_delivery':
+      return '#8B5CF6'; // Purple - Rider on the Way / Out for Delivery
+    case 'delivered':
+      return '#10B981'; // Emerald Green - Completed Successfully
+    case 'cancelled':
+      return '#EF4444'; // Red - Cancelled
+    default:
+      return '#94A3B8'; // Slate Gray fallback
+  }
+}
+
+
+function getOrderFulfillmentType(order: Order): 'delivery' | 'pickup' | 'takeaway' | 'dine_in' {
   const oType = ((order.orderType || (order as any).deliveryType || '') as string).toLowerCase();
+  const domain = ((order.sourceDomain || '') as string).toLowerCase();
   const notes = typeof order.notes === 'string' ? order.notes.toLowerCase() : '';
   const addr1 = typeof (order.deliveryAddress as any)?.addressLine1 === 'string' ? (order.deliveryAddress as any).addressLine1.toLowerCase() : '';
+  const app = ((order as any).appName || '').toLowerCase();
 
   if (
     oType === 'dine_in' ||
@@ -239,6 +294,24 @@ function getOrderFulfillmentType(order: Order): 'delivery' | 'pickup' | 'dine_in
   ) {
     return 'dine_in';
   }
+
+  const custName = (order.customerDetails?.name || (order.customerId as any)?.fullName || '').toLowerCase();
+  const phone = (order.customerDetails?.phoneNumber || (order.customerId as any)?.phoneNumber || '').replace(/\D/g, '');
+
+  const isTakeawayApp =
+    oType === 'takeaway' ||
+    domain.includes('swaad-takeaway') ||
+    domain.includes('swaadtakeaway') ||
+    app.includes('takeaway') ||
+    notes.includes('takeaway') ||
+    custName.includes('takeaway') ||
+    custName.includes('swaad takeaway') ||
+    phone.includes('7783448291');
+
+  if (oType === 'takeaway' || ((oType === 'pickup' || !oType) && isTakeawayApp)) {
+    return 'takeaway';
+  }
+
   if (oType === 'pickup' || oType === 'collection') {
     return 'pickup';
   }
@@ -246,8 +319,8 @@ function getOrderFulfillmentType(order: Order): 'delivery' | 'pickup' | 'dine_in
     return 'delivery';
   }
   const addr = order.deliveryAddress;
-  if (!addr) return 'pickup';
-  if (typeof addr === 'string') return addr.trim() ? 'delivery' : 'pickup';
+  if (!addr) return isTakeawayApp ? 'takeaway' : 'pickup';
+  if (typeof addr === 'string') return addr.trim() ? 'delivery' : (isTakeawayApp ? 'takeaway' : 'pickup');
   const hasAddrField = Boolean(
     addr.formattedAddress ||
     addr.addressLine1 ||
@@ -259,11 +332,19 @@ function getOrderFulfillmentType(order: Order): 'delivery' | 'pickup' | 'dine_in
     addr.postalCode ||
     addr.postcode
   );
-  return hasAddrField ? 'delivery' : 'pickup';
+  if (hasAddrField) {
+    const text = (addr.formattedAddress || addr.addressLine1 || (addr as any).fullAddress || '').toLowerCase();
+    if (text.includes('pickup') || text.includes('collection')) return 'pickup';
+    if (text.includes('takeaway')) return 'takeaway';
+    if (text.includes('dine') || text.includes('table')) return 'dine_in';
+    return 'delivery';
+  }
+  return isTakeawayApp ? 'takeaway' : 'pickup';
 }
 
 function isOrderPickup(order: Order): boolean {
-  return getOrderFulfillmentType(order) === 'pickup';
+  const f = getOrderFulfillmentType(order);
+  return f === 'pickup' || f === 'takeaway';
 }
 
 function getDeliveryAddressText(order: Order): string {
@@ -299,15 +380,96 @@ function getDeliveryAddressText(order: Order): string {
   return addr.fullAddress || addr.address || '';
 }
 
+export const OrderCardSkeletonItem: React.FC = () => {
+  const { width: cardScreenWidth } = useWindowDimensions();
+  const isTablet = cardScreenWidth >= TABLET_BREAKPOINT;
+
+  return (
+    <View style={[styles.kanbanCard, isTablet && styles.kanbanCardTablet, { opacity: 0.95 }]}>
+      {/* Top Status Accent Strip Placeholder */}
+      <View
+        style={[
+          styles.cardTopStatusStrip,
+          isTablet && styles.cardTopStatusStripTablet,
+          { backgroundColor: '#E2E8F0' },
+        ]}
+      />
+
+      {/* Top Header: Order ID & Amount */}
+      <View style={styles.kanbanCardTop}>
+        <View style={styles.kanbanOrderIdCol}>
+          <View style={styles.kanbanOrderIdRow}>
+            <Skeleton width={80} height={18} borderRadius={4} />
+            <Skeleton width={42} height={16} borderRadius={4} />
+          </View>
+          <Skeleton width={110} height={12} borderRadius={3} style={{ marginTop: 6 }} />
+        </View>
+        <View style={styles.kanbanAmountRow}>
+          <Skeleton width={64} height={20} borderRadius={4} />
+          <Skeleton width={44} height={10} borderRadius={3} style={{ marginTop: 4 }} />
+        </View>
+      </View>
+
+      {/* Restaurant Title */}
+      <View style={{ marginTop: 8 }}>
+        <Skeleton width="55%" height={14} borderRadius={3} />
+      </View>
+
+      {/* Channel Source Badge */}
+      <View style={{ marginTop: 6 }}>
+        <Skeleton width={110} height={18} borderRadius={6} />
+      </View>
+
+      <View style={styles.kanbanDivider} />
+
+      {/* Customer Row */}
+      <View style={[styles.kanbanCustomerRow, isTablet && styles.kanbanCustomerRowTablet]}>
+        <Skeleton width={28} height={28} borderRadius={14} />
+        <View style={{ flex: 1, gap: 4 }}>
+          <Skeleton width="45%" height={13} borderRadius={3} />
+          <Skeleton width="30%" height={10} borderRadius={3} />
+        </View>
+      </View>
+
+      {/* Address Block */}
+      <View style={[styles.kanbanAddressRow, isTablet && styles.kanbanAddressRowTablet, { backgroundColor: '#F8FAFC', borderColor: '#E2E8F0' }]}>
+        <Skeleton width={14} height={14} borderRadius={7} style={{ marginTop: 2 }} />
+        <View style={{ flex: 1, gap: 4 }}>
+          <Skeleton width="30%" height={10} borderRadius={2} />
+          <Skeleton width="85%" height={12} borderRadius={3} />
+        </View>
+      </View>
+
+      {/* Type Tag & Rider */}
+      <View style={[styles.kanbanTypeRow, isTablet && styles.kanbanTypeRowTablet]}>
+        <Skeleton width={100} height={24} borderRadius={8} />
+      </View>
+
+      {/* Footer & Buttons */}
+      <View style={styles.kanbanFooter}>
+        <Skeleton width={85} height={12} borderRadius={3} />
+        <Skeleton width={70} height={18} borderRadius={4} />
+      </View>
+
+      {/* Action Buttons */}
+      <View style={[styles.actionButtonsRow, isTablet && styles.actionButtonsRowTablet, { marginTop: 10 }]}>
+        <Skeleton width="75%" height={34} borderRadius={8} />
+        <Skeleton width={38} height={34} borderRadius={8} />
+      </View>
+    </View>
+  );
+};
+
 interface OrderCardProps {
   order: Order;
   onPress: (o: Order) => void;
   onAssignDelivery: (o: Order) => void;
   onUpdateStatus: (orderId: string, newStatus: string) => void;
   onPrint: (o: Order) => void;
+  paperRollSize?: string;
 }
 
-const OrderCardItem: React.FC<OrderCardProps> = ({ order, onPress, onAssignDelivery, onUpdateStatus, onPrint }) => {
+const OrderCardItem: React.FC<OrderCardProps> = ({ order, onPress, onAssignDelivery, onUpdateStatus, onPrint, paperRollSize = '58' }) => {
   const { width: cardScreenWidth } = useWindowDimensions();
   const isTablet = cardScreenWidth >= TABLET_BREAKPOINT;
   const [expanded, setExpanded] = useState(false);
@@ -321,10 +483,11 @@ const OrderCardItem: React.FC<OrderCardProps> = ({ order, onPress, onAssignDeliv
   const itemCount = orderItems.length;
   const orderNum = order.orderNumber || order._id?.substring(0, 7).toUpperCase();
   const fulfillmentType = getOrderFulfillmentType(order);
-  const isPickup = fulfillmentType === 'pickup';
+  const isPickup = fulfillmentType === 'pickup' || fulfillmentType === 'takeaway';
   const deliveryAddressText = getDeliveryAddressText(order);
   const deliveryPartnerName = typeof order.assignedDeliveryPartnerId === 'object' ? order.assignedDeliveryPartnerId?.fullName : undefined;
   const sourceDetails = getOrderSourceDetails(order);
+  const scheduleInfo = getOrderScheduleInfo(order);
 
   const renderCardActions = () => {
     // 1. Delivered / Completed & Cancelled Orders
@@ -340,7 +503,9 @@ const OrderCardItem: React.FC<OrderCardProps> = ({ order, onPress, onAssignDeliv
             activeOpacity={0.8}
           >
             <Printer size={isTablet ? 15 : 13} color="#11181C" />
-            <Text style={[styles.printFullBtnText, isTablet && styles.printFullBtnTextTablet]}>Print Receipt</Text>
+            <Text style={[styles.printFullBtnText, isTablet && styles.printFullBtnTextTablet]}>
+              Print Receipt({paperRollSize || '58'}mm)
+            </Text>
           </TouchableOpacity>
         </View>
       );
@@ -417,7 +582,9 @@ const OrderCardItem: React.FC<OrderCardProps> = ({ order, onPress, onAssignDeliv
               activeOpacity={0.8}
             >
               <Check size={isTablet ? 15 : 13} color="#FFFFFF" />
-              <Text style={[styles.acceptBtnText, isTablet && styles.acceptBtnTextTablet]}>Ready for Pickup</Text>
+              <Text style={[styles.acceptBtnText, isTablet && styles.acceptBtnTextTablet]}>
+                {fulfillmentType === 'takeaway' ? 'Ready for Takeaway' : 'Ready for Pickup'}
+              </Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.printIconBtn, isTablet && styles.printIconBtnTablet]}
@@ -489,7 +656,9 @@ const OrderCardItem: React.FC<OrderCardProps> = ({ order, onPress, onAssignDeliv
             activeOpacity={0.8}
           >
             <Check size={isTablet ? 15 : 13} color="#FFFFFF" />
-            <Text style={[styles.acceptBtnText, isTablet && styles.acceptBtnTextTablet]}>Delivered</Text>
+            <Text style={[styles.acceptBtnText, isTablet && styles.acceptBtnTextTablet]}>
+              {fulfillmentType === 'takeaway' ? 'Mark Collected (Takeaway)' : 'Delivered'}
+            </Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.printIconBtn, isTablet && styles.printIconBtnTablet]}
@@ -587,14 +756,27 @@ const OrderCardItem: React.FC<OrderCardProps> = ({ order, onPress, onAssignDeliv
           activeOpacity={0.8}
         >
           <Printer size={isTablet ? 15 : 13} color="#11181C" />
-          <Text style={[styles.printFullBtnText, isTablet && styles.printFullBtnTextTablet]}>Print Receipt</Text>
+          <Text style={[styles.printFullBtnText, isTablet && styles.printFullBtnTextTablet]}>
+            Print Receipt({paperRollSize || '58'}mm)
+          </Text>
         </TouchableOpacity>
       </View>
     );
   };
 
+  const statusColor = getOrderStatusColor(order.status);
+
   return (
     <TouchableOpacity activeOpacity={0.88} onPress={() => onPress(order)} style={[styles.kanbanCard, isTablet && styles.kanbanCardTablet]}>
+      {/* Top Status Accent Strip */}
+      <View
+        style={[
+          styles.cardTopStatusStrip,
+          isTablet && styles.cardTopStatusStripTablet,
+          { backgroundColor: statusColor },
+        ]}
+      />
+
       {/* Watermark Stamp Overlay for Completed (Success) & Cancelled Orders */}
       {order.status === 'delivered' && (
         <View style={styles.stampOverlay} pointerEvents="none">
@@ -639,7 +821,7 @@ const OrderCardItem: React.FC<OrderCardProps> = ({ order, onPress, onAssignDeliv
             style={[sourceDetails.isExternal ? styles.sourceBadgeTextExternal : styles.sourceBadgeTextKrifoo, isTablet && (sourceDetails.isExternal ? styles.sourceBadgeTextExternalTablet : styles.sourceBadgeTextKrifooTablet)]}
             numberOfLines={1}
           >
-            {sourceDetails.isExternal ? `🌐 ${sourceDetails.domainUrl}` : '📱 krifoo.co.uk'}
+            {sourceDetails.isExternal ? (sourceDetails.domainUrl.includes('Takeaway') ? `🥡 ${sourceDetails.domainUrl}` : `🌐 ${sourceDetails.domainUrl}`) : '📱 krifoo.co.uk'}
           </Text>
         </View>
       </View>
@@ -669,6 +851,14 @@ const OrderCardItem: React.FC<OrderCardProps> = ({ order, onPress, onAssignDeliv
       ) : null}
 
       <View style={[styles.kanbanTypeRow, isTablet && styles.kanbanTypeRowTablet]}>
+        {scheduleInfo.isScheduled && (
+          <View style={[styles.scheduledTag, isTablet && { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 }]}>
+            <Clock size={isTablet ? 13 : 11} color="#92400E" />
+            <Text style={[styles.scheduledTagText, isTablet && { fontSize: 11 }]}>
+              Scheduled: {scheduleInfo.scheduleTimeText}
+            </Text>
+          </View>
+        )}
         {fulfillmentType === 'delivery' ? (
           <View style={[styles.deliveryTag, isTablet && { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 }]}>
             <Bike size={isTablet ? 14 : 12} color="#2563EB" />
@@ -687,6 +877,19 @@ const OrderCardItem: React.FC<OrderCardProps> = ({ order, onPress, onAssignDeliv
                   ? `• ${order.notes}`
                   : ''
               }
+            </Text>
+          </View>
+        ) : fulfillmentType === 'takeaway' ? (
+          <View style={[styles.takeawayTag, isTablet && { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 }]}>
+            <ShoppingBag size={isTablet ? 14 : 12} color="#D97706" />
+            <Text style={[styles.takeawayTagText, isTablet && { fontSize: 12 }]}>
+              {order.status === 'delivered'
+                ? 'Takeaway (Collected)'
+                : order.status === 'ready_for_pickup'
+                ? 'Takeaway (Ready for Collection)'
+                : order.status === 'preparing' || order.status === 'confirmed'
+                ? 'Takeaway (In Kitchen)'
+                : 'Takeaway Order'}
             </Text>
           </View>
         ) : (
@@ -723,6 +926,8 @@ const OrderCardItem: React.FC<OrderCardProps> = ({ order, onPress, onAssignDeliv
               ? { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }
               : fulfillmentType === 'dine_in'
               ? { backgroundColor: '#F5F3FF', borderColor: '#DDD6FE' }
+              : fulfillmentType === 'takeaway'
+              ? { backgroundColor: '#FEF3C7', borderColor: '#FDE68A' }
               : { backgroundColor: '#FFF7ED', borderColor: '#FED7AA' },
           ]}
         >
@@ -734,10 +939,18 @@ const OrderCardItem: React.FC<OrderCardProps> = ({ order, onPress, onAssignDeliv
                 ? { color: '#2563EB' }
                 : fulfillmentType === 'dine_in'
                 ? { color: '#7C3AED' }
+                : fulfillmentType === 'takeaway'
+                ? { color: '#B45309' }
                 : { color: '#EA580C' },
             ]}
           >
-            {fulfillmentType === 'delivery' ? 'DELIVERY' : fulfillmentType === 'dine_in' ? 'EAT-IN (DINE IN)' : 'PICKUP'}
+            {fulfillmentType === 'delivery'
+              ? 'DELIVERY'
+              : fulfillmentType === 'dine_in'
+              ? 'EAT-IN (DINE IN)'
+              : fulfillmentType === 'takeaway'
+              ? 'TAKEAWAY ORDER'
+              : 'PICKUP'}
           </Text>
         </View>
       </View>
@@ -807,19 +1020,37 @@ export default function OrdersScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [sourceFilter, setSourceFilter] = useState<'all' | 'krifoo' | 'external'>('all');
+  const [scheduleFilter, setScheduleFilter] = useState<'all' | 'scheduled' | 'asap'>('all');
+  const [paymentFilter, setPaymentFilter] = useState<'all' | 'cash' | 'card'>('all');
+  const [paymentStatusFilter, setPaymentStatusFilter] = useState<'all' | 'paid' | 'pending'>('all');
   const [activeTab, setActiveTab] = useState<string>('all');
   const [viewMode, setViewMode] = useState<'tabs' | 'board'>('tabs');
 
-  // Channel dropdown
+  // Dateframe dropdown & Comprehensive filter modal
+  const [dateDropdownOpen, setDateDropdownOpen] = useState(false);
   const [channelDropdownOpen, setChannelDropdownOpen] = useState(false);
+  const [filterModalOpen, setFilterModalOpen] = useState(false);
 
   // Date filter
-  const [datePreset, setDatePreset] = useState<'all' | 'today' | 'yesterday' | 'week' | 'custom'>('all');
+  const [datePreset, setDatePreset] = useState<'today' | 'yesterday' | '7days' | '30days' | 'all' | 'custom'>('today');
   const [customDateFrom, setCustomDateFrom] = useState('');
   const [customDateTo, setCustomDateTo] = useState('');
   const [customDateModalOpen, setCustomDateModalOpen] = useState(false);
   const [tempDateFrom, setTempDateFrom] = useState('');
   const [tempDateTo, setTempDateTo] = useState('');
+
+  const getDatePresetLabel = useCallback(() => {
+    if (datePreset === 'today') return 'Today';
+    if (datePreset === 'yesterday') return 'Yesterday';
+    if (datePreset === '7days') return '7 Days';
+    if (datePreset === '30days') return '30 Days';
+    if (datePreset === 'all') return 'All Time';
+    if (datePreset === 'custom' && customDateFrom && customDateTo) {
+      return `${customDateFrom.slice(5)} → ${customDateTo.slice(5)}`;
+    }
+    if (datePreset === 'custom') return 'Custom';
+    return 'Timeframe';
+  }, [datePreset, customDateFrom, customDateTo]);
 
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [detailModalVisible, setDetailModalVisible] = useState(false);
@@ -827,18 +1058,113 @@ export default function OrdersScreen() {
   const [cancelModalVisible, setCancelModalVisible] = useState(false);
   const [orderToCancel, setOrderToCancel] = useState<Order | null>(null);
 
+  const activeFilterCount = useMemo(() => {
+    let count = 0;
+    if (typeFilter !== 'all') count++;
+    if (sourceFilter !== 'all') count++;
+    if (scheduleFilter !== 'all') count++;
+    if (paymentFilter !== 'all') count++;
+    if (paymentStatusFilter !== 'all') count++;
+    if (activeTab !== 'all') count++;
+    return count;
+  }, [typeFilter, sourceFilter, scheduleFilter, paymentFilter, paymentStatusFilter, activeTab]);
+
+  const resetAllFilters = useCallback(() => {
+    setTypeFilter('all');
+    setSourceFilter('all');
+    setScheduleFilter('all');
+    setPaymentFilter('all');
+    setPaymentStatusFilter('all');
+    setActiveTab('all');
+  }, []);
+
+  const filterCounts = useMemo(() => {
+    const total = orders.length;
+    const delivery = orders.filter((o) => getOrderFulfillmentType(o) === 'delivery').length;
+    const takeaway = orders.filter((o) => getOrderFulfillmentType(o) === 'takeaway').length;
+    const pickup = orders.filter((o) => getOrderFulfillmentType(o) === 'pickup').length;
+    const dineIn = orders.filter((o) => getOrderFulfillmentType(o) === 'dine_in').length;
+
+    const scheduled = orders.filter((o) => getOrderScheduleInfo(o).isScheduled).length;
+    const asap = total - scheduled;
+
+    const marketplace = orders.filter((o) => !getOrderSourceDetails(o).isExternal).length;
+    const external = orders.filter((o) => getOrderSourceDetails(o).isExternal).length;
+
+    const cash = orders.filter((o) => {
+      const p = (o.paymentType || (o as any).paymentMethod || '').toLowerCase();
+      return p.includes('cash') || p === 'cod';
+    }).length;
+    const card = orders.filter((o) => {
+      const p = (o.paymentType || (o as any).paymentMethod || '').toLowerCase();
+      return p.includes('card') || p.includes('stripe') || p.includes('online');
+    }).length;
+
+    const paid = orders.filter((o) => (o.paymentStatus || '').toLowerCase() === 'paid' || (o.paymentStatus || '').toLowerCase() === 'completed').length;
+    const pending = total - paid;
+
+    return {
+      total,
+      delivery,
+      takeaway,
+      pickup,
+      dineIn,
+      scheduled,
+      asap,
+      marketplace,
+      external,
+      cash,
+      card,
+      paid,
+      pending,
+    };
+  }, [orders]);
+
+  const isFetchingRef = useRef(false);
+  const [paperRollSize, setPaperRollSize] = useState<string>('58');
+  const [ordersError, setOrdersError] = useState<{ type: ApiErrorType; message: string; statusCode?: number } | null>(null);
+
+  const loadPaperRollSize = useCallback(async () => {
+    try {
+      const config = await getPosPrinterConfig();
+      const template = await getActiveReceiptTemplate();
+      const rawWidth = config?.paperWidth || template?.layout?.paperWidth || '58mm';
+      const digits = String(rawWidth).replace(/[^0-9]/g, '');
+      setPaperRollSize(digits || '58');
+    } catch (err) {
+      console.warn('[Orders] Could not load paper roll size:', err);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadPaperRollSize();
+  }, [loadPaperRollSize]);
+
   const fetchOrders = useCallback(async (isRefresh = false) => {
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
     try {
       if (!isRefresh) setLoading(true);
-      const res = await orderService.fetchAllOrders();
+      const res: any = await orderService.fetchAllOrders();
       if (res.success && res.data) {
         setOrders(res.data);
+        setOrdersError(null);
       } else {
         console.warn('Failed fetching orders:', res.message);
+        setOrdersError({
+          type: res.errorType || 'unknown',
+          message: res.message || 'Unable to fetch orders from server.',
+          statusCode: res.statusCode,
+        });
       }
-    } catch (e) {
+    } catch (e: any) {
       console.warn('Failed fetching orders:', e);
+      setOrdersError({
+        type: 'network',
+        message: e?.message || 'Cannot reach server.',
+      });
     } finally {
+      isFetchingRef.current = false;
       setLoading(false);
       setRefreshing(false);
     }
@@ -848,20 +1174,27 @@ export default function OrdersScreen() {
   useFocusEffect(
     useCallback(() => {
       fetchOrders(true);
-    }, [fetchOrders])
+      loadPaperRollSize();
+    }, [fetchOrders, loadPaperRollSize])
   );
 
-  // 2. Real-time WebSocket listener + 5-second auto polling
+  // 2. Real-time WebSocket listener + auto polling + App foreground refresh
   useEffect(() => {
     fetchOrders();
 
     const sub = DeviceEventEmitter.addListener('websocket_message', (data: any) => {
+      // Refresh on any websocket event related to orders
       const type = (data?.type || data?.event || '').toUpperCase();
       if (
+        !type ||
         type.includes('ORDER') ||
         type.includes('STATUS') ||
         type.includes('DELIVERY') ||
         type.includes('REFRESH') ||
+        type.includes('UPDATE') ||
+        type === 'NEW_ORDER' ||
+        type === 'RESTAURANT_ORDER_UPDATE' ||
+        type === 'SUPERADMIN_ORDER_UPDATE' ||
         data?.orderId ||
         data?.order ||
         data?.status
@@ -870,13 +1203,22 @@ export default function OrdersScreen() {
       }
     });
 
+    // Fallback poll every 12 seconds so orders stay fresh if WebSocket disconnects
     const interval = setInterval(() => {
       fetchOrders(true);
-    }, 5000);
+    }, 12000);
+
+    // Refresh immediately when coming back from background
+    const appStateSub = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        fetchOrders(true);
+      }
+    });
 
     return () => {
       sub.remove();
       clearInterval(interval);
+      appStateSub.remove();
     };
   }, [fetchOrders]);
 
@@ -895,12 +1237,19 @@ export default function OrdersScreen() {
       dateFrom = startOfDay(now);
       dateTo = endOfDay(now);
     } else if (datePreset === 'yesterday') {
-      const y = new Date(now); y.setDate(now.getDate() - 1);
+      const y = new Date(now);
+      y.setDate(y.getDate() - 1);
       dateFrom = startOfDay(y);
       dateTo = endOfDay(y);
-    } else if (datePreset === 'week') {
-      const w = new Date(now); w.setDate(now.getDate() - 6);
-      dateFrom = startOfDay(w);
+    } else if (datePreset === '7days') {
+      const past7 = new Date(now);
+      past7.setDate(past7.getDate() - 7);
+      dateFrom = startOfDay(past7);
+      dateTo = endOfDay(now);
+    } else if (datePreset === '30days') {
+      const past30 = new Date(now);
+      past30.setDate(past30.getDate() - 30);
+      dateFrom = startOfDay(past30);
       dateTo = endOfDay(now);
     } else if (datePreset === 'custom' && customDateFrom && customDateTo) {
       dateFrom = startOfDay(new Date(customDateFrom));
@@ -924,6 +1273,23 @@ export default function OrdersScreen() {
       if (sourceFilter === 'external' && !isExt) return false;
       if (sourceFilter === 'krifoo' && isExt) return false;
 
+      // Schedule filter
+      const schedInfo = getOrderScheduleInfo(order);
+      if (scheduleFilter === 'scheduled' && !schedInfo.isScheduled) return false;
+      if (scheduleFilter === 'asap' && schedInfo.isScheduled) return false;
+
+      // Payment method filter
+      const pType = (order.paymentType || (order as any).paymentMethod || '').toLowerCase();
+      const isCash = pType.includes('cash') || pType === 'cod';
+      const isCard = pType.includes('card') || pType.includes('stripe') || pType.includes('online');
+      if (paymentFilter === 'cash' && !isCash) return false;
+      if (paymentFilter === 'card' && !isCard) return false;
+
+      // Payment status filter
+      const pStatus = (order.paymentStatus || '').toLowerCase();
+      if (paymentStatusFilter === 'paid' && pStatus !== 'paid' && pStatus !== 'completed') return false;
+      if (paymentStatusFilter === 'pending' && (pStatus === 'paid' || pStatus === 'completed')) return false;
+
       // Date filter
       if (dateFrom && dateTo && order.createdAt) {
         const created = new Date(order.createdAt);
@@ -932,7 +1298,7 @@ export default function OrdersScreen() {
 
       return true;
     });
-  }, [orders, searchQuery, typeFilter, sourceFilter, datePreset, customDateFrom, customDateTo]);
+  }, [orders, searchQuery, typeFilter, sourceFilter, scheduleFilter, paymentFilter, paymentStatusFilter, datePreset, customDateFrom, customDateTo]);
 
   const tabCounts = useMemo(() => {
     const counts: Record<string, number> = {
@@ -966,34 +1332,74 @@ export default function OrdersScreen() {
   );
 
   const executeUpdateStatus = async (orderId: string, newStatus: string) => {
+    // 1. Snapshot previous state for instant rollback if network or server fails
+    const prevOrders = orders;
+    const prevSelected = selectedOrder;
+
+    // 2. Optimistic instant UI update (0ms latency)
+    const updateOrderLocally = (o: Order): Order => {
+      const updated: any = {
+        ...o,
+        status: newStatus as any,
+        ...(newStatus !== 'placed' && newStatus !== 'cancelled' && (o.acceptanceStatus === 'pending' || !o.acceptanceStatus)
+          ? { acceptanceStatus: 'accepted' as any }
+          : {}),
+      };
+      if (newStatus === 'delivered' && (o.paymentType === 'cash' || (o as any).paymentType === 'cod')) {
+        updated.paymentStatus = 'paid';
+      }
+      return updated;
+    };
+
+    setOrders((current) => current.map((o) => (o._id === orderId ? updateOrderLocally(o) : o)));
+    if (selectedOrder && selectedOrder._id === orderId) {
+      setSelectedOrder((prev) => (prev ? updateOrderLocally(prev) : null));
+    }
+
+    // 3. Instant feedback
+    showToast({ title: 'Success', message: `Order status updated to '${newStatus}'.`, type: 'success' });
+
+    // 4. Auto-print asynchronously in the background so it never freezes the UI
+    if (newStatus === 'preparing') {
+      (async () => {
+        try {
+          const autoPrint = await isAutoPrintEnabled();
+          if (autoPrint) {
+            let orderToPrint: any = selectedOrder?._id === orderId ? selectedOrder : orders.find((o) => o._id === orderId);
+            if (!orderToPrint?.orderedItems?.length && !(orderToPrint as any)?.items?.length) {
+              const fullOrderRes = await orderService.getOrderById(orderId);
+              if (fullOrderRes.success && fullOrderRes.data) orderToPrint = fullOrderRes.data;
+            }
+            if (orderToPrint) await printThermalReceipt(orderToPrint, true);
+          }
+        } catch (printErr) {
+          console.error('[Orders] Auto-print failed:', printErr);
+        }
+      })();
+    }
+
+    // 5. Send server update in background without blocking UI
     try {
       const res = await orderService.updateOrderStatus(orderId, newStatus);
       if (res.success) {
-        showToast({ title: 'Success', message: `Order status updated to '${newStatus}'.`, type: 'success' });
-        let updatedOrder = selectedOrder;
-        if (selectedOrder && selectedOrder._id === orderId) {
-          updatedOrder = { ...selectedOrder, status: newStatus as any };
-          setSelectedOrder(updatedOrder);
-        }
-        fetchOrders(true);
-        if (newStatus === 'preparing') {
-          const autoPrint = await isAutoPrintEnabled();
-          if (autoPrint) {
-            try {
-              let orderToPrint = updatedOrder;
-              if (!orderToPrint?.orderedItems?.length) {
-                const fullOrderRes = await orderService.getOrderById(orderId);
-                if (fullOrderRes.success && fullOrderRes.data) orderToPrint = fullOrderRes.data;
-              }
-              if (orderToPrint) await printThermalReceipt(orderToPrint, true);
-            } catch (printErr) { console.error('[Orders] Auto-print failed:', printErr); }
+        if (res.data) {
+          // Merge authoritative server fields silently
+          setOrders((current) => current.map((o) => (o._id === orderId ? { ...o, ...res.data } : o)));
+          if (selectedOrder && selectedOrder._id === orderId) {
+            setSelectedOrder((prev) => (prev ? { ...prev, ...res.data } : null));
           }
         }
       } else {
-        showToast({ title: 'Error', message: res.message || 'Failed to update.', type: 'error' });
+        // Rollback state on server rejection
+        setOrders(prevOrders);
+        if (prevSelected) setSelectedOrder(prevSelected);
+        showToast({ title: 'Error', message: res.message || 'Failed to update order.', type: 'error' });
       }
-    } catch {
-      showToast({ title: 'Error', message: 'Unexpected error while updating status.', type: 'error' });
+    } catch (err: any) {
+      // Rollback state on network error
+      setOrders(prevOrders);
+      if (prevSelected) setSelectedOrder(prevSelected);
+      showToast({ title: 'Error', message: err?.message || 'Network error updating status.', type: 'error' });
     }
   };
 
@@ -1019,12 +1425,33 @@ export default function OrdersScreen() {
 
   const handleAssignConfirm = async (deliveryPartnerId: string) => {
     if (!selectedOrder) return;
-    const res = await orderService.assignDeliveryPartner(selectedOrder._id, deliveryPartnerId);
-    if (res.success) {
-      showToast({ title: 'Success', message: 'Delivery partner assigned.', type: 'success' });
-      fetchOrders(true);
-    } else {
-      showToast({ title: 'Error', message: res.message || 'Failed to assign.', type: 'error' });
+    const orderId = selectedOrder._id;
+    const prevOrders = orders;
+    const prevSelected = selectedOrder;
+
+    // Optimistic assignment update
+    setSelectedOrder((prev) => (prev ? { ...prev, deliveryPartner: deliveryPartnerId as any } : null));
+    setOrders((current) =>
+      current.map((o) => (o._id === orderId ? { ...o, deliveryPartner: deliveryPartnerId as any } : o))
+    );
+    showToast({ title: 'Success', message: 'Delivery partner assigned.', type: 'success' });
+
+    try {
+      const res = await orderService.assignDeliveryPartner(orderId, deliveryPartnerId);
+      if (res.success) {
+        if (res.data) {
+          setOrders((current) => current.map((o) => (o._id === orderId ? { ...o, ...res.data } : o)));
+          setSelectedOrder((prev) => (prev ? { ...prev, ...res.data } : null));
+        }
+      } else {
+        setOrders(prevOrders);
+        setSelectedOrder(prevSelected);
+        showToast({ title: 'Error', message: res.message || 'Failed to assign.', type: 'error' });
+      }
+    } catch {
+      setOrders(prevOrders);
+      setSelectedOrder(prevSelected);
+      showToast({ title: 'Error', message: 'Network error assigning delivery partner.', type: 'error' });
     }
   };
 
@@ -1114,7 +1541,7 @@ export default function OrdersScreen() {
 
       {/* Controls */}
       <View style={styles.controlsRow}>
-        {/* Search + Channel Dropdown row */}
+        {/* Search + Filter + Channel Row */}
         <View style={styles.searchAndChannelRow}>
           <View style={[styles.searchBox, { flex: 1 }]}>
             <Search size={14} color={Colors.textSubtle} />
@@ -1125,96 +1552,495 @@ export default function OrdersScreen() {
               value={searchQuery}
               onChangeText={setSearchQuery}
             />
+            {searchQuery.length > 0 && (
+              <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <X size={13} color="#9BA1A6" />
+              </TouchableOpacity>
+            )}
           </View>
 
-          {/* Channel Dropdown Button */}
+          {/* Filter Button */}
           <TouchableOpacity
-            style={styles.channelDropdownBtn}
-            onPress={() => setChannelDropdownOpen(true)}
+            style={[styles.filterBtn, activeFilterCount > 0 && styles.filterBtnActive]}
+            onPress={() => setFilterModalOpen(true)}
             activeOpacity={0.8}
           >
-            <Globe size={12} color={sourceFilter === 'all' ? '#687076' : '#FF5C39'} />
+            <SlidersHorizontal size={13} color={activeFilterCount > 0 ? '#FFFFFF' : '#11181C'} />
+            <Text style={[styles.filterBtnText, activeFilterCount > 0 && styles.filterBtnTextActive]}>
+              Filter
+            </Text>
+            {activeFilterCount > 0 && (
+              <View style={styles.filterBadge}>
+                <Text style={styles.filterBadgeText}>{activeFilterCount}</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+
+          {/* Dateframe Selection Dropdown Button (Replaced Channel By) */}
+          <TouchableOpacity
+            style={[styles.dateDropdownBtn, datePreset !== 'today' && styles.dateDropdownBtnActive]}
+            onPress={() => setDateDropdownOpen(true)}
+            activeOpacity={0.8}
+          >
+            <Calendar size={13} color={datePreset === 'today' ? '#687076' : '#FF5C39'} />
             <Text
-              style={[styles.channelDropdownBtnText, sourceFilter !== 'all' && { color: '#FF5C39' }]}
+              style={[styles.dateDropdownBtnText, datePreset !== 'today' && { color: '#FF5C39' }]}
               numberOfLines={1}
             >
-              {sourceFilter === 'all' ? 'All Channels' : sourceFilter === 'krifoo' ? 'Marketplace' : 'External'}
+              {getDatePresetLabel()}
             </Text>
-            <ChevronDown size={11} color={sourceFilter === 'all' ? '#9BA1A6' : '#FF5C39'} />
+            <ChevronDown size={11} color={datePreset === 'today' ? '#9BA1A6' : '#FF5C39'} />
           </TouchableOpacity>
         </View>
 
-        {/* Type Filters */}
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={[styles.typeFilters, { marginTop: 4 }]}>
-          {TYPE_FILTERS.map((f) => {
-            const isSelected = typeFilter === f.value;
-            const { Icon } = f;
-            const count =
-              f.value === 'all'
-                ? orders.length
-                : orders.filter((o) => getOrderFulfillmentType(o) === f.value).length;
+        {/* Active Filter Chips (if any filter is applied) */}
+        {activeFilterCount > 0 && (
+          <View style={styles.activeFiltersRow}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.activeFiltersList}>
+              <View style={styles.activeFilterCountTag}>
+                <Text style={styles.activeFilterCountTagText}>{activeFilterCount} active</Text>
+              </View>
 
-            return (
+              {typeFilter !== 'all' && (
+                <TouchableOpacity
+                  style={styles.activeFilterChip}
+                  onPress={() => setTypeFilter('all')}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.activeFilterChipText}>
+                    Type: {typeFilter === 'takeaway' ? 'Takeaway' : typeFilter === 'pickup' ? 'Self Pickup' : typeFilter === 'delivery' ? 'Delivery' : typeFilter === 'dine_in' ? 'Dine-In' : typeFilter}
+                  </Text>
+                  <X size={11} color="#FF5C39" />
+                </TouchableOpacity>
+              )}
+
+              {sourceFilter !== 'all' && (
+                <TouchableOpacity
+                  style={styles.activeFilterChip}
+                  onPress={() => setSourceFilter('all')}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.activeFilterChipText}>
+                    Channel: {sourceFilter === 'krifoo' ? 'Marketplace' : 'External'}
+                  </Text>
+                  <X size={11} color="#FF5C39" />
+                </TouchableOpacity>
+              )}
+
+              {scheduleFilter !== 'all' && (
+                <TouchableOpacity
+                  style={styles.activeFilterChip}
+                  onPress={() => setScheduleFilter('all')}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.activeFilterChipText}>
+                    {scheduleFilter === 'scheduled' ? '⏰ Scheduled' : '⚡ ASAP'}
+                  </Text>
+                  <X size={11} color="#FF5C39" />
+                </TouchableOpacity>
+              )}
+
+              {paymentFilter !== 'all' && (
+                <TouchableOpacity
+                  style={styles.activeFilterChip}
+                  onPress={() => setPaymentFilter('all')}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.activeFilterChipText}>
+                    {paymentFilter === 'cash' ? '💵 Cash / COD' : '💳 Card / Online'}
+                  </Text>
+                  <X size={11} color="#FF5C39" />
+                </TouchableOpacity>
+              )}
+
+              {paymentStatusFilter !== 'all' && (
+                <TouchableOpacity
+                  style={styles.activeFilterChip}
+                  onPress={() => setPaymentStatusFilter('all')}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.activeFilterChipText}>
+                    {paymentStatusFilter === 'paid' ? '✅ Paid' : '⏳ Pending'}
+                  </Text>
+                  <X size={11} color="#FF5C39" />
+                </TouchableOpacity>
+              )}
+
+
+              {activeTab !== 'all' && (
+                <TouchableOpacity
+                  style={styles.activeFilterChip}
+                  onPress={() => setActiveTab('all')}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.activeFilterChipText}>
+                    Status: {STATUS_TABS.find((t) => t.id === activeTab)?.label || activeTab}
+                  </Text>
+                  <X size={11} color="#FF5C39" />
+                </TouchableOpacity>
+              )}
+
               <TouchableOpacity
-                key={f.value}
-                style={[
-                  styles.typeChip,
-                  isSelected
-                    ? { backgroundColor: f.color, borderColor: f.color }
-                    : { backgroundColor: f.bg, borderColor: f.border },
-                ]}
-                onPress={() => setTypeFilter(f.value)}
+                style={styles.clearAllBtn}
+                onPress={resetAllFilters}
                 activeOpacity={0.7}
               >
-                <Icon size={13} color={isSelected ? '#FFFFFF' : f.color} />
-                <Text
-                  style={[
-                    styles.typeChipText,
-                    isSelected ? { color: '#FFFFFF', fontWeight: '800' } : { color: f.color },
-                  ]}
-                >
-                  {f.label}
-                </Text>
-                <View
-                  style={[
-                    styles.typeChipCountBadge,
-                    isSelected
-                      ? { backgroundColor: 'rgba(255,255,255,0.25)' }
-                      : { backgroundColor: f.color === '#11181C' ? '#E2E8F0' : `${f.color}15` },
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.typeChipCountText,
-                      isSelected ? { color: '#FFFFFF' } : { color: f.color },
-                    ]}
-                  >
-                    {count}
+                <RotateCcw size={10} color="#EF4444" />
+                <Text style={styles.clearAllBtnText}>Clear All</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        )}
+      </View>
+
+      {/* Comprehensive Filter Modal */}
+      <Modal
+        visible={filterModalOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setFilterModalOpen(false)}
+      >
+        <View style={styles.filterModalOverlay}>
+          <TouchableOpacity
+            style={StyleSheet.absoluteFillObject}
+            activeOpacity={1}
+            onPress={() => setFilterModalOpen(false)}
+          />
+
+          <View style={[styles.filterModalContainer, isTablet && styles.filterModalContainerTablet]}>
+            {!isTablet && <View style={styles.filterDragHandle} />}
+
+            {/* Header */}
+            <View style={styles.filterModalHeader}>
+              <View style={styles.filterModalHeaderTitleRow}>
+                <View style={styles.filterModalIconCircle}>
+                  <SlidersHorizontal size={18} color="#FF5C39" />
+                </View>
+                <View>
+                  <Text style={styles.filterModalTitle}>Order Filters</Text>
+                  <Text style={styles.filterModalSubtitle}>
+                    Showing {filteredOrders.length} of {orders.length} orders
                   </Text>
                 </View>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
+              </View>
 
-        {/* Date Filter Row */}
-        <View style={styles.dateFilterRow}>
-          <CalendarDays size={13} color='#9BA1A6' style={{ flexShrink: 0 }} />
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flex: 1 }} contentContainerStyle={styles.datePresetList}>
+              <View style={styles.filterModalHeaderActions}>
+                {activeFilterCount > 0 && (
+                  <TouchableOpacity
+                    style={styles.filterResetTextBtn}
+                    onPress={resetAllFilters}
+                    activeOpacity={0.7}
+                  >
+                    <RotateCcw size={12} color="#EF4444" />
+                    <Text style={styles.filterResetTextBtnLabel}>Reset</Text>
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity
+                  style={styles.filterModalCloseBtn}
+                  onPress={() => setFilterModalOpen(false)}
+                  activeOpacity={0.8}
+                >
+                  <X size={16} color="#64748B" />
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* Scrollable Filter Sections */}
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.filterModalBody}
+            >
+              {/* Section 1: Fulfillment Type */}
+              <View style={styles.filterSection}>
+                <View style={styles.filterSectionHeader}>
+                  <View style={styles.filterSectionTitleRow}>
+                    <Text style={styles.filterSectionTitle}>Fulfillment Type</Text>
+                  </View>
+                  <Text style={styles.filterSectionSubtitle}>Delivery, pickup, or eat-in</Text>
+                </View>
+                <View style={styles.filterGrid2}>
+                  {([
+                    { label: 'All Types', value: 'all', emoji: '📦', count: filterCounts.total, desc: 'Every order mode' },
+                    { label: 'Takeaway Order', value: 'takeaway', emoji: '🥡', count: filterCounts.takeaway, desc: 'Takeaway kiosk & app' },
+                    { label: 'Delivery', value: 'delivery', emoji: '🛵', count: filterCounts.delivery, desc: 'Rider doorstep delivery' },
+                    { label: 'Self Pickup', value: 'pickup', emoji: '🛍️', count: filterCounts.pickup, desc: 'Customer collection' },
+                    { label: 'Dine-In', value: 'dine_in', emoji: '🍽️', count: filterCounts.dineIn, desc: 'Table eat-in orders' },
+                  ] as const).map((opt) => {
+                    const isSelected = typeFilter === opt.value;
+                    return (
+                      <TouchableOpacity
+                        key={opt.value}
+                        style={[styles.filterOptionCard, isSelected && styles.filterOptionCardActive]}
+                        onPress={() => setTypeFilter(opt.value)}
+                        activeOpacity={0.75}
+                      >
+                        <Text style={styles.filterOptionCardEmoji}>{opt.emoji}</Text>
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.filterOptionCardLabel, isSelected && styles.filterOptionCardLabelActive]}>
+                            {opt.label}
+                          </Text>
+                          <Text style={styles.filterOptionCardDesc} numberOfLines={1}>{opt.desc}</Text>
+                        </View>
+                        <View style={[styles.filterOptionCountBadge, isSelected && styles.filterOptionCountBadgeActive]}>
+                          <Text style={[styles.filterOptionCountText, isSelected && styles.filterOptionCountTextActive]}>
+                            {opt.count}
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+
+              {/* Section 2: Order Timing (Scheduled vs ASAP) */}
+              <View style={styles.filterSection}>
+                <View style={styles.filterSectionHeader}>
+                  <View style={styles.filterSectionTitleRow}>
+                    <Text style={styles.filterSectionTitle}>Order Timing</Text>
+                  </View>
+                  <Text style={styles.filterSectionSubtitle}>Immediate vs scheduled slots</Text>
+                </View>
+                <View style={styles.filterGrid2}>
+                  {([
+                    { label: 'All Timings', value: 'all' as const, emoji: '⚡', count: filterCounts.total, desc: 'ASAP & scheduled' },
+                    { label: 'Scheduled Orders', value: 'scheduled' as const, emoji: '⏰', count: filterCounts.scheduled, desc: 'Future date/slot bookings' },
+                    { label: 'Immediate / ASAP', value: 'asap' as const, emoji: '🔥', count: filterCounts.asap, desc: 'Cook and dispatch now' },
+                  ]).map((opt) => {
+                    const isSelected = scheduleFilter === opt.value;
+                    return (
+                      <TouchableOpacity
+                        key={opt.value}
+                        style={[styles.filterOptionCard, isSelected && styles.filterOptionCardActive]}
+                        onPress={() => setScheduleFilter(opt.value)}
+                        activeOpacity={0.75}
+                      >
+                        <Text style={styles.filterOptionCardEmoji}>{opt.emoji}</Text>
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.filterOptionCardLabel, isSelected && styles.filterOptionCardLabelActive]}>
+                            {opt.label}
+                          </Text>
+                          <Text style={styles.filterOptionCardDesc} numberOfLines={1}>{opt.desc}</Text>
+                        </View>
+                        <View style={[styles.filterOptionCountBadge, isSelected && styles.filterOptionCountBadgeActive]}>
+                          <Text style={[styles.filterOptionCountText, isSelected && styles.filterOptionCountTextActive]}>
+                            {opt.count}
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+
+              {/* Section 3: Sales Channel */}
+              <View style={styles.filterSection}>
+                <View style={styles.filterSectionHeader}>
+                  <View style={styles.filterSectionTitleRow}>
+                    <Text style={styles.filterSectionTitle}>Sales Channel</Text>
+                  </View>
+                  <Text style={styles.filterSectionSubtitle}>Origin of order</Text>
+                </View>
+                <View style={styles.filterGrid2}>
+                  {([
+                    { label: 'All Channels', value: 'all' as const, emoji: '🌐', count: filterCounts.total, desc: 'All sources' },
+                    { label: 'Marketplace', value: 'krifoo' as const, emoji: '📱', count: filterCounts.marketplace, desc: 'krifoo.co.uk App' },
+                    { label: 'External Website', value: 'external' as const, emoji: '💻', count: filterCounts.external, desc: 'Branded website orders' },
+                  ]).map((opt) => {
+                    const isSelected = sourceFilter === opt.value;
+                    return (
+                      <TouchableOpacity
+                        key={opt.value}
+                        style={[styles.filterOptionCard, isSelected && styles.filterOptionCardActive]}
+                        onPress={() => setSourceFilter(opt.value)}
+                        activeOpacity={0.75}
+                      >
+                        <Text style={styles.filterOptionCardEmoji}>{opt.emoji}</Text>
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.filterOptionCardLabel, isSelected && styles.filterOptionCardLabelActive]}>
+                            {opt.label}
+                          </Text>
+                          <Text style={styles.filterOptionCardDesc} numberOfLines={1}>{opt.desc}</Text>
+                        </View>
+                        <View style={[styles.filterOptionCountBadge, isSelected && styles.filterOptionCountBadgeActive]}>
+                          <Text style={[styles.filterOptionCountText, isSelected && styles.filterOptionCountTextActive]}>
+                            {opt.count}
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+
+              {/* Section 4: Payment Method */}
+              <View style={styles.filterSection}>
+                <View style={styles.filterSectionHeader}>
+                  <View style={styles.filterSectionTitleRow}>
+                    <Text style={styles.filterSectionTitle}>Payment Method</Text>
+                  </View>
+                  <Text style={styles.filterSectionSubtitle}>Cash vs Card/Online</Text>
+                </View>
+                <View style={styles.filterGrid2}>
+                  {([
+                    { label: 'All Methods', value: 'all' as const, emoji: '💰', count: filterCounts.total, desc: 'Cash and Card' },
+                    { label: 'Cash / COD', value: 'cash' as const, emoji: '💵', count: filterCounts.cash, desc: 'Pay on delivery/counter' },
+                    { label: 'Card / Online', value: 'card' as const, emoji: '💳', count: filterCounts.card, desc: 'Stripe or digital cards' },
+                  ]).map((opt) => {
+                    const isSelected = paymentFilter === opt.value;
+                    return (
+                      <TouchableOpacity
+                        key={opt.value}
+                        style={[styles.filterOptionCard, isSelected && styles.filterOptionCardActive]}
+                        onPress={() => setPaymentFilter(opt.value)}
+                        activeOpacity={0.75}
+                      >
+                        <Text style={styles.filterOptionCardEmoji}>{opt.emoji}</Text>
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.filterOptionCardLabel, isSelected && styles.filterOptionCardLabelActive]}>
+                            {opt.label}
+                          </Text>
+                          <Text style={styles.filterOptionCardDesc} numberOfLines={1}>{opt.desc}</Text>
+                        </View>
+                        <View style={[styles.filterOptionCountBadge, isSelected && styles.filterOptionCountBadgeActive]}>
+                          <Text style={[styles.filterOptionCountText, isSelected && styles.filterOptionCountTextActive]}>
+                            {opt.count}
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+
+              {/* Section 5: Payment Status */}
+              <View style={styles.filterSection}>
+                <View style={styles.filterSectionHeader}>
+                  <View style={styles.filterSectionTitleRow}>
+                    <Text style={styles.filterSectionTitle}>Payment Status</Text>
+                  </View>
+                  <Text style={styles.filterSectionSubtitle}>Settlement status</Text>
+                </View>
+                <View style={styles.filterChipsWrap}>
+                  {([
+                    { label: 'All Statuses', value: 'all' as const },
+                    { label: 'Paid ✅', value: 'paid' as const },
+                    { label: 'Pending ⏳', value: 'pending' as const },
+                  ]).map((opt) => {
+                    const isSelected = paymentStatusFilter === opt.value;
+                    return (
+                      <TouchableOpacity
+                        key={opt.value}
+                        style={[styles.filterChip, isSelected && styles.filterChipActive]}
+                        onPress={() => setPaymentStatusFilter(opt.value)}
+                        activeOpacity={0.75}
+                      >
+                        <Text style={[styles.filterChipText, isSelected && styles.filterChipTextActive]}>
+                          {opt.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+
+              {/* Section 6: Order Status */}
+              <View style={styles.filterSection}>
+                <View style={styles.filterSectionHeader}>
+                  <View style={styles.filterSectionTitleRow}>
+                    <Text style={styles.filterSectionTitle}>Order Status</Text>
+                  </View>
+                  <Text style={styles.filterSectionSubtitle}>Stage in kitchen / dispatch workflow</Text>
+                </View>
+                <View style={styles.filterChipsWrap}>
+                  {STATUS_TABS.map((tab) => {
+                    const isSelected = activeTab === tab.id;
+                    const count = tabCounts[tab.id] ?? 0;
+                    return (
+                      <TouchableOpacity
+                        key={tab.id}
+                        style={[
+                          styles.filterChip,
+                          isSelected && { borderColor: tab.accentColor, backgroundColor: `${tab.accentColor}12` },
+                        ]}
+                        onPress={() => setActiveTab(tab.id)}
+                        activeOpacity={0.75}
+                      >
+                        <Text
+                          style={[
+                            styles.filterChipText,
+                            isSelected && { color: tab.accentColor, fontWeight: '800' },
+                          ]}
+                        >
+                          {tab.label} ({count})
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+            </ScrollView>
+
+            {/* Sticky Action Footer */}
+            <View style={styles.filterModalFooter}>
+              <TouchableOpacity
+                style={styles.filterFooterResetBtn}
+                onPress={resetAllFilters}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.filterFooterResetBtnText}>Reset All</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.filterFooterApplyBtn}
+                onPress={() => setFilterModalOpen(false)}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.filterFooterApplyBtnText}>
+                  Show {filteredOrders.length} Order{filteredOrders.length !== 1 ? 's' : ''}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Dateframe Selection Modal */}
+      <Modal
+        visible={dateDropdownOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setDateDropdownOpen(false)}
+      >
+        <TouchableOpacity
+          style={styles.dropdownOverlay}
+          activeOpacity={1}
+          onPress={() => setDateDropdownOpen(false)}
+        >
+          <View style={styles.channelDropdownSheet}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Calendar size={18} color="#FF5C39" />
+                <Text style={styles.channelDropdownTitle}>Select Timeframe</Text>
+              </View>
+              <TouchableOpacity onPress={() => setDateDropdownOpen(false)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <X size={16} color="#64748B" />
+              </TouchableOpacity>
+            </View>
             {([
-              { label: 'All Time', value: 'all' },
-              { label: 'Today', value: 'today' },
-              { label: 'Yesterday', value: 'yesterday' },
-              { label: 'This Week', value: 'week' },
-              { label: 'Custom', value: 'custom' },
+              { label: 'Today', value: 'today', icon: '🟢', desc: 'Orders placed today' },
+              { label: 'Yesterday', value: 'yesterday', icon: '⏪', desc: 'Orders placed yesterday' },
+              { label: 'Last 7 Days', value: '7days', icon: '🗓️', desc: 'Orders from the past week' },
+              { label: 'Last 30 Days', value: '30days', icon: '📆', desc: 'Orders from the past month' },
+              { label: 'All Time', value: 'all', icon: '🌐', desc: 'Every order from the beginning' },
+              { label: 'Custom Range...', value: 'custom', icon: '🎯', desc: 'Pick specific from and to dates' },
             ] as const).map((dp) => (
               <TouchableOpacity
                 key={dp.value}
                 style={[
-                  styles.datePresetChip,
-                  datePreset === dp.value && styles.datePresetChipActive,
+                  styles.channelDropdownItem,
+                  datePreset === dp.value && styles.channelDropdownItemActive,
                 ]}
                 onPress={() => {
+                  setDateDropdownOpen(false);
                   if (dp.value === 'custom') {
                     setTempDateFrom(customDateFrom || new Date().toISOString().slice(0, 10));
                     setTempDateTo(customDateTo || new Date().toISOString().slice(0, 10));
@@ -1223,58 +2049,18 @@ export default function OrdersScreen() {
                     setDatePreset(dp.value);
                   }
                 }}
-                activeOpacity={0.7}
-              >
-                {dp.value === 'today' && <View style={styles.todayDot} />}
-                <Text style={[styles.datePresetChipText, datePreset === dp.value && styles.datePresetChipTextActive]}>
-                  {dp.value === 'custom' && datePreset === 'custom' && customDateFrom && customDateTo
-                    ? `${customDateFrom} → ${customDateTo}`
-                    : dp.label}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-        </View>
-      </View>
-
-      {/* Channel Dropdown Modal */}
-      <Modal
-        visible={channelDropdownOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setChannelDropdownOpen(false)}
-      >
-        <TouchableOpacity
-          style={styles.dropdownOverlay}
-          activeOpacity={1}
-          onPress={() => setChannelDropdownOpen(false)}
-        >
-          <View style={styles.channelDropdownSheet}>
-            <Text style={styles.channelDropdownTitle}>Filter by Channel</Text>
-            {([
-              { label: 'All Channels', value: 'all', icon: '🌐', desc: 'Show orders from every source' },
-              { label: 'Marketplace (krifoo.co.uk)', value: 'krifoo', icon: '📱', desc: 'Orders placed on krifoo marketplace' },
-              { label: 'External / Own Website', value: 'external', icon: '💻', desc: 'Orders from your branded website' },
-            ] as const).map((sf) => (
-              <TouchableOpacity
-                key={sf.value}
-                style={[
-                  styles.channelDropdownItem,
-                  sourceFilter === sf.value && styles.channelDropdownItemActive,
-                ]}
-                onPress={() => { setSourceFilter(sf.value); setChannelDropdownOpen(false); }}
                 activeOpacity={0.8}
               >
-                <Text style={styles.channelDropdownItemIcon}>{sf.icon}</Text>
+                <Text style={styles.channelDropdownItemIcon}>{dp.icon}</Text>
                 <View style={{ flex: 1 }}>
-                  <Text style={[styles.channelDropdownItemLabel, sourceFilter === sf.value && { color: '#FF5C39' }]}>
-                    {sf.label}
+                  <Text style={[styles.channelDropdownItemLabel, datePreset === dp.value && { color: '#FF5C39' }]}>
+                    {dp.label}
                   </Text>
-                  <Text style={styles.channelDropdownItemDesc}>{sf.desc}</Text>
+                  <Text style={styles.channelDropdownItemDesc}>{dp.desc}</Text>
                 </View>
-                {sourceFilter === sf.value && (
+                {datePreset === dp.value && (
                   <View style={styles.channelDropdownCheck}>
-                    <Check size={12} color='#FFFFFF' />
+                    <Check size={12} color="#FFFFFF" />
                   </View>
                 )}
               </TouchableOpacity>
@@ -1402,9 +2188,25 @@ export default function OrdersScreen() {
       )}
 
       {/* Content View */}
-      {viewMode === 'tabs' ? (
+      {ordersError && orders.length === 0 ? (
+        <ErrorState
+          errorType={ordersError.type}
+          message={ordersError.message}
+          statusCode={ordersError.statusCode}
+          onRetry={() => fetchOrders(false)}
+          isRetrying={loading || refreshing}
+        />
+      ) : viewMode === 'tabs' ? (
         loading ? (
-          <View style={styles.centerLoader}><ActivityIndicator size="large" color="#FF5C39" /></View>
+          <ScrollView
+            contentContainerStyle={[styles.tabOrdersList, isTablet && styles.tabOrdersListTablet]}
+            showsVerticalScrollIndicator={false}
+          >
+            <OrderCardSkeletonItem />
+            <OrderCardSkeletonItem />
+            <OrderCardSkeletonItem />
+            <OrderCardSkeletonItem />
+          </ScrollView>
         ) : activeTabOrders.length === 0 ? (
           <View style={styles.centerEmpty}>
             <ShoppingBag size={48} color="#EEEEEE" />
@@ -1424,6 +2226,7 @@ export default function OrdersScreen() {
                 onAssignDelivery={(o) => { setSelectedOrder(o); setAssignModalVisible(true); }}
                 onUpdateStatus={handleUpdateStatus}
                 onPrint={handlePrintOrder}
+                paperRollSize={paperRollSize}
               />
             )}
           />
@@ -1466,7 +2269,10 @@ export default function OrdersScreen() {
                   </View>
                 </View>
                 {loading ? (
-                  <View style={styles.columnCenter}><ActivityIndicator size="small" color={accentColor} /></View>
+                  <View style={{ padding: 10, gap: 10 }}>
+                    <OrderCardSkeletonItem />
+                    <OrderCardSkeletonItem />
+                  </View>
                 ) : ordersInCol.length === 0 ? (
                   <View style={styles.columnCenter}>
                     <Icon size={isTablet ? 42 : 36} color="#EEEEEE" />
@@ -1486,6 +2292,7 @@ export default function OrdersScreen() {
                         onAssignDelivery={(o) => { setSelectedOrder(o); setAssignModalVisible(true); }}
                         onUpdateStatus={handleUpdateStatus}
                         onPrint={handlePrintOrder}
+                        paperRollSize={paperRollSize}
                       />
                     )}
                   />
@@ -1505,6 +2312,7 @@ export default function OrdersScreen() {
         onCancelOrder={async (orderId) => {
           await executeUpdateStatus(orderId, 'cancelled');
         }}
+        paperRollSize={paperRollSize}
       />
       <AssignDeliveryModal
         visible={assignModalVisible}
@@ -1606,6 +2414,68 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
   },
+  filterBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 11,
+    paddingVertical: 9,
+    borderRadius: 8,
+    backgroundColor: '#F8F9FA',
+    borderWidth: 1,
+    borderColor: '#EEEEEE',
+    flexShrink: 0,
+  },
+  filterBtnActive: {
+    backgroundColor: '#FF5C39',
+    borderColor: '#FF5C39',
+  },
+  filterBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#11181C',
+  },
+  filterBtnTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+  },
+  filterBadge: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 9,
+    minWidth: 18,
+    height: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 4,
+  },
+  filterBadgeText: {
+    fontSize: 10,
+    fontWeight: '900',
+    color: '#FF5C39',
+  },
+  dateDropdownBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    borderRadius: 8,
+    backgroundColor: '#F8F9FA',
+    borderWidth: 1,
+    borderColor: '#EEEEEE',
+    minWidth: 105,
+    flexShrink: 0,
+  },
+  dateDropdownBtnActive: {
+    borderColor: '#FED7AA',
+    backgroundColor: '#FFF7ED',
+  },
+  dateDropdownBtnText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#687076',
+    flex: 1,
+  },
   channelDropdownBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1616,14 +2486,346 @@ const styles = StyleSheet.create({
     backgroundColor: '#F8F9FA',
     borderWidth: 1,
     borderColor: '#EEEEEE',
-    width: 118,
+    width: 112,
     flexShrink: 0,
+  },
+  channelDropdownBtnActive: {
+    borderColor: '#FED7AA',
+    backgroundColor: '#FFF7ED',
   },
   channelDropdownBtnText: {
     fontSize: 11.5,
     fontWeight: '700',
     color: '#687076',
     flex: 1,
+  },
+  activeFiltersRow: {
+    marginTop: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  activeFiltersList: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  activeFilterCountTag: {
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 6,
+    backgroundColor: '#1E293B',
+  },
+  activeFilterCountTagText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+  activeFilterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 14,
+    backgroundColor: '#FFF4F2',
+    borderWidth: 1,
+    borderColor: '#FED7AA',
+  },
+  activeFilterChipText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#FF5C39',
+  },
+  clearAllBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 14,
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+  },
+  clearAllBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#EF4444',
+  },
+  filterModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  filterModalContainer: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    maxHeight: '88%',
+    display: 'flex',
+    flexDirection: 'column',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.16,
+    shadowRadius: 16,
+    elevation: 16,
+  },
+  filterModalContainerTablet: {
+    borderRadius: 24,
+    maxWidth: 620,
+    alignSelf: 'center',
+    maxHeight: '85%',
+    width: '100%',
+  },
+  filterDragHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#E2E8F0',
+    alignSelf: 'center',
+    marginTop: 10,
+    marginBottom: 4,
+  },
+  filterModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  filterModalHeaderTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+  },
+  filterModalIconCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#FFF4F2',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  filterModalTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#0F172A',
+    letterSpacing: -0.3,
+  },
+  filterModalSubtitle: {
+    fontSize: 11.5,
+    color: '#64748B',
+    marginTop: 1,
+    fontWeight: '500',
+  },
+  filterModalHeaderActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  filterResetTextBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 6,
+    backgroundColor: '#FEF2F2',
+  },
+  filterResetTextBtnLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#EF4444',
+  },
+  filterModalCloseBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  filterModalBody: {
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 20,
+  },
+  filterSection: {
+    marginBottom: 20,
+  },
+  filterSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  filterSectionTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  filterSectionTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#1E293B',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  filterSectionSubtitle: {
+    fontSize: 11,
+    color: '#94A3B8',
+    fontWeight: '500',
+  },
+  filterGrid2: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  filterOptionCard: {
+    flex: 1,
+    minWidth: '47%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F8FAFC',
+  },
+  filterOptionCardActive: {
+    borderColor: '#FF5C39',
+    backgroundColor: '#FFF4F2',
+  },
+  filterOptionCardEmoji: {
+    fontSize: 16,
+  },
+  filterOptionCardLabel: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#1E293B',
+  },
+  filterOptionCardLabelActive: {
+    color: '#FF5C39',
+    fontWeight: '800',
+  },
+  filterOptionCardDesc: {
+    fontSize: 10,
+    color: '#94A3B8',
+    marginTop: 1,
+  },
+  filterOptionCountBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 8,
+    backgroundColor: '#E2E8F0',
+    minWidth: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  filterOptionCountBadgeActive: {
+    backgroundColor: '#FED7AA',
+  },
+  filterOptionCountText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#64748B',
+  },
+  filterOptionCountTextActive: {
+    color: '#C2410C',
+  },
+  filterChipsWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 7,
+  },
+  filterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 20,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F8FAFC',
+  },
+  filterChipActive: {
+    borderColor: '#FF5C39',
+    backgroundColor: '#FFF4F2',
+  },
+  filterChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  filterChipTextActive: {
+    color: '#FF5C39',
+    fontWeight: '800',
+  },
+  inlineCustomDateBox: {
+    marginTop: 10,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  inlineDateRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  filterModalFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: Platform.OS === 'ios' ? 28 : 16,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+    backgroundColor: '#FFFFFF',
+  },
+  filterFooterResetBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F8FAFC',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  filterFooterResetBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  filterFooterApplyBtn: {
+    flex: 1,
+    paddingVertical: 13,
+    borderRadius: 12,
+    backgroundColor: '#FF5C39',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#FF5C39',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  filterFooterApplyBtnText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: 0.2,
   },
   dropdownOverlay: {
     flex: 1,
@@ -1873,9 +3075,33 @@ const styles = StyleSheet.create({
   kanbanCardList: { padding: 10, gap: 10 },
 
   kanbanCard: {
-    backgroundColor: '#FFFFFF', borderRadius: 10, borderWidth: 1, borderColor: '#F0F0F0',
-    padding: 12, shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 4,
-    shadowOffset: { width: 0, height: 2 }, elevation: 1,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#F0F0F0',
+    padding: 12,
+    paddingTop: 15,
+    shadowColor: '#000',
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 1,
+    position: 'relative',
+  },
+  cardTopStatusStrip: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 4,
+    borderTopLeftRadius: 9,
+    borderTopRightRadius: 9,
+    zIndex: 1,
+  },
+  cardTopStatusStripTablet: {
+    height: 5,
+    borderTopLeftRadius: 11,
+    borderTopRightRadius: 11,
   },
   kanbanCardTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
   kanbanOrderIdCol: { gap: 2 },
@@ -1923,7 +3149,25 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     lineHeight: 16,
   },
-  kanbanTypeRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 },
+  kanbanTypeRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginBottom: 8 },
+  scheduledTag: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: '#FEF3C7', borderRadius: 6,
+    paddingHorizontal: 8, paddingVertical: 3.5,
+    borderWidth: 1, borderColor: '#FDE68A',
+  },
+  scheduledTagText: { fontSize: 11, fontWeight: '800', color: '#92400E' },
+  scheduledCardBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: '#FEF3C7', borderRadius: 6,
+    paddingHorizontal: 7, paddingVertical: 3,
+    borderWidth: 1, borderColor: '#FDE68A',
+  },
+  scheduledCardBadgeTablet: {
+    paddingHorizontal: 9, paddingVertical: 4, borderRadius: 8,
+  },
+  scheduledCardBadgeText: { fontSize: 11, fontWeight: '800', color: '#92400E' },
+  scheduledCardBadgeTextTablet: { fontSize: 12, fontWeight: '800' },
   pickupTag: {
     flexDirection: 'row', alignItems: 'center', gap: 4,
     backgroundColor: '#FFF7ED', borderRadius: 6,
@@ -1945,6 +3189,13 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: '#DDD6FE',
   },
   dineInTagText: { fontSize: 11, fontWeight: '700', color: '#7C3AED' },
+  takeawayTag: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: '#FEF3C7', borderRadius: 6,
+    paddingHorizontal: 8, paddingVertical: 3.5,
+    borderWidth: 1, borderColor: '#FDE68A',
+  },
+  takeawayTagText: { fontSize: 11, fontWeight: '700', color: '#B45309' },
   riderBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#F8F9FA', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 3, borderWidth: 1, borderColor: '#EEEEEE' },
   riderText: { fontSize: 10, color: '#687076' },
   kanbanFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
@@ -2082,6 +3333,7 @@ const styles = StyleSheet.create({
   },
   kanbanCardTablet: {
     padding: 16,
+    paddingTop: 19,
     borderRadius: 12,
     borderWidth: 1.5,
   },

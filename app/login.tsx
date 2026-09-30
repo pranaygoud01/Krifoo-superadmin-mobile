@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -16,7 +16,14 @@ import { useRouter } from 'expo-router';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { Colors } from '../constants/colors';
-import { Lock, Mail, Eye, EyeOff } from 'lucide-react-native';
+import { Lock, Mail, Eye, EyeOff, WifiOff, ServerOff, AlertCircle } from 'lucide-react-native';
+import Constants from 'expo-constants';
+
+interface LoginErrorDetails {
+  type: 'network' | 'server' | 'auth' | 'generic';
+  message: string;
+  statusCode?: number;
+}
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
@@ -25,30 +32,48 @@ export default function LoginScreen() {
   const [emailFocused, setEmailFocused] = useState(false);
   const [passwordFocused, setPasswordFocused] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [errorMsg, setErrorMsg] = useState('');
+  const [errorDetails, setErrorDetails] = useState<LoginErrorDetails | null>(null);
 
   const { login } = useAuth();
   const router = useRouter();
   const { showToast } = useToast();
 
+  const appVersion =
+    Constants.expoConfig?.version ??
+    (Constants as any).manifest2?.extra?.expoClient?.version ??
+    '1.0.7';
+
   const handleLogin = async () => {
     if (!email.trim() || !password.trim()) {
-      setErrorMsg('Please enter both email and password.');
+      setErrorDetails({
+        type: 'auth',
+        message: 'Please enter both email and password.',
+      });
       return;
     }
 
     setLoading(true);
-    setErrorMsg('');
+    setErrorDetails(null);
     try {
       const res = await login(email.trim().toLowerCase(), password.trim());
       if (res.success) {
         showToast({ title: 'Welcome', message: 'Logged in successfully.', type: 'success' });
         router.replace('/(tabs)');
       } else {
-        setErrorMsg(res.message || 'Login failed. Invalid credentials.');
+        const isNet = res.errorType === 'network';
+        const isSrv = res.errorType === 'server' || (res.statusCode && res.statusCode >= 500);
+
+        setErrorDetails({
+          type: isNet ? 'network' : isSrv ? 'server' : 'auth',
+          message: res.message || (isNet ? 'Cannot connect to backend server' : 'Invalid email or password.'),
+          statusCode: res.statusCode,
+        });
       }
-    } catch (e) {
-      setErrorMsg('An unexpected error occurred.');
+    } catch (e: any) {
+      setErrorDetails({
+        type: 'generic',
+        message: e?.message || 'An unexpected error occurred during login.',
+      });
     } finally {
       setLoading(false);
     }
@@ -103,10 +128,48 @@ export default function LoginScreen() {
             <Text style={styles.formTitle}>Welcome Back</Text>
             <Text style={styles.formSubtitle}>Sign in to manage your operations</Text>
 
-            {/* Error Message */}
-            {errorMsg ? (
-              <View style={styles.errorBox}>
-                <Text style={styles.errorText}>{errorMsg}</Text>
+            {/* Error Message Section */}
+            {errorDetails ? (
+              <View
+                style={[
+                  styles.errorCard,
+                  errorDetails.type === 'network'
+                    ? styles.errorCardNetwork
+                    : styles.errorCardGeneral,
+                ]}
+              >
+                <View style={styles.errorIconWrap}>
+                  {errorDetails.type === 'network' ? (
+                    <WifiOff size={20} color="#D97706" />
+                  ) : errorDetails.type === 'server' ? (
+                    <ServerOff size={20} color="#DC2626" />
+                  ) : (
+                    <AlertCircle size={20} color="#DC2626" />
+                  )}
+                </View>
+
+                <View style={{ flex: 1 }}>
+                  <Text
+                    style={[
+                      styles.errorCardTitle,
+                      { color: errorDetails.type === 'network' ? '#92400E' : '#991B1B' },
+                    ]}
+                  >
+                    {errorDetails.type === 'network'
+                      ? 'Server Unreachable'
+                      : errorDetails.type === 'server'
+                      ? `Server Error (${errorDetails.statusCode || 500})`
+                      : 'Authentication Failed'}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.errorCardDesc,
+                      { color: errorDetails.type === 'network' ? '#B45309' : '#B91C1C' },
+                    ]}
+                  >
+                    {errorDetails.message}
+                  </Text>
+                </View>
               </View>
             ) : null}
 
@@ -189,6 +252,11 @@ export default function LoginScreen() {
                   </Text>
                   .
                 </Text>
+              </View>
+
+              {/* Dynamic App Version */}
+              <View style={styles.versionContainer}>
+                <Text style={styles.versionText}>Version {appVersion}</Text>
               </View>
             </View>
           </View>
@@ -290,20 +358,79 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     marginBottom: 32,
   },
-  errorBox: {
-    backgroundColor: '#FEF2F2',
-    borderColor: '#FCA5A5',
-    borderWidth: 1,
+  errorCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    borderWidth: 1.5,
     paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 12,
+    paddingVertical: 12,
+    borderRadius: 14,
     marginBottom: 20,
+    gap: 12,
   },
-  errorText: {
-    color: '#991B1B',
-    fontSize: 13,
-    textAlign: 'center',
-    fontWeight: '600',
+  errorCardNetwork: {
+    backgroundColor: '#FEF3C7',
+    borderColor: '#FCD34D',
+  },
+  errorCardGeneral: {
+    backgroundColor: '#FEF2F2',
+    borderColor: '#FECACA',
+  },
+  errorIconWrap: {
+    marginTop: 1,
+  },
+  errorCardTitle: {
+    fontSize: 13.5,
+    fontWeight: '800',
+    marginBottom: 2,
+  },
+  errorCardDesc: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '500',
+  },
+  errorConfigBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    alignSelf: 'flex-start',
+    marginTop: 8,
+  },
+  errorConfigBtnText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  serverStatusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginTop: 8,
+    alignSelf: 'center',
+  },
+  serverStatusText: {
+    fontSize: 11,
+    color: '#64748B',
+    maxWidth: 220,
+  },
+  serverChangeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: Colors.primary,
+    marginLeft: 2,
   },
   formFields: {
     gap: 14,
@@ -371,5 +498,17 @@ const styles = StyleSheet.create({
     color: Colors.primary,
     fontWeight: '700',
     textDecorationLine: 'underline',
+  },
+  versionContainer: {
+    marginTop: 18,
+    marginBottom: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  versionText: {
+    fontSize: 12,
+    color: '#94A3B8',
+    fontWeight: '600',
+    letterSpacing: 0.3,
   },
 });

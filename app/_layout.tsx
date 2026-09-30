@@ -19,6 +19,7 @@ import { Text, StyleSheet, Platform } from 'react-native';
 
 import { FontSizeProvider, globalFontScale } from '../context/FontSizeContext';
 import { SocketProvider } from '../context/SocketContext';
+import { ConnectionBanner } from '../components/ConnectionBanner';
 import { initAppOrientation } from '../services/orientation.service';
 
 // Initialize screen orientation preference
@@ -94,6 +95,7 @@ export default function RootLayout() {
           <ToastProvider>
             <SocketProvider>
               <StatusBar style="dark" />
+              <ConnectionBanner />
               <Stack
                 screenOptions={{
                   headerShown: false,

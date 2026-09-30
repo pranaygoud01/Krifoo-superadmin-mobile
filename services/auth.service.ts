@@ -42,6 +42,11 @@ export const authService = {
       return { success: true, data: adminData };
     }
 
+    // If network unreachable or server error, don't waste time on fallback request
+    if (res.errorType === 'network' || res.errorType === 'server') {
+      return res;
+    }
+
     // 2. Fallback to Restaurant Owner (Admin) Login
     const ownerRes = await apiRequest('/api/auth/owner/login', {
       method: 'POST',

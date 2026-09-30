@@ -17,6 +17,8 @@ async function getUserContext(): Promise<{ isOwner: boolean; restaurantId: strin
   }
 }
 
+const inFlightFetchAll: Record<string, Promise<any> | undefined> = {};
+
 export const orderService = {
   /**
    * GET orders.
@@ -26,6 +28,7 @@ export const orderService = {
   async getAllOrders(filters?: {
     status?: string;      // single or comma-separated e.g. 'placed,preparing'
     search?: string;
+    channel?: string;
     startDate?: string;   // ISO string
     endDate?: string;     // ISO string
     page?: number;
@@ -46,6 +49,7 @@ export const orderService = {
     const params = new URLSearchParams();
     if (filters?.status && filters.status !== 'all') params.append('status', filters.status);
     if (filters?.search) params.append('search', filters.search);
+    if (filters?.channel && filters.channel !== 'all') params.append('channel', filters.channel);
     if (filters?.startDate) params.append('startDate', filters.startDate);
     if (filters?.endDate) params.append('endDate', filters.endDate);
     if (filters?.page) params.append('page', String(filters.page));
@@ -62,89 +66,74 @@ export const orderService = {
   },
 
   /**
-   * GET all orders across all pages automatically.
-   * If there are multiple pages (due to backend 200 pagination limit),
-   * it requests the first page (with limit=200), finds total pages,
-   * fetches all subsequent pages in parallel with Promise.all,
-   * and merges them into a single comprehensive list.
+   * GET orders with deduplication and fast operational paging (default limit=150).
+   * Shares identical in-flight requests across components (Header, Orders, Dashboard).
    */
   async fetchAllOrders(filters?: {
     status?: string;
     search?: string;
+    channel?: string;
     startDate?: string;
     endDate?: string;
+    limit?: number;
   }): Promise<{
     success: boolean;
     data: Order[];
     totalOrders: number;
     message?: string;
   }> {
-    const PAGE_LIMIT = 2000;
-    try {
-      const firstRes = await this.getAllOrders({
-        ...filters,
-        page: 1,
-        limit: PAGE_LIMIT,
-      });
+    const cacheKey = JSON.stringify(filters || {});
+    if (inFlightFetchAll[cacheKey]) {
+      return inFlightFetchAll[cacheKey];
+    }
 
-      if (!firstRes.success) {
-        return {
-          success: false,
-          data: [],
-          totalOrders: 0,
-          message: firstRes.message || 'Failed to fetch orders',
-        };
-      }
+    const PAGE_LIMIT = filters?.limit || 150;
 
-      const firstList: Order[] = firstRes.data || (firstRes as any).orders || [];
-      const totalPages: number =
-        firstRes.totalPages ??
-        firstRes.pagination?.pages ??
-        (firstRes as any).pagination?.totalPages ??
-        (firstRes.totalOrders ? Math.ceil(firstRes.totalOrders / PAGE_LIMIT) :
-         firstRes.pagination?.total ? Math.ceil(firstRes.pagination.total / PAGE_LIMIT) : 1);
+    const promise = (async () => {
+      try {
+        const firstRes = await this.getAllOrders({
+          ...filters,
+          page: 1,
+          limit: PAGE_LIMIT,
+        });
 
-      const totalCount: number =
-        firstRes.totalOrders ??
-        firstRes.pagination?.total ??
-        firstList.length;
+        if (!firstRes.success) {
+          return {
+            success: false,
+            data: [],
+            totalOrders: 0,
+            message: firstRes.message || 'Failed to fetch orders',
+          };
+        }
 
-      if (totalPages <= 1) {
+        const firstList: Order[] = firstRes.data || (firstRes as any).orders || [];
+        const totalCount: number =
+          firstRes.totalOrders ??
+          firstRes.pagination?.total ??
+          firstList.length;
+
         return {
           success: true,
           data: firstList,
           totalOrders: totalCount,
         };
+      } catch (e: any) {
+        console.warn('Error in fetchAllOrders:', e);
+        return {
+          success: false,
+          data: [],
+          totalOrders: 0,
+          message: e?.message || 'Failed to fetch orders',
+        };
+      } finally {
+        setTimeout(() => {
+          delete inFlightFetchAll[cacheKey];
+        }, 1500);
       }
+    })();
 
-      // Fetch remaining pages in parallel
-      const pageNumbers = Array.from({ length: totalPages - 1 }, (_, i) => i + 2);
-      const remainingResults = await Promise.all(
-        pageNumbers.map((page) =>
-          this.getAllOrders({ ...filters, page, limit: PAGE_LIMIT })
-            .then((r) => ((r.data || (r as any).orders || []) as Order[]))
-            .catch((err) => {
-              console.warn(`Failed to fetch page ${page} of orders:`, err);
-              return [] as Order[];
-            })
-        )
-      );
-
-      const allOrders = [firstList, ...remainingResults].flat();
-      return {
-        success: true,
-        data: allOrders,
-        totalOrders: totalCount || allOrders.length,
-      };
-    } catch (e: any) {
-      console.warn('Error in fetchAllOrders:', e);
-      return {
-        success: false,
-        data: [],
-        totalOrders: 0,
-        message: e?.message || 'Failed to fetch all orders',
-      };
-    }
+    inFlightFetchAll[cacheKey] = promise;
+    return promise;
   },
 
   /**

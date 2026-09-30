@@ -16,10 +16,8 @@ import { ConfirmModal } from '../components/ConfirmModal';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { Colors } from '../constants/colors';
-import { getApiBaseUrl, setApiBaseUrl } from '../services/api';
 import {
   ShieldCheck,
-  Server,
   LogOut,
   Grid,
   Truck,
@@ -32,7 +30,6 @@ import {
   Globe,
   Check,
   Smartphone,
-  Edit3,
   Clock,
   Sliders,
 } from 'lucide-react-native';
@@ -55,28 +52,13 @@ export default function SettingsScreen() {
     return <RestaurantSettingsScreen />;
   }
 
-  const [apiUrl, setApiUrl] = useState('');
-  const [editingApiUrl, setEditingApiUrl] = useState(false);
-  const [tempApiUrl, setTempApiUrl] = useState('');
   const [logoutModalVisible, setLogoutModalVisible] = useState(false);
   const [appOrientation, setAppOrientation] = useState<AppOrientation>('portrait');
   const [isChangingOrientation, setIsChangingOrientation] = useState(false);
 
   useEffect(() => {
-    getApiBaseUrl().then((url) => {
-      setApiUrl(url);
-      setTempApiUrl(url);
-    });
     getSavedOrientation().then(setAppOrientation);
   }, []);
-
-  const handleSaveApiUrl = async () => {
-    if (!tempApiUrl.trim()) return;
-    await setApiBaseUrl(tempApiUrl.trim());
-    setApiUrl(tempApiUrl.trim());
-    setEditingApiUrl(false);
-    showToast({ title: 'Saved', message: 'API Base URL updated successfully.', type: 'success' });
-  };
 
   const handleSetOrientation = async (mode: AppOrientation) => {
     if (isChangingOrientation || mode === appOrientation) return;
@@ -355,48 +337,6 @@ export default function SettingsScreen() {
         {/* SECTION 3: SYSTEM & LEGAL */}
         <Text style={styles.sectionHeader}>SYSTEM & LEGAL</Text>
         <View style={styles.cardGroup}>
-          {/* API Server Endpoint */}
-          <View style={[styles.groupItem, styles.groupItemBorder]}>
-            <View style={[styles.itemIconBadge, { backgroundColor: '#ECFEFF' }]}>
-              <Server size={18} color="#0891B2" />
-            </View>
-            <View style={{ flex: 1 }}>
-              <View style={styles.itemTitleRow}>
-                <Text style={styles.itemTitle}>Backend API Server</Text>
-                <TouchableOpacity
-                  onPress={() => setEditingApiUrl(!editingApiUrl)}
-                  style={styles.miniEditBtn}
-                >
-                  <Edit3 size={12} color={Colors.primary} />
-                  <Text style={styles.miniEditBtnText}>
-                    {editingApiUrl ? 'Cancel' : 'Edit'}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-
-              {editingApiUrl ? (
-                <View style={styles.apiEditContainer}>
-                  <TextInput
-                    style={styles.apiInput}
-                    value={tempApiUrl}
-                    onChangeText={setTempApiUrl}
-                    placeholder="https://api.krifoo.com"
-                    placeholderTextColor={Colors.textSubtle}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                  />
-                  <TouchableOpacity style={styles.apiSaveBtn} onPress={handleSaveApiUrl}>
-                    <Check size={14} color="#FFFFFF" strokeWidth={2.5} />
-                    <Text style={styles.apiSaveBtnText}>Save</Text>
-                  </TouchableOpacity>
-                </View>
-              ) : (
-                <Text style={styles.apiUrlText} numberOfLines={1}>
-                  {apiUrl || 'Default Base URL'}
-                </Text>
-              )}
-            </View>
-          </View>
 
           {/* Terms & Conditions */}
           <TouchableOpacity
@@ -606,55 +546,7 @@ const styles = StyleSheet.create({
     color: Colors.primary,
     fontWeight: '800',
   },
-  miniEditBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-  },
-  miniEditBtnText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: Colors.primary,
-  },
-  apiUrlText: {
-    fontSize: 11.5,
-    color: Colors.textMuted,
-    marginTop: 2,
-    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
-  },
-  apiEditContainer: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 8,
-    alignItems: 'center',
-  },
-  apiInput: {
-    flex: 1,
-    backgroundColor: Colors.background,
-    borderWidth: 1,
-    borderColor: Colors.cardBorder,
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    fontSize: 12,
-    color: Colors.text,
-  },
-  apiSaveBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: Colors.primary,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    borderRadius: 8,
-  },
-  apiSaveBtnText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#FFFFFF',
-  },
+
   logoutCard: {
     backgroundColor: '#FEF2F2',
     borderWidth: 1,

@@ -16,6 +16,8 @@ import { Header } from '../../components/Header';
 import { StatCard } from '../../components/StatCard';
 import { StatusBadge } from '../../components/StatusBadge';
 import { RestaurantAnalytics } from '../../components/RestaurantAnalytics';
+import { ErrorState } from '../../components/ErrorState';
+import { ApiErrorType } from '../../services/api';
 import { Colors } from '../../constants/colors';
 import { restaurantService } from '../../services/restaurant.service';
 import { orderService } from '../../services/order.service';
@@ -71,6 +73,12 @@ export default function DashboardScreen() {
     totalIncome: 0,
   });
 
+  const [dashboardError, setDashboardError] = useState<{
+    type: ApiErrorType;
+    message: string;
+    statusCode?: number;
+  } | null>(null);
+
   const loadDashboardData = async () => {
     setRefreshing(true);
     try {
@@ -80,6 +88,18 @@ export default function DashboardScreen() {
           orderService.fetchAllOrders(),
           userService.getAllUsers({ limit: 1000 }),
         ]);
+
+        const anySuccess = restRes.success || orderRes.success || userRes.success;
+        if (!anySuccess) {
+          const errRes: any = !restRes.success ? restRes : !orderRes.success ? orderRes : userRes;
+          setDashboardError({
+            type: errRes.errorType || 'unknown',
+            message: errRes.message || 'Failed to connect to backend server.',
+            statusCode: errRes.statusCode,
+          });
+        } else {
+          setDashboardError(null);
+        }
 
         const restList = restRes.data || (restRes as any).restaurants;
         if (restRes.success && restList) {
@@ -107,6 +127,18 @@ export default function DashboardScreen() {
           restaurantOwnerService.getTables(),
         ]);
 
+        const anySuccess = statsRes.success || orderRes.success || tablesRes.success;
+        if (!anySuccess) {
+          const errRes: any = !statsRes.success ? statsRes : !orderRes.success ? orderRes : tablesRes;
+          setDashboardError({
+            type: errRes.errorType || 'unknown',
+            message: errRes.message || 'Failed to connect to backend server.',
+            statusCode: errRes.statusCode,
+          });
+        } else {
+          setDashboardError(null);
+        }
+
         if (statsRes.success && statsRes.data) {
           const overall = statsRes.data.overall || {};
           setOwnerStats({
@@ -129,8 +161,12 @@ export default function DashboardScreen() {
           setActiveSlotsCount(totalSlots);
         }
       }
-    } catch (e) {
+    } catch (e: any) {
       console.warn('Failed loading dashboard data:', e);
+      setDashboardError({
+        type: 'network',
+        message: e?.message || 'Cannot reach server.',
+      });
     } finally {
       setRefreshing(false);
     }
@@ -168,10 +204,9 @@ export default function DashboardScreen() {
   ).length;
 
   // Super Admin Timeframe State & Filtered Metrics
-  const [superTimeframe, setSuperTimeframe] = useState<'today' | '7d' | '30d' | 'all' | 'custom'>('7d');
+  const [superTimeframe, setSuperTimeframe] = useState<'today' | '7d' | '30d' | 'all' | 'custom'>('today');
   const [customStartDate, setCustomStartDate] = useState<Date>(() => {
     const d = new Date();
-    d.setDate(d.getDate() - 7);
     d.setHours(0, 0, 0, 0);
     return d;
   });
@@ -507,18 +542,27 @@ export default function DashboardScreen() {
       // subtitle="Super Admin Management Portal"
       />
 
-      <ScrollView
-        style={styles.scrollBody}
-        contentContainerStyle={{ paddingBottom: 110 }}
-        showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={loadDashboardData}
-            tintColor={Colors.primary}
-          />
-        }
-      >
+      {dashboardError && restaurants.length === 0 && orders.length === 0 ? (
+        <ErrorState
+          errorType={dashboardError.type}
+          message={dashboardError.message}
+          statusCode={dashboardError.statusCode}
+          onRetry={loadDashboardData}
+          isRetrying={refreshing}
+        />
+      ) : (
+        <ScrollView
+          style={styles.scrollBody}
+          contentContainerStyle={{ paddingBottom: 110 }}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={loadDashboardData}
+              tintColor={Colors.primary}
+            />
+          }
+        >
 
 
         {isSuperAdmin ? (
@@ -1193,6 +1237,7 @@ export default function DashboardScreen() {
           </View>
         )}
       </ScrollView>
+      )}
 
       {/* Date Range Selector Modal */}
       <Modal

@@ -20,6 +20,8 @@ import { useToast } from '../../context/ToastContext';
 import { Restaurant, VerificationStatus } from '../../types';
 import { Search, Store } from 'lucide-react-native';
 import { RestaurantListSkeleton } from '../../components/Skeleton';
+import { ErrorState } from '../../components/ErrorState';
+import { ApiErrorType } from '../../services/api';
 
 export default function RestaurantsScreen() {
   const router = useRouter();
@@ -39,6 +41,12 @@ export default function RestaurantsScreen() {
   const [totalPages, setTotalPages] = useState(1);
   const [loadingMore, setLoadingMore] = useState(false);
 
+  const [restaurantsError, setRestaurantsError] = useState<{
+    type: ApiErrorType;
+    message: string;
+    statusCode?: number;
+  } | null>(null);
+
   const fetchRestaurants = async (pageNum = 1, isRefresh = false) => {
     try {
       if (pageNum === 1) {
@@ -52,7 +60,7 @@ export default function RestaurantsScreen() {
         ? selectedFilter
         : undefined;
 
-      const res = await restaurantService.getRestaurants({
+      const res: any = await restaurantService.getRestaurants({
         page: pageNum,
         limit: 10,
         status: statusParam,
@@ -67,9 +75,20 @@ export default function RestaurantsScreen() {
         }
         setPage(pageNum);
         setTotalPages(res.totalPages || 1);
+        setRestaurantsError(null);
+      } else {
+        setRestaurantsError({
+          type: res.errorType || 'unknown',
+          message: res.message || 'Failed to load restaurants from server.',
+          statusCode: res.statusCode,
+        });
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error('Failed fetching restaurants:', e);
+      setRestaurantsError({
+        type: 'network',
+        message: e?.message || 'Cannot reach server.',
+      });
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -238,6 +257,14 @@ export default function RestaurantsScreen() {
       {/* Restaurants List */}
       {loading ? (
         <RestaurantListSkeleton />
+      ) : restaurantsError && restaurants.length === 0 ? (
+        <ErrorState
+          errorType={restaurantsError.type}
+          message={restaurantsError.message}
+          statusCode={restaurantsError.statusCode}
+          onRetry={() => fetchRestaurants(1, false)}
+          isRetrying={loading || refreshing}
+        />
       ) : filteredRestaurants.length === 0 ? (
         <View style={styles.centerBox}>
           <Store size={48} color={Colors.cardBorder} />

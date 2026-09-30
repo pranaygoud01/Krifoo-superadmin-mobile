@@ -7,7 +7,7 @@ import { setupPushNotifications } from '../services/notification';
 interface AuthContextType {
   user: any | null;
   isLoading: boolean;
-  login: (email: string, password: string) => Promise<{ success: boolean; message?: string }>;
+  login: (email: string, password: string) => Promise<{ success: boolean; message?: string; errorType?: string; statusCode?: number }>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
   registerOwner: (formData: FormData) => Promise<{ success: boolean; message?: string }>;

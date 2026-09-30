@@ -13,6 +13,7 @@ interface HeaderProps {
   title: string;
   subtitle?: string;
   rightElement?: React.ReactNode;
+  rightAction?: React.ReactNode;
   showBackButton?: boolean;
 }
 
@@ -20,6 +21,7 @@ export const Header: React.FC<HeaderProps> = ({
   title,
   subtitle,
   rightElement,
+  rightAction,
   showBackButton,
 }) => {
   const router = useRouter();
@@ -180,8 +182,8 @@ export const Header: React.FC<HeaderProps> = ({
             </TouchableOpacity>
           </View>
 
-          {rightElement ? (
-            rightElement
+          {(rightElement || rightAction) ? (
+            (rightElement || rightAction)
           ) : (
             showDefaultActions && (
               <View style={styles.defaultActions}>

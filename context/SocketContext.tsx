@@ -156,11 +156,13 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     let orderSyncInterval: any = null;
     const knownOrderIds = new Set<string>();
     let isFirstPoll = true;
+    let isSyncing = false;
 
     async function checkForNewOrders() {
-      if (!active || !user) return;
+      if (!active || !user || isSyncing) return;
+      isSyncing = true;
       try {
-        const res = await orderService.getAllOrders({ status: 'placed', limit: 100 });
+        const res = await orderService.getAllOrders({ status: 'placed', limit: 20 });
         if (res.success && res.data) {
           const freshOrders = res.data;
 
@@ -203,6 +205,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
       } catch (err) {
         // Silent catch for background polling
+      } finally {
+        isSyncing = false;
       }
     }
 

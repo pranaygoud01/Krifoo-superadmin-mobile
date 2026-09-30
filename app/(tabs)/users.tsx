@@ -23,6 +23,8 @@ import { useToast } from '../../context/ToastContext';
 import { UserAccount } from '../../types';
 import { Search, Users, User, Bike, Trash2, Mail, Phone } from 'lucide-react-native';
 import { UserListSkeleton } from '../../components/Skeleton';
+import { ErrorState } from '../../components/ErrorState';
+import { ApiErrorType } from '../../services/api';
 
 export default function UsersScreen() {
   const { showToast } = useToast();
@@ -53,6 +55,11 @@ export default function UsersScreen() {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [usersError, setUsersError] = useState<{
+    type: ApiErrorType;
+    message: string;
+    statusCode?: number;
+  } | null>(null);
 
   const fetchUsers = async (pageNum = 1, isRefresh = false) => {
     try {
@@ -63,7 +70,7 @@ export default function UsersScreen() {
       }
 
       // Backend supports: userType, search, page, limit
-      const res = await userService.getAllUsers({
+      const res: any = await userService.getAllUsers({
         userType: selectedRole !== 'all' ? selectedRole : undefined,
         search: searchQuery.trim() || undefined,
         page: pageNum,
@@ -79,9 +86,20 @@ export default function UsersScreen() {
         }
         setPage(pageNum);
         setTotalPages(res.totalPages || 1);
+        setUsersError(null);
+      } else {
+        setUsersError({
+          type: res.errorType || 'unknown',
+          message: res.message || 'Failed to load users from server.',
+          statusCode: res.statusCode,
+        });
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error('Failed fetching users:', e);
+      setUsersError({
+        type: 'network',
+        message: e?.message || 'Cannot reach server.',
+      });
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -207,6 +225,14 @@ export default function UsersScreen() {
       {/* User Cards List */}
       {loading ? (
         <UserListSkeleton />
+      ) : usersError && users.length === 0 ? (
+        <ErrorState
+          errorType={usersError.type}
+          message={usersError.message}
+          statusCode={usersError.statusCode}
+          onRetry={() => fetchUsers(1, false)}
+          isRetrying={loading || refreshing}
+        />
       ) : users.length === 0 ? (
         <View style={styles.centerBox}>
           <Users size={48} color={Colors.cardBorder} />

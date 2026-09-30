@@ -81,10 +81,17 @@ export default function RestaurantSettingsScreen() {
   const handleToggleStoreActive = async (newVal: boolean) => {
     setTogglingActive(true);
     try {
-      const res = await restaurantOwnerService.updateRestaurantProfile({ isActive: newVal });
+      let res = await restaurantOwnerService.toggleRestaurantStatus(newVal);
+      if (!res.success) {
+        res = await restaurantOwnerService.updateRestaurantProfile({ isActive: newVal });
+      }
       if (res.success) {
-        setStoreSummary((prev) => ({ ...prev, isActive: newVal }));
-        Alert.alert('Store Status Updated', `Your store is now ${newVal ? 'ACTIVE (ONLINE)' : 'INACTIVE (OFFLINE)'}.`);
+        const actualActive = res.data?.isActive !== undefined ? Boolean(res.data.isActive) : newVal;
+        setStoreSummary((prev) => ({ ...prev, isActive: actualActive }));
+        Alert.alert(
+          'Store Status Updated',
+          `Your store is now ${actualActive ? 'ONLINE' : 'OFFLINE'}.`
+        );
       } else {
         Alert.alert('Error', res.message || 'Failed to update store status.');
       }

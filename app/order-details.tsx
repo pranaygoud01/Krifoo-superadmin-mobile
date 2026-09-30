@@ -31,8 +31,11 @@ import {
   Banknote,
   ChevronDown,
   ChevronUp,
+  Clock,
 } from 'lucide-react-native';
-import { printThermalReceipt, isAutoPrintEnabled, getLastPrintJobReport } from '../services/thermal-print.service';
+import { printThermalReceipt, isAutoPrintEnabled, getLastPrintJobReport, getOrderScheduleInfo } from '../services/thermal-print.service';
+import { getPosPrinterConfig } from '../services/pos-config.service';
+import { getActiveReceiptTemplate } from '../services/receipt-customization.service';
 
 const STATUS_DROPDOWN_OPTIONS = [
   { label: 'Placed', sub: 'New Order Received', value: 'placed', icon: '📦' },
@@ -55,6 +58,24 @@ export default function OrderDetailsScreen() {
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [assignModalVisible, setAssignModalVisible] = useState(false);
   const [printing, setPrinting] = useState(false);
+  const [paperRollSize, setPaperRollSize] = useState<string>('58');
+
+  useEffect(() => {
+    const loadPaperRollSize = async () => {
+      try {
+        const posConfig = await getPosPrinterConfig();
+        const activeTemplate = await getActiveReceiptTemplate();
+        const rawWidth = activeTemplate?.layout?.paperWidth || posConfig?.paperWidth || '58mm';
+        const parsed = rawWidth.replace(/[^0-9]/g, '');
+        if (parsed) {
+          setPaperRollSize(parsed);
+        }
+      } catch (err) {
+        console.warn('Failed to load printer roll size:', err);
+      }
+    };
+    loadPaperRollSize();
+  }, []);
 
   const handlePrintReceipt = async () => {
     if (!order) return;
@@ -237,7 +258,28 @@ export default function OrderDetailsScreen() {
       : order.customerDetails?.phoneNumber;
 
   const orderTypeRaw = String(order.orderType || (order as any).fulfillmentType || '').toLowerCase();
-  const isDeliveryOrder = orderTypeRaw === 'delivery' || (!orderTypeRaw && !!order.deliveryAddress && typeof order.deliveryAddress === 'object');
+  const domain = String(order.sourceDomain || '').toLowerCase();
+  const notes = typeof order.notes === 'string' ? order.notes.toLowerCase() : '';
+  const custName = (order.customerDetails?.name || (order.customerId as any)?.fullName || '').toLowerCase();
+  const phone = (order.customerDetails?.phoneNumber || (order.customerId as any)?.phoneNumber || '').replace(/\D/g, '');
+  const isTakeaway =
+    orderTypeRaw === 'takeaway' ||
+    domain.includes('swaad-takeaway') ||
+    domain.includes('swaadtakeaway') ||
+    notes.includes('takeaway') ||
+    custName.includes('takeaway') ||
+    custName.includes('swaad takeaway') ||
+    phone.includes('7783448291') ||
+    (order as any).appName === 'swaad-takeaway';
+
+  const isDineIn =
+    orderTypeRaw.includes('dine') ||
+    orderTypeRaw.includes('eat') ||
+    Boolean((order as any).tableNumber) ||
+    notes.includes('dine-in') ||
+    notes.includes('table');
+
+  const isDeliveryOrder = !isTakeaway && !isDineIn && (orderTypeRaw === 'delivery' || (!orderTypeRaw && !!order.deliveryAddress && typeof order.deliveryAddress === 'object'));
 
   const deliveryPartner =
     typeof order.assignedDeliveryPartnerId === 'object'
@@ -246,8 +288,10 @@ export default function OrderDetailsScreen() {
 
   const addressText =
     typeof order.deliveryAddress === 'object'
-      ? order.deliveryAddress?.addressLine1 || order.deliveryAddress?.formattedAddress || 'Self Pickup'
-      : order.deliveryAddress || 'Self Pickup';
+      ? order.deliveryAddress?.addressLine1 || order.deliveryAddress?.formattedAddress || (isTakeaway ? 'Takeaway Order' : isDineIn ? 'Dine In' : 'Self Pickup')
+      : order.deliveryAddress || (isTakeaway ? 'Takeaway Order' : isDineIn ? 'Dine In' : 'Self Pickup');
+
+  const scheduleInfo = getOrderScheduleInfo(order);
 
   const orderedItemsList = order.orderedItems || [];
 
@@ -390,6 +434,22 @@ export default function OrderDetailsScreen() {
           </View>
         )}
 
+        {/* Scheduled Order Banner */}
+        {scheduleInfo.isScheduled && (
+          <View style={styles.scheduledAlertBox}>
+            <View style={styles.scheduledAlertHeader}>
+              <Clock size={18} color="#B45309" />
+              <Text style={styles.scheduledAlertTitle}>SCHEDULED ORDER</Text>
+            </View>
+            <Text style={styles.scheduledAlertTime}>
+              Target Time / Slot: {scheduleInfo.scheduleTimeText}
+            </Text>
+            <Text style={styles.scheduledAlertSubtitle}>
+              Please do not prepare immediately. Cook closer to scheduled fulfillment time.
+            </Text>
+          </View>
+        )}
+
         {/* Restaurant Information Card */}
         <View style={styles.card}>
           <View style={styles.cardHeader}>
@@ -401,9 +461,43 @@ export default function OrderDetailsScreen() {
 
         {/* Customer Information Card */}
         <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <User size={16} color={Colors.info} />
-            <Text style={styles.cardTitle}>Customer Information</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+            <View style={styles.cardHeader}>
+              <User size={16} color={Colors.info} />
+              <Text style={styles.cardTitle}>Customer Information</Text>
+            </View>
+            <View
+              style={[
+                {
+                  paddingHorizontal: 8,
+                  paddingVertical: 3,
+                  borderRadius: 6,
+                  borderWidth: 1,
+                },
+                isDeliveryOrder
+                  ? { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }
+                  : isDineIn
+                  ? { backgroundColor: '#F5F3FF', borderColor: '#DDD6FE' }
+                  : isTakeaway
+                  ? { backgroundColor: '#FEF3C7', borderColor: '#FDE68A' }
+                  : { backgroundColor: '#FFF7ED', borderColor: '#FED7AA' },
+              ]}
+            >
+              <Text
+                style={[
+                  { fontSize: 11, fontWeight: '800' },
+                  isDeliveryOrder
+                    ? { color: '#2563EB' }
+                    : isDineIn
+                    ? { color: '#7C3AED' }
+                    : isTakeaway
+                    ? { color: '#B45309' }
+                    : { color: '#EA580C' },
+                ]}
+              >
+                {isDeliveryOrder ? '🛵 DELIVERY' : isDineIn ? '🍽️ DINE-IN' : isTakeaway ? '🥡 TAKEAWAY ORDER' : '🛍️ SELF PICKUP'}
+              </Text>
+            </View>
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
             <View style={{ flex: 1 }}>
@@ -621,10 +715,10 @@ export default function OrderDetailsScreen() {
         >
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <Printer size={18} color="#FFFFFF" />
-            <Text style={styles.printCardBtnText}>Print Receipt</Text>
+            <Text style={styles.printCardBtnText}>Print Receipt({paperRollSize || '58'}mm)</Text>
           </View>
           <View style={styles.thermalBadge}>
-            <Text style={styles.thermalBadgeText}>Thermal / 80mm</Text>
+            <Text style={styles.thermalBadgeText}>Thermal / {paperRollSize || '58'}mm</Text>
           </View>
         </TouchableOpacity>
 
@@ -971,5 +1065,37 @@ const styles = StyleSheet.create({
     color: '#94A3B8',
     fontSize: 11,
     fontWeight: '800',
+  },
+  scheduledAlertBox: {
+    backgroundColor: '#FEF3C7',
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#F59E0B',
+    padding: 14,
+    marginBottom: 14,
+  },
+  scheduledAlertHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 4,
+  },
+  scheduledAlertTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#92400E',
+    letterSpacing: 0.5,
+  },
+  scheduledAlertTime: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#78350F',
+    marginTop: 2,
+  },
+  scheduledAlertSubtitle: {
+    fontSize: 12,
+    color: '#92400E',
+    marginTop: 4,
+    fontWeight: '500',
   },
 });

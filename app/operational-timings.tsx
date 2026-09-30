@@ -26,6 +26,9 @@ import {
   ChevronDown,
   Copy,
   Info,
+  RefreshCw,
+  Sparkles,
+  CheckCircle2,
 } from 'lucide-react-native';
 import { Restaurant } from '../types';
 
@@ -65,12 +68,22 @@ function formatTime12h(time24?: string): string {
   return `${hours}:${minutes} ${period}`;
 }
 
-const TIME_SLOTS = Array.from({ length: 48 }, (_, i) => {
-  const h = Math.floor(i / 2);
-  const m = i % 2 === 0 ? '00' : '30';
-  const hh = h < 10 ? `0${h}` : `${h}`;
-  return `${hh}:${m}`;
-});
+const TIME_SLOTS = [
+  ...Array.from({ length: 48 }, (_, i) => {
+    const h = Math.floor(i / 2);
+    const m = i % 2 === 0 ? '00' : '30';
+    const hh = h < 10 ? `0${h}` : `${h}`;
+    return `${hh}:${m}`;
+  }),
+  '23:59',
+];
+
+const QUICK_PRESETS = [
+  { label: '09:00 AM (Morning)', value: '09:00' },
+  { label: '12:00 PM (Noon)', value: '12:00' },
+  { label: '11:00 PM (Night)', value: '23:00' },
+  { label: '11:59 PM (Midnight)', value: '23:59' },
+];
 
 export default function OperationalTimingsScreen() {
   const router = useRouter();
@@ -191,19 +204,42 @@ export default function OperationalTimingsScreen() {
     setLoading(false);
   };
 
+  // When custom timings are off, schedule always dynamically matches Store Hours
+  const isCustomActiveForCurrentTab =
+    activeTab === 'general'
+      ? false
+      : activeTab === 'krifoo'
+        ? hasCustomDeliveryTimings
+        : hasCustomExternalDeliveryTimings;
+
+  const currentScheduleList =
+    activeTab === 'general'
+      ? generalTimings
+      : activeTab === 'krifoo'
+        ? (hasCustomDeliveryTimings ? deliveryTimings : generalTimings)
+        : (hasCustomExternalDeliveryTimings ? externalDeliveryTimings : generalTimings);
+
   const handleToggleDay = (day: string) => {
     if (activeTab === 'general') {
       setGeneralTimings((prev) =>
         prev.map((t) => (t.day === day ? { ...t, isOpen: !t.isOpen } : t))
       );
     } else if (activeTab === 'krifoo') {
-      setDeliveryTimings((prev) =>
-        prev.map((t) => (t.day === day ? { ...t, isOpen: !t.isOpen } : t))
-      );
+      if (!hasCustomDeliveryTimings) {
+        setHasCustomDeliveryTimings(true);
+      }
+      setDeliveryTimings((prev) => {
+        const source = hasCustomDeliveryTimings ? prev : generalTimings;
+        return source.map((t) => (t.day === day ? { ...t, isOpen: !t.isOpen } : t));
+      });
     } else {
-      setExternalDeliveryTimings((prev) =>
-        prev.map((t) => (t.day === day ? { ...t, isOpen: !t.isOpen } : t))
-      );
+      if (!hasCustomExternalDeliveryTimings) {
+        setHasCustomExternalDeliveryTimings(true);
+      }
+      setExternalDeliveryTimings((prev) => {
+        const source = hasCustomExternalDeliveryTimings ? prev : generalTimings;
+        return source.map((t) => (t.day === day ? { ...t, isOpen: !t.isOpen } : t));
+      });
     }
   };
 
@@ -221,33 +257,41 @@ export default function OperationalTimingsScreen() {
         prev.map((t) => (t.day === pickerDay ? { ...t, [pickerField]: time24 } : t))
       );
     } else if (pickerTab === 'krifoo') {
-      setDeliveryTimings((prev) =>
-        prev.map((t) => (t.day === pickerDay ? { ...t, [pickerField]: time24 } : t))
-      );
+      if (!hasCustomDeliveryTimings) {
+        setHasCustomDeliveryTimings(true);
+      }
+      setDeliveryTimings((prev) => {
+        const source = hasCustomDeliveryTimings ? prev : generalTimings;
+        return source.map((t) => (t.day === pickerDay ? { ...t, [pickerField]: time24 } : t));
+      });
     } else {
-      setExternalDeliveryTimings((prev) =>
-        prev.map((t) => (t.day === pickerDay ? { ...t, [pickerField]: time24 } : t))
-      );
+      if (!hasCustomExternalDeliveryTimings) {
+        setHasCustomExternalDeliveryTimings(true);
+      }
+      setExternalDeliveryTimings((prev) => {
+        const source = hasCustomExternalDeliveryTimings ? prev : generalTimings;
+        return source.map((t) => (t.day === pickerDay ? { ...t, [pickerField]: time24 } : t));
+      });
     }
     setTimePickerVisible(false);
   };
 
   const handleApplyMondayToAll = () => {
+    const list = currentScheduleList;
+    const mon = list.find((t) => t.day === 'monday');
+    if (!mon) return;
+
     if (activeTab === 'general') {
-      const mon = generalTimings.find((t) => t.day === 'monday');
-      if (!mon) return;
       setGeneralTimings((prev) =>
         prev.map((t) => ({ ...t, isOpen: mon.isOpen, openTime: mon.openTime, closeTime: mon.closeTime }))
       );
     } else if (activeTab === 'krifoo') {
-      const mon = deliveryTimings.find((t) => t.day === 'monday');
-      if (!mon) return;
+      setHasCustomDeliveryTimings(true);
       setDeliveryTimings((prev) =>
         prev.map((t) => ({ ...t, isOpen: mon.isOpen, openTime: mon.openTime, closeTime: mon.closeTime }))
       );
     } else {
-      const mon = externalDeliveryTimings.find((t) => t.day === 'monday');
-      if (!mon) return;
+      setHasCustomExternalDeliveryTimings(true);
       setExternalDeliveryTimings((prev) =>
         prev.map((t) => ({ ...t, isOpen: mon.isOpen, openTime: mon.openTime, closeTime: mon.closeTime }))
       );
@@ -255,13 +299,25 @@ export default function OperationalTimingsScreen() {
     showToast({ title: 'Applied', message: 'Monday schedule applied to all 7 days.', type: 'success' });
   };
 
+  // Sync current channel with latest store hours
   const handleCopyFromGeneral = () => {
+    const freshCopy = JSON.parse(JSON.stringify(generalTimings));
     if (activeTab === 'krifoo') {
-      setDeliveryTimings(JSON.parse(JSON.stringify(generalTimings)));
-      showToast({ title: 'Copied', message: 'Krifoo delivery timings synchronized with general hours.', type: 'success' });
+      setDeliveryTimings(freshCopy);
+      setHasCustomDeliveryTimings(true);
+      showToast({
+        title: 'Timings Synchronized! ⏱️',
+        message: 'Krifoo delivery hours updated to match current Store Hours.',
+        type: 'success',
+      });
     } else if (activeTab === 'external') {
-      setExternalDeliveryTimings(JSON.parse(JSON.stringify(generalTimings)));
-      showToast({ title: 'Copied', message: 'External delivery timings synchronized with general hours.', type: 'success' });
+      setExternalDeliveryTimings(freshCopy);
+      setHasCustomExternalDeliveryTimings(true);
+      showToast({
+        title: 'Timings Synchronized! ⏱️',
+        message: 'External website hours updated to match current Store Hours.',
+        type: 'success',
+      });
     }
   };
 
@@ -306,17 +362,22 @@ export default function OperationalTimingsScreen() {
     }
   };
 
-  const currentScheduleList =
-    activeTab === 'general'
-      ? generalTimings
-      : activeTab === 'krifoo'
-      ? deliveryTimings
-      : externalDeliveryTimings;
+  const getCurrentActiveSlot = (): string => {
+    if (!pickerDay) return '';
+    const list =
+      pickerTab === 'general'
+        ? generalTimings
+        : pickerTab === 'krifoo'
+          ? (hasCustomDeliveryTimings ? deliveryTimings : generalTimings)
+          : (hasCustomExternalDeliveryTimings ? externalDeliveryTimings : generalTimings);
+    const dayItem = list.find((t) => t.day === pickerDay);
+    return dayItem ? dayItem[pickerField] : '';
+  };
 
   return (
     <View style={styles.container}>
       <Header
-        title="Operating & Delivery Hours"
+        title="Operating Hours"
         showBackButton={true}
         rightElement={
           <TouchableOpacity
@@ -336,6 +397,73 @@ export default function OperationalTimingsScreen() {
           </TouchableOpacity>
         }
       />
+
+      {/* Pinned Channels Segmented Tab Control */}
+      <View style={[styles.pinnedTabBar, { paddingHorizontal: isTablet ? 24 : 16 }]}>
+        <View style={styles.tabContainer}>
+          <TouchableOpacity
+            style={[styles.tabBtn, activeTab === 'general' && styles.tabBtnActive]}
+            onPress={() => setActiveTab('general')}
+            activeOpacity={0.7}
+          >
+            <Store
+              size={15}
+              color={activeTab === 'general' ? Colors.primary : Colors.textMuted}
+            />
+            <Text
+              style={[
+                styles.tabText,
+                activeTab === 'general' && styles.tabTextActive,
+              ]}
+              numberOfLines={1}
+            >
+              Store Hours
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.tabBtn, activeTab === 'krifoo' && styles.tabBtnActive]}
+            onPress={() => setActiveTab('krifoo')}
+            activeOpacity={0.7}
+          >
+            <Truck
+              size={15}
+              color={activeTab === 'krifoo' ? Colors.primary : Colors.textMuted}
+            />
+            <Text
+              style={[
+                styles.tabText,
+                activeTab === 'krifoo' && styles.tabTextActive,
+              ]}
+              numberOfLines={1}
+            >
+              Krifoo Delivery
+            </Text>
+            {hasCustomDeliveryTimings && <View style={styles.tabBadgeDot} />}
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.tabBtn, activeTab === 'external' && styles.tabBtnActive]}
+            onPress={() => setActiveTab('external')}
+            activeOpacity={0.7}
+          >
+            <Globe
+              size={15}
+              color={activeTab === 'external' ? Colors.primary : Colors.textMuted}
+            />
+            <Text
+              style={[
+                styles.tabText,
+                activeTab === 'external' && styles.tabTextActive,
+              ]}
+              numberOfLines={1}
+            >
+              External Web
+            </Text>
+            {hasCustomExternalDeliveryTimings && <View style={styles.tabBadgeDot} />}
+          </TouchableOpacity>
+        </View>
+      </View>
 
       {loading ? (
         <View style={styles.loadingContainer}>
@@ -390,79 +518,19 @@ export default function OperationalTimingsScreen() {
                       {rest._id === selectedRestaurantId && <Check size={16} color={Colors.primary} />}
                     </TouchableOpacity>
                   ))}
-                </View>
-              )}
-            </View>
-          )}
-
-          {/* 3-Way Timing Channels Tab Bar */}
-          <View style={styles.tabContainer}>
-            <TouchableOpacity
-              style={[styles.tabBtn, activeTab === 'general' && styles.tabBtnActive]}
-              onPress={() => setActiveTab('general')}
-              activeOpacity={0.7}
-            >
-              <Store
-                size={15}
-                color={activeTab === 'general' ? Colors.primary : Colors.textMuted}
-              />
-              <Text
-                style={[
-                  styles.tabText,
-                  activeTab === 'general' && styles.tabTextActive,
-                ]}
-              >
-                Store Hours
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.tabBtn, activeTab === 'krifoo' && styles.tabBtnActive]}
-              onPress={() => setActiveTab('krifoo')}
-              activeOpacity={0.7}
-            >
-              <Truck
-                size={15}
-                color={activeTab === 'krifoo' ? Colors.primary : Colors.textMuted}
-              />
-              <Text
-                style={[
-                  styles.tabText,
-                  activeTab === 'krifoo' && styles.tabTextActive,
-                ]}
-              >
-                Krifoo Delivery
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.tabBtn, activeTab === 'external' && styles.tabBtnActive]}
-              onPress={() => setActiveTab('external')}
-              activeOpacity={0.7}
-            >
-              <Globe
-                size={15}
-                color={activeTab === 'external' ? Colors.primary : Colors.textMuted}
-              />
-              <Text
-                style={[
-                  styles.tabText,
-                  activeTab === 'external' && styles.tabTextActive,
-                ]}
-              >
-                External Web
-              </Text>
-            </TouchableOpacity>
-          </View>
+                  </View>
+                )}
+              </View>
+            )}
 
           {/* TAB 1: GENERAL STORE OPERATING HOURS */}
           {activeTab === 'general' && (
             <View style={styles.bannerInfoCard}>
-              <Store size={18} color={Colors.primary} />
+                <Store size={20} color={Colors.primary} />
               <View style={{ flex: 1 }}>
                 <Text style={styles.bannerInfoTitle}>Store & Dine-In Operating Hours</Text>
                 <Text style={styles.bannerInfoSub}>
-                  Base open/close schedule. Delivery channels follow this schedule by default unless custom timings are enabled.
+                    Base master schedule. All delivery channels automatically follow these hours in real time unless separate custom hours are toggled on.
                 </Text>
               </View>
             </View>
@@ -472,15 +540,35 @@ export default function OperationalTimingsScreen() {
           {activeTab === 'krifoo' && (
             <View style={styles.customToggleCard}>
               <View style={styles.customToggleHeader}>
-                <View style={{ flex: 1, paddingRight: 10 }}>
-                  <Text style={styles.customToggleTitle}>Separate Krifoo Delivery Timings</Text>
+                  <View style={{ flex: 1, paddingRight: 12 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                      <Text style={styles.customToggleTitle}>Krifoo Delivery Timings</Text>
+                      {hasCustomDeliveryTimings ? (
+                        <View style={styles.activeCustomBadge}>
+                          <Sparkles size={11} color="#D97706" />
+                          <Text style={styles.activeCustomBadgeText}>Custom Active</Text>
+                        </View>
+                      ) : (
+                        <View style={styles.liveSyncBadge}>
+                          <CheckCircle2 size={11} color="#059669" />
+                          <Text style={styles.liveSyncBadgeText}>Live Synced</Text>
+                        </View>
+                      )}
+                    </View>
                   <Text style={styles.customToggleSub}>
-                    Configure different delivery operating hours for the Krifoo marketplace app.
+                      {hasCustomDeliveryTimings
+                        ? 'Custom delivery hours are active for Krifoo app. Toggle off to auto-sync with Store Hours.'
+                        : 'Delivery follows Store Hours automatically. Any updates to Store Hours reflect here live.'}
                   </Text>
                 </View>
                 <Switch
                   value={hasCustomDeliveryTimings}
-                  onValueChange={setHasCustomDeliveryTimings}
+                    onValueChange={(val) => {
+                      setHasCustomDeliveryTimings(val);
+                      if (val && (!deliveryTimings || deliveryTimings.length === 0)) {
+                        setDeliveryTimings(JSON.parse(JSON.stringify(generalTimings)));
+                      }
+                    }}
                   trackColor={{ true: Colors.primaryLight, false: Colors.cardBorder }}
                   thumbColor={hasCustomDeliveryTimings ? Colors.primary : Colors.textSubtle}
                 />
@@ -490,7 +578,7 @@ export default function OperationalTimingsScreen() {
                 <View style={styles.syncedNoticeBox}>
                   <Info size={14} color="#0284C7" />
                   <Text style={styles.syncedNoticeText}>
-                    Currently synced with Store Operating Hours. Enable the toggle above to customize delivery hours.
+                      Showing live Store Hours below. Changes made to Store Hours will reflect here automatically.
                   </Text>
                 </View>
               )}
@@ -501,15 +589,35 @@ export default function OperationalTimingsScreen() {
           {activeTab === 'external' && (
             <View style={styles.customToggleCard}>
               <View style={styles.customToggleHeader}>
-                <View style={{ flex: 1, paddingRight: 10 }}>
-                  <Text style={styles.customToggleTitle}>Separate External Website Timings</Text>
+                  <View style={{ flex: 1, paddingRight: 12 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                      <Text style={styles.customToggleTitle}>External Website Timings</Text>
+                      {hasCustomExternalDeliveryTimings ? (
+                        <View style={styles.activeCustomBadge}>
+                          <Sparkles size={11} color="#D97706" />
+                          <Text style={styles.activeCustomBadgeText}>Custom Active</Text>
+                        </View>
+                      ) : (
+                        <View style={styles.liveSyncBadge}>
+                          <CheckCircle2 size={11} color="#059669" />
+                          <Text style={styles.liveSyncBadgeText}>Live Synced</Text>
+                        </View>
+                      )}
+                    </View>
                   <Text style={styles.customToggleSub}>
-                    Configure different delivery hours for direct orders placed via your standalone website.
+                      {hasCustomExternalDeliveryTimings
+                        ? 'Custom delivery hours active for your direct website. Toggle off to auto-sync with Store Hours.'
+                        : 'External delivery follows Store Hours automatically. Updates to Store Hours reflect here live.'}
                   </Text>
                 </View>
                 <Switch
                   value={hasCustomExternalDeliveryTimings}
-                  onValueChange={setHasCustomExternalDeliveryTimings}
+                    onValueChange={(val) => {
+                      setHasCustomExternalDeliveryTimings(val);
+                      if (val && (!externalDeliveryTimings || externalDeliveryTimings.length === 0)) {
+                        setExternalDeliveryTimings(JSON.parse(JSON.stringify(generalTimings)));
+                      }
+                    }}
                   trackColor={{ true: Colors.primaryLight, false: Colors.cardBorder }}
                   thumbColor={hasCustomExternalDeliveryTimings ? Colors.primary : Colors.textSubtle}
                 />
@@ -519,7 +627,7 @@ export default function OperationalTimingsScreen() {
                 <View style={styles.syncedNoticeBox}>
                   <Info size={14} color="#0284C7" />
                   <Text style={styles.syncedNoticeText}>
-                    Currently synced with Store Operating Hours. Enable the toggle above to customize standalone website delivery hours.
+                      Showing live Store Hours below. Changes made to Store Hours will reflect here automatically.
                   </Text>
                 </View>
               )}
@@ -539,25 +647,34 @@ export default function OperationalTimingsScreen() {
 
             {activeTab !== 'general' && (
               <TouchableOpacity
-                style={styles.quickActionBtn}
+                  style={[styles.quickActionBtn, styles.quickActionBtnSync]}
                 onPress={handleCopyFromGeneral}
                 activeOpacity={0.7}
               >
-                <Store size={13} color={Colors.primary} />
-                <Text style={styles.quickActionBtnText}>Sync with Store Hours</Text>
+                  <RefreshCw size={13} color="#0284C7" />
+                  <Text style={[styles.quickActionBtnText, { color: '#0284C7' }]}>
+                    Sync with Store Hours
+                  </Text>
               </TouchableOpacity>
             )}
           </View>
 
           {/* Weekly 7-Day Schedule Matrix Card */}
           <View style={styles.scheduleCard}>
-            <Text style={styles.scheduleCardHeaderTitle}>
-              {activeTab === 'general'
-                ? 'WEEKLY STORE SCHEDULE'
-                : activeTab === 'krifoo'
-                ? 'KRIFOO APP DELIVERY SCHEDULE'
-                : 'EXTERNAL WEBSITE DELIVERY SCHEDULE'}
-            </Text>
+              <View style={styles.scheduleCardHeader}>
+                <Text style={styles.scheduleCardHeaderTitle}>
+                  {activeTab === 'general'
+                    ? 'WEEKLY STORE SCHEDULE'
+                    : activeTab === 'krifoo'
+                      ? 'KRIFOO APP DELIVERY SCHEDULE'
+                      : 'EXTERNAL WEBSITE DELIVERY SCHEDULE'}
+                </Text>
+                {activeTab !== 'general' && !isCustomActiveForCurrentTab && (
+                  <View style={styles.liveBadgeMini}>
+                    <Text style={styles.liveBadgeMiniText}>Auto-Synced</Text>
+                  </View>
+                )}
+              </View>
 
             {currentScheduleList.map((item, index) => {
               const isLast = index === currentScheduleList.length - 1;
@@ -566,15 +683,28 @@ export default function OperationalTimingsScreen() {
                   key={item.day}
                   style={[styles.dayRow, !isLast && styles.dayRowBorder]}
                 >
-                  {/* Day Name & Toggle */}
+                  {/* Day Name & Status */}
                   <View style={styles.dayInfoCol}>
-                    <Text style={styles.dayName}>{item.day.toUpperCase()}</Text>
+                    <Text
+                      style={styles.dayName}
+                      numberOfLines={1}
+                      adjustsFontSizeToFit={true}
+                      minimumFontScale={0.8}
+                    >
+                      {item.day.toUpperCase()}
+                    </Text>
                     <View
                       style={[
                         styles.dayStatusPill,
                         item.isOpen ? styles.dayStatusOpen : styles.dayStatusClosed,
                       ]}
                     >
+                      <View
+                        style={[
+                          styles.statusDot,
+                          { backgroundColor: item.isOpen ? '#059669' : '#DC2626' },
+                        ]}
+                      />
                       <Text
                         style={[
                           styles.dayStatusText,
@@ -602,8 +732,11 @@ export default function OperationalTimingsScreen() {
                         onPress={() => openTimePicker(activeTab, item.day, 'openTime')}
                         activeOpacity={0.7}
                       >
-                        <Text style={styles.timeLabel}>OPEN</Text>
-                        <Text style={styles.timeValue}>{formatTime12h(item.openTime)}</Text>
+                        <Text style={[styles.timeLabel, { color: '#059669' }]}>OPEN</Text>
+                        <View style={styles.timeValGroup}>
+                          <Text style={styles.timeValue}>{formatTime12h(item.openTime)}</Text>
+                          <ChevronDown size={11} color={Colors.textMuted} />
+                        </View>
                       </TouchableOpacity>
 
                       <Text style={styles.timeSeparator}>to</Text>
@@ -613,8 +746,11 @@ export default function OperationalTimingsScreen() {
                         onPress={() => openTimePicker(activeTab, item.day, 'closeTime')}
                         activeOpacity={0.7}
                       >
-                        <Text style={styles.timeLabel}>CLOSE</Text>
-                        <Text style={styles.timeValue}>{formatTime12h(item.closeTime)}</Text>
+                        <Text style={[styles.timeLabel, { color: '#DC2626' }]}>CLOSE</Text>
+                        <View style={styles.timeValGroup}>
+                          <Text style={styles.timeValue}>{formatTime12h(item.closeTime)}</Text>
+                          <ChevronDown size={11} color={Colors.textMuted} />
+                        </View>
                       </TouchableOpacity>
                     </View>
                   ) : (
@@ -637,7 +773,10 @@ export default function OperationalTimingsScreen() {
             {saving ? (
               <ActivityIndicator size="small" color="#FFFFFF" />
             ) : (
-              <Text style={styles.bottomSaveBtnText}>Save Operational & Delivery Timings</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Check size={18} color="#FFFFFF" strokeWidth={2.5} />
+                    <Text style={styles.bottomSaveBtnText}>Save Operational & Delivery Timings</Text>
+                  </View>
             )}
           </TouchableOpacity>
         </ScrollView>
@@ -654,30 +793,63 @@ export default function OperationalTimingsScreen() {
           <View style={styles.modalCard}>
             <View style={styles.modalHeader}>
               <View>
-                <Text style={styles.modalTitle}>Select {pickerField === 'openTime' ? 'Opening' : 'Closing'} Time</Text>
-                <Text style={styles.modalSub}>{pickerDay ? pickerDay.toUpperCase() : ''}</Text>
+                <Text style={styles.modalTitle}>
+                  Select {pickerField === 'openTime' ? 'Opening' : 'Closing'} Time
+                </Text>
+                <Text style={styles.modalSub}>
+                  {pickerDay ? pickerDay.toUpperCase() : ''} • {formatTime12h(getCurrentActiveSlot())}
+                </Text>
               </View>
               <TouchableOpacity
                 style={styles.modalCloseBtn}
                 onPress={() => setTimePickerVisible(false)}
               >
-                <Text style={styles.modalCloseText}>Cancel</Text>
+                <Text style={styles.modalCloseText}>Done</Text>
               </TouchableOpacity>
             </View>
 
+            {/* Quick Presets */}
+            <View style={styles.presetsWrap}>
+              <Text style={styles.presetsLabel}>QUICK PRESETS</Text>
+              <View style={styles.presetsRow}>
+                {QUICK_PRESETS.map((p) => {
+                  const isActive = getCurrentActiveSlot() === p.value;
+                  return (
+                    <TouchableOpacity
+                      key={p.value}
+                      style={[styles.presetChip, isActive && styles.presetChipActive]}
+                      onPress={() => handleSelectTimeSlot(p.value)}
+                    >
+                      <Text style={[styles.presetChipText, isActive && styles.presetChipTextActive]}>
+                        {p.value === '23:59' ? '11:59 PM' : formatTime12h(p.value)}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+
+            {/* Grid of Slots */}
             <ScrollView style={styles.slotsScrollView} showsVerticalScrollIndicator={false}>
               <View style={styles.slotsGrid}>
-                {TIME_SLOTS.map((slot) => (
-                  <TouchableOpacity
-                    key={slot}
-                    style={styles.slotPill}
-                    onPress={() => handleSelectTimeSlot(slot)}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={styles.slotText}>{formatTime12h(slot)}</Text>
-                    <Text style={styles.slotSub}>{slot}</Text>
-                  </TouchableOpacity>
-                ))}
+                {TIME_SLOTS.map((slot) => {
+                  const isSelected = getCurrentActiveSlot() === slot;
+                  return (
+                    <TouchableOpacity
+                      key={slot}
+                      style={[styles.slotPill, isSelected && styles.slotPillSelected]}
+                      onPress={() => handleSelectTimeSlot(slot)}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={[styles.slotText, isSelected && styles.slotTextSelected]}>
+                        {formatTime12h(slot)}
+                      </Text>
+                      <Text style={[styles.slotSub, isSelected && styles.slotSubSelected]}>
+                        {slot}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
               </View>
             </ScrollView>
           </View>
@@ -695,21 +867,81 @@ const styles = StyleSheet.create({
   headerSaveBtn: {
     backgroundColor: Colors.primary,
     paddingHorizontal: 14,
-    paddingVertical: 6,
+    paddingVertical: 7,
     borderRadius: 8,
     marginRight: 6,
     justifyContent: 'center',
     alignItems: 'center',
+    shadowColor: Colors.primary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 2,
   },
   headerSaveBtnContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    gap: 5,
   },
   headerSaveBtnText: {
     color: '#FFFFFF',
-    fontWeight: '700',
+    fontWeight: '800',
     fontSize: 13,
+  },
+  pinnedTabBar: {
+    backgroundColor: Colors.cardSurface,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.cardBorder,
+    paddingVertical: 8,
+    zIndex: 10,
+  },
+  tabContainer: {
+    flexDirection: 'row',
+    backgroundColor: Colors.background,
+    borderRadius: 12,
+    padding: 4,
+    gap: 4,
+    borderWidth: 1,
+    borderColor: Colors.cardBorder,
+  },
+  tabBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 9,
+    paddingHorizontal: 6,
+    borderRadius: 9,
+    gap: 6,
+    position: 'relative',
+  },
+  tabBtnActive: {
+    backgroundColor: Colors.cardSurface,
+    borderWidth: 1,
+    borderColor: Colors.cardBorder,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 3,
+    elevation: 1,
+  },
+  tabText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Colors.textMuted,
+  },
+  tabTextActive: {
+    color: Colors.primary,
+    fontWeight: '800',
+  },
+  tabBadgeDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#D97706',
+    position: 'absolute',
+    top: 6,
+    right: 6,
   },
   loadingContainer: {
     flex: 1,
@@ -719,18 +951,19 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     marginTop: 12,
-    fontSize: 14,
+    fontSize: 13,
     color: Colors.textMuted,
+    fontWeight: '600',
   },
   scrollContent: {
-    padding: 16,
-    paddingBottom: 120,
+    paddingVertical: 14,
+    paddingBottom: 40,
   },
   selectorCard: {
     backgroundColor: Colors.cardSurface,
     borderRadius: 14,
-    padding: 14,
-    marginBottom: 14,
+    padding: 12,
+    marginBottom: 12,
     borderWidth: 1,
     borderColor: Colors.cardBorder,
   },
@@ -739,18 +972,18 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: Colors.textSubtle,
     letterSpacing: 0.5,
-    marginBottom: 8,
+    marginBottom: 6,
   },
   pickerButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 10,
-    paddingHorizontal: 12,
     backgroundColor: Colors.background,
-    borderRadius: 10,
     borderWidth: 1,
     borderColor: Colors.cardBorder,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
   },
   pickerContent: {
     flexDirection: 'row',
@@ -759,7 +992,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   pickerText: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '700',
     color: Colors.text,
   },
@@ -768,7 +1001,7 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: Colors.cardBorder,
     paddingTop: 6,
-    maxHeight: 180,
+    maxHeight: 200,
   },
   dropdownItem: {
     flexDirection: 'row',
@@ -779,81 +1012,51 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   dropdownItemActive: {
-    backgroundColor: Colors.primaryLight,
+    backgroundColor: '#FFF7ED',
   },
   dropdownItemText: {
-    fontSize: 13,
+    fontSize: 12.5,
     color: Colors.text,
-    fontWeight: '500',
+    fontWeight: '600',
   },
   dropdownItemTextActive: {
-    color: Colors.primary,
-    fontWeight: '700',
-  },
-  tabContainer: {
-    flexDirection: 'row',
-    backgroundColor: Colors.cardSurface,
-    borderRadius: 12,
-    padding: 4,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: Colors.cardBorder,
-  },
-  tabBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 10,
-    borderRadius: 8,
-  },
-  tabBtnActive: {
-    backgroundColor: Colors.primaryLight,
-  },
-  tabText: {
-    fontSize: 11.5,
-    fontWeight: '600',
-    color: Colors.textMuted,
-  },
-  tabTextActive: {
     color: Colors.primary,
     fontWeight: '800',
   },
   bannerInfoCard: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: 12,
-    backgroundColor: Colors.cardSurface,
+    backgroundColor: '#FFF7ED',
+    borderWidth: 1,
+    borderColor: '#FED7AA',
     borderRadius: 14,
     padding: 14,
     marginBottom: 12,
-    borderWidth: 1,
-    borderColor: Colors.cardBorder,
   },
   bannerInfoTitle: {
     fontSize: 13.5,
     fontWeight: '800',
-    color: Colors.text,
+    color: '#9A3412',
+    marginBottom: 3,
   },
   bannerInfoSub: {
-    fontSize: 11,
-    color: Colors.textMuted,
-    marginTop: 2,
-    lineHeight: 15,
+    fontSize: 11.5,
+    color: '#7C2D12',
+    lineHeight: 16,
   },
   customToggleCard: {
     backgroundColor: Colors.cardSurface,
     borderRadius: 14,
-    padding: 14,
-    marginBottom: 12,
     borderWidth: 1,
     borderColor: Colors.cardBorder,
+    padding: 14,
+    marginBottom: 12,
   },
   customToggleHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    justifyContent: 'space-between',
   },
   customToggleTitle: {
     fontSize: 13.5,
@@ -861,10 +1064,42 @@ const styles = StyleSheet.create({
     color: Colors.text,
   },
   customToggleSub: {
-    fontSize: 11,
+    fontSize: 11.5,
     color: Colors.textMuted,
-    marginTop: 2,
-    lineHeight: 15,
+    lineHeight: 16,
+    marginTop: 3,
+  },
+  activeCustomBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  activeCustomBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#92400E',
+  },
+  liveSyncBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  liveSyncBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#065F46',
   },
   syncedNoticeBox: {
     flexDirection: 'row',
@@ -900,6 +1135,10 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 10,
   },
+  quickActionBtnSync: {
+    backgroundColor: '#F0F9FF',
+    borderColor: '#BAE6FD',
+  },
   quickActionBtnText: {
     fontSize: 11.5,
     fontWeight: '700',
@@ -912,43 +1151,73 @@ const styles = StyleSheet.create({
     borderColor: Colors.cardBorder,
     overflow: 'hidden',
     marginBottom: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    elevation: 1,
   },
-  scheduleCardHeaderTitle: {
-    fontSize: 10.5,
-    fontWeight: '800',
-    color: Colors.textSubtle,
-    letterSpacing: 0.5,
+  scheduleCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: 14,
     paddingTop: 12,
     paddingBottom: 8,
     borderBottomWidth: 1,
     borderBottomColor: Colors.cardBorder,
   },
+  scheduleCardHeaderTitle: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    color: Colors.textSubtle,
+    letterSpacing: 0.5,
+  },
+  liveBadgeMini: {
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  liveBadgeMiniText: {
+    fontSize: 9.5,
+    fontWeight: '700',
+    color: '#059669',
+  },
   dayRow: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 14,
     paddingVertical: 12,
-    gap: 10,
+    gap: 8,
   },
   dayRowBorder: {
     borderBottomWidth: 1,
     borderBottomColor: Colors.cardBorder,
   },
   dayInfoCol: {
-    width: 80,
+    width: 96,
+    marginRight: 4,
   },
   dayName: {
-    fontSize: 12.5,
+    fontSize: 12,
     fontWeight: '800',
     color: Colors.text,
   },
   dayStatusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 6,
     alignSelf: 'flex-start',
     marginTop: 3,
+  },
+  statusDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
   },
   dayStatusOpen: {
     backgroundColor: '#ECFDF5',
@@ -957,7 +1226,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FEF2F2',
   },
   dayStatusText: {
-    fontSize: 9,
+    fontSize: 8.5,
     fontWeight: '800',
   },
   timesContainer: {
@@ -965,7 +1234,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'flex-end',
-    gap: 6,
+    gap: 2,
   },
   timeBadge: {
     backgroundColor: Colors.background,
@@ -975,18 +1244,23 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
     borderRadius: 8,
     alignItems: 'center',
-    minWidth: 72,
+    minWidth: 78,
   },
   timeLabel: {
     fontSize: 8,
     fontWeight: '800',
-    color: Colors.textSubtle,
+    letterSpacing: 0.4,
+  },
+  timeValGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    marginTop: 1,
   },
   timeValue: {
     fontSize: 11,
     fontWeight: '700',
     color: Colors.text,
-    marginTop: 1,
   },
   timeSeparator: {
     fontSize: 11,
@@ -1009,10 +1283,10 @@ const styles = StyleSheet.create({
     paddingVertical: 15,
     alignItems: 'center',
     justifyContent: 'center',
-    elevation: 2,
+    elevation: 3,
     shadowColor: Colors.primary,
-    shadowOpacity: 0.25,
-    shadowRadius: 6,
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
     shadowOffset: { width: 0, height: 3 },
   },
   bottomSaveBtnText: {
@@ -1033,16 +1307,21 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     width: '100%',
     maxWidth: 420,
-    maxHeight: '75%',
+    maxHeight: '80%',
     padding: 16,
     borderWidth: 1,
     borderColor: Colors.cardBorder,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.15,
+    shadowRadius: 16,
+    elevation: 8,
   },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 10,
     paddingBottom: 10,
     borderBottomWidth: 1,
     borderBottomColor: Colors.cardBorder,
@@ -1059,15 +1338,58 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   modalCloseBtn: {
-    padding: 6,
+    backgroundColor: Colors.primaryLight,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 8,
   },
   modalCloseText: {
-    fontSize: 13,
+    fontSize: 12,
+    fontWeight: '800',
+    color: Colors.primary,
+  },
+  presetsWrap: {
+    marginBottom: 12,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.cardBorder,
+  },
+  presetsLabel: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: Colors.textSubtle,
+    letterSpacing: 0.5,
+    marginBottom: 6,
+  },
+  presetsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  presetChip: {
+    backgroundColor: Colors.background,
+    borderWidth: 1,
+    borderColor: Colors.cardBorder,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 7,
+  },
+  presetChipActive: {
+    backgroundColor: Colors.primaryLight,
+    borderColor: Colors.primary,
+  },
+  presetChipText: {
+    fontSize: 10.5,
     fontWeight: '700',
-    color: Colors.textMuted,
+    color: Colors.text,
+  },
+  presetChipTextActive: {
+    color: Colors.primary,
+    fontWeight: '800',
   },
   slotsScrollView: {
     flexGrow: 0,
+    maxHeight: 280,
   },
   slotsGrid: {
     flexDirection: 'row',
@@ -1084,14 +1406,30 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     alignItems: 'center',
   },
+  slotPillSelected: {
+    backgroundColor: Colors.primary,
+    borderColor: Colors.primary,
+    shadowColor: Colors.primary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 3,
+  },
   slotText: {
-    fontSize: 12,
+    fontSize: 11.5,
     fontWeight: '700',
     color: Colors.text,
+  },
+  slotTextSelected: {
+    color: '#FFFFFF',
+    fontWeight: '800',
   },
   slotSub: {
     fontSize: 9,
     color: Colors.textSubtle,
     marginTop: 2,
+  },
+  slotSubSelected: {
+    color: 'rgba(255, 255, 255, 0.85)',
   },
 });

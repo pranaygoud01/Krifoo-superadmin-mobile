@@ -20,6 +20,124 @@ export type ReceiptCommand =
   | { type: 'qr'; data: string; label?: string }
   | { type: 'spacing'; mode: 'compact' | 'normal' | 'relaxed' };
 
+/**
+ * Formats a raw schedule timestamp (ISO string, date string, or custom slot)
+ * into a clear, human-readable format with date and time.
+ * Example: "2026-09-08T13:00:00.000Z" -> "Tue, 08 Sep 2026, 01:00 PM"
+ */
+export function formatScheduleDisplay(raw: string | null | undefined): string {
+  if (!raw) return '';
+  const trimmed = String(raw).trim();
+  if (!trimmed) return '';
+
+  if (trimmed.toLowerCase() === 'asap' || trimmed.toLowerCase() === 'scheduled') {
+    return trimmed;
+  }
+
+  // Check if it's an ISO or date format
+  const dateObj = new Date(trimmed);
+  if (!isNaN(dateObj.getTime()) && (trimmed.includes('-') || trimmed.includes('/') || trimmed.includes('T'))) {
+    try {
+      const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+      const dayName = days[dateObj.getDay()];
+      const day = String(dateObj.getDate()).padStart(2, '0');
+      const month = months[dateObj.getMonth()];
+      const year = dateObj.getFullYear();
+
+      let hours = dateObj.getHours();
+      const minutes = String(dateObj.getMinutes()).padStart(2, '0');
+      const ampm = hours >= 12 ? 'PM' : 'AM';
+      hours = hours % 12;
+      hours = hours ? hours : 12;
+      const formattedHour = String(hours).padStart(2, '0');
+
+      return `${dayName}, ${day} ${month} ${year}, ${formattedHour}:${minutes} ${ampm}`;
+    } catch {
+      return trimmed;
+    }
+  }
+
+  return trimmed;
+}
+
+/**
+ * Resolves whether an order is scheduled and extracts its target delivery/pickup slot or time.
+ */
+export function getOrderScheduleInfo(order: any): {
+  isScheduled: boolean;
+  scheduleTimeText: string | null;
+  scheduledLabel: string;
+} {
+  if (!order) return { isScheduled: false, scheduleTimeText: null, scheduledLabel: 'ASAP' };
+
+  const slotTime = order.deliverySlotTime || order.deliverySlot || order.slotTime;
+  const collectionTime = order.collectionTime;
+  const scheduleTimeDate = order.scheduleTimeDate || order.scheduledFor || order.scheduledTime;
+
+  if (slotTime && typeof slotTime === 'string' && slotTime.trim()) {
+    const formatted = formatScheduleDisplay(slotTime.trim());
+    return { isScheduled: true, scheduleTimeText: formatted, scheduledLabel: `SLOT: ${formatted}` };
+  }
+  if (collectionTime && typeof collectionTime === 'string' && collectionTime.trim()) {
+    const formatted = formatScheduleDisplay(collectionTime.trim());
+    return { isScheduled: true, scheduleTimeText: formatted, scheduledLabel: `PICKUP: ${formatted}` };
+  }
+  if (scheduleTimeDate && typeof scheduleTimeDate === 'string' && scheduleTimeDate.trim()) {
+    const formatted = formatScheduleDisplay(scheduleTimeDate.trim());
+    return { isScheduled: true, scheduleTimeText: formatted, scheduledLabel: `SCHEDULED: ${formatted}` };
+  }
+  if (order.isScheduled) {
+    const formatted = formatScheduleDisplay(order.scheduledTime || 'Scheduled');
+    return { isScheduled: true, scheduleTimeText: formatted, scheduledLabel: 'SCHEDULED' };
+  }
+
+  return { isScheduled: false, scheduleTimeText: null, scheduledLabel: 'ASAP' };
+}
+
+export function getOrderFulfillmentLabel(order: any): string {
+  if (!order) return 'DELIVERY';
+
+  const rawFType = (
+    order.orderType ||
+    order.deliveryType ||
+    (order.deliveryAddress ? 'delivery' : 'pickup')
+  ).toString().toUpperCase();
+
+  const domain = String(order.sourceDomain || '').toLowerCase();
+  const notes = typeof order.notes === 'string' ? order.notes.toLowerCase() : '';
+  const custName = (order.customerDetails?.name || (order.customerId as any)?.fullName || '').toLowerCase();
+  const phone = (order.customerDetails?.phoneNumber || (order.customerId as any)?.phoneNumber || '').replace(/\D/g, '');
+
+  const isDineIn =
+    rawFType.includes('DINE') ||
+    rawFType.includes('EAT') ||
+    Boolean(order.tableNumber) ||
+    Boolean(order.notes?.toLowerCase().includes('table'));
+
+  if (isDineIn) {
+    const tableNum = order.tableNumber || (order.notes?.match(/table\s*([0-9a-zA-Z]+)/i)?.[1]) || '';
+    return tableNum ? `DINE-IN (TABLE ${tableNum})` : 'DINE-IN';
+  }
+
+  const isTakeaway =
+    rawFType.includes('TAKEAWAY') ||
+    domain.includes('swaad-takeaway') ||
+    domain.includes('swaadtakeaway') ||
+    notes.includes('takeaway') ||
+    custName.includes('takeaway') ||
+    custName.includes('swaad takeaway') ||
+    phone.includes('7783448291') ||
+    (order as any).appName === 'swaad-takeaway';
+
+  if (isTakeaway) return 'TAKEAWAY';
+  if (rawFType.includes('PICKUP') || rawFType.includes('COLLECT')) return 'PICKUP';
+  if (rawFType.includes('DELIV')) return 'DELIVERY';
+
+  return rawFType || 'DELIVERY';
+}
+
 function formatMoney(amount?: number): string {
   if (amount === undefined || amount === null || isNaN(amount)) return '£0.00';
   return `£${Number(amount).toFixed(2)}`;
@@ -120,15 +238,29 @@ export function buildReceiptDocument(order: Partial<Order> & any, config?: Parti
     '';
 
   // Fulfillment type
-  const fulfillmentType = (
+  const rawFType = (
     order.orderType ||
     order.deliveryType ||
     (order.deliveryAddress ? 'delivery' : 'pickup')
   ).toString().toUpperCase();
 
+  const domain = String(order.sourceDomain || '').toLowerCase();
+  const notes = typeof order.notes === 'string' ? order.notes.toLowerCase() : '';
+  const custName = (order.customerDetails?.name || (order.customerId as any)?.fullName || '').toLowerCase();
+  const phone = (order.customerDetails?.phoneNumber || (order.customerId as any)?.phoneNumber || '').replace(/\D/g, '');
+  const isTakeaway =
+    rawFType.includes('TAKEAWAY') ||
+    domain.includes('swaad-takeaway') ||
+    domain.includes('swaadtakeaway') ||
+    notes.includes('takeaway') ||
+    custName.includes('takeaway') ||
+    custName.includes('swaad takeaway') ||
+    phone.includes('7783448291') ||
+    (order as any).appName === 'swaad-takeaway';
+
   const isDineIn =
-    fulfillmentType.includes('DINE') ||
-    fulfillmentType.includes('EAT') ||
+    rawFType.includes('DINE') ||
+    rawFType.includes('EAT') ||
     Boolean(order.tableNumber) ||
     Boolean(order.notes?.toLowerCase().includes('table'));
 
@@ -147,10 +279,21 @@ export function buildReceiptDocument(order: Partial<Order> & any, config?: Parti
   const placedDate = order.createdAt ? new Date(order.createdAt).toLocaleString('en-GB') : new Date().toLocaleString('en-GB');
   commands.push({ type: 'text', value: `Placed: ${placedDate}`, align: 'center' });
 
-  // 3. Fulfillment Badge
-  let badgeText = isDineIn ? `[ EAT-IN / DINE-IN ${tableInfo} ]` : `[ ${fulfillmentType} ORDER ]`;
+  // 3. Fulfillment Badge & Scheduled Notice
+  let badgeText = isDineIn ? `[ EAT-IN / DINE-IN ${tableInfo} ]` : isTakeaway ? `[ TAKEAWAY ORDER ]` : `[ ${rawFType} ORDER ]`;
   commands.push({ type: 'text', value: badgeText, bold: true, align: 'center', size: 'normal' });
-  commands.push({ type: 'line' });
+
+  const scheduleInfo = getOrderScheduleInfo(order);
+  const fulfillmentLabel = getOrderFulfillmentLabel(order);
+  if (scheduleInfo.isScheduled && scheduleInfo.scheduleTimeText) {
+    commands.push({ type: 'line', char: '=' });
+    commands.push({ type: 'text', value: `*** SCHEDULED ${fulfillmentLabel} ***`, bold: true, align: 'center', size: 'double' });
+    commands.push({ type: 'text', value: `ORDER TYPE: ${fulfillmentLabel}`, bold: true, align: 'center', size: 'normal' });
+    commands.push({ type: 'text', value: `TARGET: ${scheduleInfo.scheduleTimeText.toUpperCase()}`, bold: true, align: 'center', size: 'normal' });
+    commands.push({ type: 'line', char: '=' });
+  } else {
+    commands.push({ type: 'line' });
+  }
 
   // 4. Customer & Delivery Address Details
   commands.push({ type: 'text', value: `Customer: ${customerName}`, bold: true, align: 'left' });
@@ -455,10 +598,38 @@ export function buildCustomizedReceiptDocument(
   }
 
   // Fulfillment badge
+  const customDomain = String(order.sourceDomain || '').toLowerCase();
+  const customNotes = typeof order.notes === 'string' ? order.notes.toLowerCase() : '';
+  const customCustName = (order.customerDetails?.name || (order.customerId as any)?.fullName || '').toLowerCase();
+  const customPhone = (order.customerDetails?.phoneNumber || (order.customerId as any)?.phoneNumber || '').replace(/\D/g, '');
+  const isCustomTakeaway =
+    fulfillmentType.includes('TAKEAWAY') ||
+    customDomain.includes('swaad-takeaway') ||
+    customDomain.includes('swaadtakeaway') ||
+    customNotes.includes('takeaway') ||
+    customCustName.includes('takeaway') ||
+    customCustName.includes('swaad takeaway') ||
+    customPhone.includes('7783448291') ||
+    (order as any).appName === 'swaad-takeaway';
+
   const badgeText = isDineIn
     ? `[ EAT-IN / DINE-IN ${tableNum ? `TABLE ${tableNum}` : ''} ]`
+    : isCustomTakeaway
+    ? `[ TAKEAWAY ORDER ]`
     : `[ ${fulfillmentType} ORDER ]`;
   commands.push({ type: 'text', value: badgeText, bold: true, align: 'center', font });
+
+  const customScheduleInfo = getOrderScheduleInfo(order);
+  const customFulfillmentLabel = getOrderFulfillmentLabel(order);
+  if (customScheduleInfo.isScheduled && customScheduleInfo.scheduleTimeText) {
+    commands.push({ type: 'line', char: '=' });
+    commands.push({ type: 'text', value: `*** SCHEDULED ${customFulfillmentLabel} ***`, bold: true, align: 'center', size: 'double', font });
+    commands.push({ type: 'text', value: `ORDER TYPE: ${customFulfillmentLabel}`, bold: true, align: 'center', size: 'normal', font });
+    commands.push({ type: 'text', value: `TARGET: ${customScheduleInfo.scheduleTimeText.toUpperCase()}`, bold: true, align: 'center', size: 'normal', font });
+    commands.push({ type: 'line', char: '=' });
+  } else {
+    commands.push({ type: 'line' });
+  }
 
   if (content.showTableNumber && tableNum) {
     commands.push({ type: 'text', value: `TABLE: ${tableNum.toUpperCase()}`, bold: true, align: 'center', font });

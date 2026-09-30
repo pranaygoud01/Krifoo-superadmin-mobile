@@ -1,5 +1,26 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { DeviceEventEmitter } from 'react-native';
 import { DEFAULT_API_URL, STORAGE_KEYS } from '../constants/config';
+
+export type ApiErrorType =
+  | 'network'
+  | 'server'
+  | 'auth'
+  | 'forbidden'
+  | 'not_found'
+  | 'client'
+  | 'unknown';
+
+export interface ApiResponse<T = any> {
+  success: boolean;
+  data?: T;
+  message?: string;
+  error?: string;
+  errorType?: ApiErrorType;
+  statusCode?: number;
+  url?: string;
+  [key: string]: any;
+}
 
 /**
  * Returns the configured API base URL.
@@ -39,14 +60,75 @@ export async function getAuthToken(): Promise<string | null> {
   }
 }
 
+/**
+ * Tests connectivity and latency to the specified or configured API base URL.
+ */
+export async function testApiConnection(customUrl?: string): Promise<{
+  success: boolean;
+  latencyMs?: number;
+  message: string;
+  errorType?: ApiErrorType;
+  statusCode?: number;
+  url: string;
+}> {
+  const targetUrl = customUrl ? customUrl.trim().replace(/\/api\/?$/, '').replace(/\/$/, '') : await getApiBaseUrl();
+  const startTime = Date.now();
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+  try {
+    // Try pinging the health check or settings endpoint
+    const response = await fetch(`${targetUrl}/api/admin/settings`, {
+      method: 'GET',
+      headers: { Accept: 'application/json', 'Bypass-Tunnel-Reminder': 'true' },
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    const latencyMs = Date.now() - startTime;
+
+    if (response.status < 500) {
+      // Any non-500 response (even 401 or 404) proves server is alive and reachable!
+      return {
+        success: true,
+        latencyMs,
+        message: `Server reachable (${latencyMs}ms)`,
+        statusCode: response.status,
+        url: targetUrl,
+      };
+    } else {
+      return {
+        success: false,
+        latencyMs,
+        message: `Server returned error (${response.status})`,
+        errorType: 'server',
+        statusCode: response.status,
+        url: targetUrl,
+      };
+    }
+  } catch (error: any) {
+    clearTimeout(timeoutId);
+    const isTimeout = error?.name === 'AbortError' || error?.message?.includes('aborted');
+    return {
+      success: false,
+      message: isTimeout
+        ? `Connection timed out after 8s. Server is not responding at ${targetUrl}.`
+        : `Cannot reach server at ${targetUrl}. Ensure backend is running and accessible on this network.`,
+      errorType: 'network',
+      url: targetUrl,
+    };
+  }
+}
+
 export async function apiRequest<T = any>(
   endpoint: string,
   options: {
     method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
     body?: any;
     headers?: Record<string, string>;
+    timeoutMs?: number;
+    isFormData?: boolean;
   } = {}
-): Promise<{ success: boolean; data?: T; message?: string; error?: string; [key: string]: any }> {
+): Promise<ApiResponse<T>> {
   const baseUrl = await getApiBaseUrl();
   const token = await getAuthToken();
 
@@ -69,9 +151,14 @@ export async function apiRequest<T = any>(
     headers['Content-Type'] = 'application/json';
   }
 
+  const timeoutMs = options.timeoutMs || 15000;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
   const fetchOptions: RequestInit = {
     method: options.method || 'GET',
     headers,
+    signal: controller.signal,
   };
 
   if (options.body && options.method !== 'GET') {
@@ -80,6 +167,7 @@ export async function apiRequest<T = any>(
 
   try {
     const response = await fetch(url, fetchOptions);
+    clearTimeout(timeoutId);
 
     // Check Content-Type before parsing JSON
     const contentType = response.headers.get('content-type') || '';
@@ -88,45 +176,133 @@ export async function apiRequest<T = any>(
     if (!isJson) {
       const text = await response.text();
       console.warn(`[API] Non-JSON response from ${url}:`, text.substring(0, 300));
+
+      const isServerErr = response.status >= 500;
+      const errorType: ApiErrorType =
+        response.status === 404
+          ? 'not_found'
+          : response.status === 403
+          ? 'forbidden'
+          : response.status === 401
+          ? 'auth'
+          : 'server';
+
+      const message =
+        response.status === 404
+          ? `API endpoint not found (404): ${endpoint}`
+          : response.status === 403
+          ? 'Access denied. Make sure you are logging in as a Super Admin.'
+          : response.status === 401
+          ? 'Session expired. Please log in again.'
+          : `Server returned an invalid response (${response.status}). Ensure backend is running properly at: ${baseUrl}`;
+
+      // Notify global connection status
+      DeviceEventEmitter.emit('api_connection_status', {
+        isOnline: !isServerErr,
+        errorType,
+        message,
+        baseUrl,
+        statusCode: response.status,
+        url,
+      });
+
       return {
         success: false,
-        message:
-          response.status === 404
-            ? `API endpoint not found (404): ${endpoint}`
-            : response.status === 403
-            ? 'Access denied. Make sure you are logging in as a Super Admin.'
-            : response.status === 401
-            ? 'Session expired. Please log in again.'
-            : `Server error (${response.status}). Ensure backend is running at: ${baseUrl}`,
+        message,
         error: `non_json_response_${response.status}`,
+        errorType,
+        statusCode: response.status,
+        url,
       };
     }
 
     const data = await response.json();
 
     if (!response.ok) {
+      const statusCode = response.status;
+      const isServerErr = statusCode >= 500;
+      const errorType: ApiErrorType = isServerErr
+        ? 'server'
+        : statusCode === 401
+        ? 'auth'
+        : statusCode === 403
+        ? 'forbidden'
+        : statusCode === 404
+        ? 'not_found'
+        : 'client';
+
+      const userMessage =
+        data.message ||
+        data.error ||
+        (isServerErr
+          ? `Server error (${statusCode}). The server encountered an issue.`
+          : `Request error (${statusCode})`);
+
+      if (isServerErr) {
+        DeviceEventEmitter.emit('api_connection_status', {
+          isOnline: false,
+          errorType: 'server',
+          message: userMessage,
+          baseUrl,
+          statusCode,
+          url,
+        });
+      }
+
       return {
+        ...data,
         success: false,
-        message: data.message || data.error || `HTTP ${response.status} error`,
-        error: data.error || data.message,
+        message: userMessage,
+        error: data.error || data.message || `HTTP ${statusCode}`,
+        errorType,
+        statusCode,
+        url,
       };
     }
 
+    // Success - notify that connection is alive and working
+    DeviceEventEmitter.emit('api_connection_status', {
+      isOnline: true,
+      baseUrl,
+      url,
+    });
+
     return data;
   } catch (error: any) {
-    const isNetworkError =
-      error?.message?.includes('Network request failed') ||
-      error?.message?.includes('Failed to fetch');
+    clearTimeout(timeoutId);
 
-    const message = isNetworkError
-      ? `Cannot reach server. If testing on a device, use your PC's local IP instead of localhost.\nConfigured URL: ${baseUrl}`
+    const isTimeout = error?.name === 'AbortError' || error?.message?.includes('aborted');
+    const isNetworkError =
+      isTimeout ||
+      error?.message?.includes('Network request failed') ||
+      error?.message?.includes('Failed to fetch') ||
+      error?.name === 'TypeError';
+
+    const message = isTimeout
+      ? `Server request timed out (${Math.round(timeoutMs / 1000)}s). Backend at ${baseUrl} is taking too long to respond.`
+      : isNetworkError
+      ? `Cannot connect to server. If testing locally, make sure your backend is running at ${baseUrl} and accessible from this device.`
       : error?.message || 'An unexpected error occurred.';
 
     console.warn('API Request failed:', message);
+
+    // Notify listeners about connection failure
+    DeviceEventEmitter.emit('api_connection_status', {
+      isOnline: false,
+      errorType: 'network',
+      message,
+      baseUrl,
+      statusCode: 0,
+      url,
+    });
+
     return {
       success: false,
       message,
       error: error?.toString(),
+      errorType: 'network',
+      statusCode: 0,
+      url,
     };
   }
 }

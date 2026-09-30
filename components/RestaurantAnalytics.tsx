@@ -274,10 +274,8 @@ export type RestaurantAnalyticsProps = AnalyticsRestaurantProps;
 
 const TIMEFRAMES: Array<{ id: TimeframeKey; label: string }> = [
   { id: 'today', label: 'Today' },
-  { id: '7d', label: '7 Days' },
-  { id: '30d', label: '30 Days' },
-  { id: 'custom', label: 'Select Date' },
   { id: 'all', label: 'All Time' },
+  { id: 'custom', label: 'Select Date' },
 ];
 
 export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
@@ -296,7 +294,7 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
   const illustrationSize = isSmallScreen ? 44 : isTablet ? 60 : 52;
   const glowSize = isSmallScreen ? 60 : isTablet ? 82 : 72;
 
-  const [timeframe, setTimeframe] = useState<TimeframeKey>('7d');
+  const [timeframe, setTimeframe] = useState<TimeframeKey>('today');
   const [chartMetric, setChartMetric] = useState<ChartMetric>('revenue');
   const [selectedDayIndex, setSelectedDayIndex] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);

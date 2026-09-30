@@ -3,10 +3,10 @@ import { Modal, View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIn
 import { Order } from '../types';
 import { Colors } from '../constants/colors';
 import { StatusBadge } from './StatusBadge';
-import { X, Store, User, MapPin, Bike, CreditCard, Phone, ShoppingBag, UtensilsCrossed, Tag, Receipt, CheckCircle2, Printer, Banknote, ChevronDown, ChevronUp, Check, AlertTriangle } from 'lucide-react-native';
+import { X, Store, User, MapPin, Bike, CreditCard, Phone, ShoppingBag, UtensilsCrossed, Tag, Receipt, CheckCircle2, Printer, Banknote, ChevronDown, ChevronUp, Check, AlertTriangle, Clock } from 'lucide-react-native';
 import { Linking } from 'react-native';
 import { orderService } from '../services/order.service';
-import { printThermalReceipt, getLastPrintJobReport } from '../services/thermal-print.service';
+import { printThermalReceipt, getLastPrintJobReport, getOrderScheduleInfo } from '../services/thermal-print.service';
 import { useToast } from '../context/ToastContext';
 
 interface OrderDetailModalProps {
@@ -16,6 +16,7 @@ interface OrderDetailModalProps {
   onAssignDelivery: (order: Order) => void;
   onUpdateStatus?: (orderId: string, status: string) => Promise<void>;
   onCancelOrder?: (orderId: string) => Promise<void>;
+  paperRollSize?: string;
 }
 
 export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
@@ -25,6 +26,7 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
   onAssignDelivery,
   onUpdateStatus,
   onCancelOrder,
+  paperRollSize = '58',
 }) => {
   const [editingStatus, setEditingStatus] = React.useState(false);
   const [loadingStatus, setLoadingStatus] = React.useState(false);
@@ -165,11 +167,33 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
     : order.customerDetails?.phoneNumber;
 
   const orderTypeRaw = String(order.orderType || (order as any).fulfillmentType || '').toLowerCase();
-  const isDeliveryOrder = orderTypeRaw === 'delivery' || (!orderTypeRaw && !!order.deliveryAddress && typeof order.deliveryAddress === 'object');
+  const domain = String(order.sourceDomain || '').toLowerCase();
+  const notes = typeof order.notes === 'string' ? order.notes.toLowerCase() : '';
+  const custName = (order.customerDetails?.name || (order.customerId as any)?.fullName || '').toLowerCase();
+  const phone = (order.customerDetails?.phoneNumber || (order.customerId as any)?.phoneNumber || '').replace(/\D/g, '');
+  const isTakeaway =
+    orderTypeRaw === 'takeaway' ||
+    domain.includes('swaad-takeaway') ||
+    domain.includes('swaadtakeaway') ||
+    notes.includes('takeaway') ||
+    custName.includes('takeaway') ||
+    custName.includes('swaad takeaway') ||
+    phone.includes('7783448291') ||
+    (order as any).appName === 'swaad-takeaway';
+
+  const isDineIn =
+    orderTypeRaw.includes('dine') ||
+    orderTypeRaw.includes('eat') ||
+    Boolean((order as any).tableNumber) ||
+    notes.includes('dine-in') ||
+    notes.includes('table');
+
+  const isDeliveryOrder = !isTakeaway && !isDineIn && (orderTypeRaw === 'delivery' || (!orderTypeRaw && !!order.deliveryAddress && typeof order.deliveryAddress === 'object'));
 
   const deliveryPartner = typeof order.assignedDeliveryPartnerId === 'object'
     ? order.assignedDeliveryPartnerId
     : undefined;
+  const scheduleInfo = getOrderScheduleInfo(order);
 
   const formatAddress = () => {
     const addr: any = order.deliveryAddress;
@@ -178,9 +202,9 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
       if (typeof custAddr === 'string' && custAddr.trim()) {
         return custAddr.trim();
       }
-      return 'Self Pickup';
+      return isTakeaway ? 'Takeaway Order' : isDineIn ? 'Dine In' : 'Self Pickup';
     }
-    if (typeof addr === 'string') return addr.trim() || 'Self Pickup';
+    if (typeof addr === 'string') return addr.trim() || (isTakeaway ? 'Takeaway Order' : isDineIn ? 'Dine In' : 'Self Pickup');
     if (addr.formattedAddress && typeof addr.formattedAddress === 'string' && addr.formattedAddress.trim()) return addr.formattedAddress.trim();
 
     const parts = [
@@ -194,7 +218,7 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
       addr.postalCode || addr.postcode || addr.zipCode,
     ].filter(Boolean);
 
-    return parts.length > 0 ? parts.join(', ') : (addr.fullAddress || addr.address || 'Self Pickup');
+    return parts.length > 0 ? parts.join(', ') : (addr.fullAddress || addr.address || (isTakeaway ? 'Takeaway Order' : isDineIn ? 'Dine In' : 'Self Pickup'));
   };
 
   const addressText = formatAddress();
@@ -212,9 +236,16 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
         <View style={styles.modalContent}>
           <View style={styles.header}>
             <View>
-              <Text style={styles.headerTitle}>
-                Order #{order.orderNumber || order._id?.substring(0, 8)}
-              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Text style={styles.headerTitle}>
+                  Order #{order.orderNumber || order._id?.substring(0, 8)}
+                </Text>
+                {isTakeaway && (
+                  <View style={{ backgroundColor: '#FEF3C7', borderColor: '#FDE68A', borderWidth: 1, paddingHorizontal: 7, paddingVertical: 2, borderRadius: 5 }}>
+                    <Text style={{ fontSize: 10, fontWeight: '800', color: '#B45309' }}>TAKEAWAY ORDER</Text>
+                  </View>
+                )}
+              </View>
               <Text style={styles.headerSub}>
                 {order.createdAt ? new Date(order.createdAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : ''}
               </Text>
@@ -319,17 +350,19 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
                   const isExt = !isMarketplace && (source === 'external' || Boolean(rawDomain));
                   
                   let domainUrl = 'krifoo.co.uk';
-                  if (isExt) {
+                  if (isTakeaway) {
+                    domainUrl = 'Swaad Takeaway App';
+                  } else if (isExt) {
                     domainUrl = rawDomain && rawDomain !== 'External Website' && rawDomain !== 'External Web'
                       ? rawDomain
                       : (fallbackExtDomain || 'swaadcambridge.co.uk');
                   }
 
-                  if (isExt) {
+                  if (isTakeaway || isExt) {
                     return (
                       <View style={{ backgroundColor: '#FEF3C7', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6, borderWidth: 1, borderColor: '#FDE68A' }}>
                         <Text style={{ fontSize: 13, fontWeight: '700', color: '#B45309' }}>
-                          🌐 {domainUrl}
+                          {isTakeaway ? '🥡 Swaad Takeaway App' : `🌐 ${domainUrl}`}
                         </Text>
                       </View>
                     );
@@ -345,11 +378,61 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
               </View>
             </View>
 
+            {/* Scheduled Order Banner (If Scheduled) */}
+            {scheduleInfo.isScheduled && (
+              <View style={styles.scheduledAlertBox}>
+                <View style={styles.scheduledAlertHeader}>
+                  <Clock size={18} color="#B45309" />
+                  <Text style={styles.scheduledAlertTitle}>SCHEDULED ORDER</Text>
+                </View>
+                <Text style={styles.scheduledAlertTime}>
+                  Target Time / Slot: {scheduleInfo.scheduleTimeText}
+                </Text>
+                <Text style={styles.scheduledAlertSubtitle}>
+                  Please do not prepare immediately. Cook closer to scheduled fulfillment time.
+                </Text>
+              </View>
+            )}
+
             {/* Customer & Location */}
             <View style={styles.card}>
-              <View style={styles.cardHeader}>
-                <User size={16} color={Colors.info} />
-                <Text style={styles.cardTitle}>Customer & Location</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                <View style={styles.cardHeader}>
+                  <User size={16} color={Colors.info} />
+                  <Text style={styles.cardTitle}>Customer & Location</Text>
+                </View>
+                <View
+                  style={[
+                    {
+                      paddingHorizontal: 8,
+                      paddingVertical: 3,
+                      borderRadius: 6,
+                      borderWidth: 1,
+                    },
+                    isDeliveryOrder
+                      ? { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }
+                      : isDineIn
+                      ? { backgroundColor: '#F5F3FF', borderColor: '#DDD6FE' }
+                      : isTakeaway
+                      ? { backgroundColor: '#FEF3C7', borderColor: '#FDE68A' }
+                      : { backgroundColor: '#FFF7ED', borderColor: '#FED7AA' },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      { fontSize: 11, fontWeight: '800' },
+                      isDeliveryOrder
+                        ? { color: '#2563EB' }
+                        : isDineIn
+                        ? { color: '#7C3AED' }
+                        : isTakeaway
+                        ? { color: '#B45309' }
+                        : { color: '#EA580C' },
+                    ]}
+                  >
+                    {isDeliveryOrder ? '🛵 DELIVERY' : isDineIn ? '🍽️ DINE-IN' : isTakeaway ? '🥡 TAKEAWAY ORDER' : '🛍️ SELF PICKUP'}
+                  </Text>
+                </View>
               </View>
               
               <View style={styles.customerRow}>
@@ -606,7 +689,7 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
                   ) : (
                     <>
                       <Printer size={18} color="#FFFFFF" />
-                      <Text style={styles.printReceiptBtnText}>Print Receipt</Text>
+                      <Text style={styles.printReceiptBtnText}>Print Receipt({paperRollSize || '58'}mm)</Text>
                     </>
                   )}
                 </TouchableOpacity>
@@ -1277,6 +1360,38 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '600',
+  },
+  scheduledAlertBox: {
+    backgroundColor: '#FEF3C7',
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#F59E0B',
+    padding: 14,
+    marginBottom: 14,
+  },
+  scheduledAlertHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 4,
+  },
+  scheduledAlertTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#92400E',
+    letterSpacing: 0.5,
+  },
+  scheduledAlertTime: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#78350F',
+    marginTop: 2,
+  },
+  scheduledAlertSubtitle: {
+    fontSize: 12,
+    color: '#92400E',
+    marginTop: 4,
+    fontWeight: '500',
   },
 });
 

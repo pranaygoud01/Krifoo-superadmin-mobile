@@ -5,7 +5,7 @@ import { isSunmiAvailable, printSunmiOrderReceipt } from './sunmi-printer.servic
 import { getPosPrinterConfig, savePosPrinterConfig, PosPrinterConfig, POS_BRANDS, getBrandOption, getBrandName, profileFromConfig } from './pos-config.service';
 import { printNetworkOrderReceipt, testNetworkPrinter } from './printer/network-printer.service';
 import { printEpsonOrderReceipt, testEpsonPrinter, discoverEpsonPrinters } from './printer/epson-printer.service';
-import { buildReceiptDocument, buildDrawerKickDocument, buildCustomizedReceiptDocument } from './printer/receipt-document';
+import { buildReceiptDocument, buildDrawerKickDocument, buildCustomizedReceiptDocument, getOrderScheduleInfo, formatScheduleDisplay, getOrderFulfillmentLabel } from './printer/receipt-document';
 import { resolvePrinter } from './printer/printer-registry';
 import { PrintQueueService } from './printer/print-queue.service';
 import { getActiveReceiptTemplate, ReceiptTemplate, getSampleOrderForPreview, getCachedStoreProfile, setCachedStoreProfile, formatRestaurantAddress } from './receipt-customization.service';
@@ -29,6 +29,9 @@ export {
   PrintQueueService,
   getActiveReceiptTemplate,
   ReceiptTemplate,
+  getOrderScheduleInfo,
+  getOrderFulfillmentLabel,
+  formatScheduleDisplay,
 };
 
 const AUTO_PRINT_KEY = '@krifoo_auto_print_thermal';
@@ -100,10 +103,12 @@ function getItemPrice(item: any): number {
   return 0;
 }
 
+
+
 /**
  * Format date time into UK style string e.g. "Mar 29, 22:08" or "Today by 23:05"
  */
-function formatOrderDate(dateString?: string): { placedAt: string; targetTime: string } {
+function formatOrderDate(dateString?: string, scheduledText?: string | null): { placedAt: string; targetTime: string } {
   const now = dateString ? new Date(dateString) : new Date();
   
   const options: Intl.DateTimeFormatOptions = {
@@ -114,6 +119,10 @@ function formatOrderDate(dateString?: string): { placedAt: string; targetTime: s
     hour12: false,
   };
   const placedAt = now.toLocaleDateString('en-GB', options);
+
+  if (scheduledText) {
+    return { placedAt, targetTime: scheduledText };
+  }
 
   // Target delivery time (+35 mins)
   const targetDate = new Date(now.getTime() + 35 * 60000);
@@ -172,7 +181,9 @@ export function generateCustomizedThermalReceiptHtml(order: Partial<Order> & any
     (typeof order.deliveryAddress === 'string' ? order.deliveryAddress : '');
   const postalCode = order.deliveryAddress?.postalCode || order.deliveryAddress?.postcode || '';
 
-  const { placedAt } = formatOrderDate(order.createdAt);
+  const scheduleInfo = getOrderScheduleInfo(order);
+  const fulfillmentLabel = getOrderFulfillmentLabel(order);
+  const { placedAt } = formatOrderDate(order.createdAt, scheduleInfo.scheduleTimeText);
   const itemsList = order.orderedItems || order.items || [];
   const pricing = order.pricing || {};
   const subtotal = Number(pricing.subtotal ?? (order as any).subtotal ?? order.totalAmount ?? 0);
@@ -305,9 +316,21 @@ export function generateCustomizedThermalReceiptHtml(order: Partial<Order> & any
   <!-- Order Info -->
   ${content.showOrderNumber ? `<div class="order-banner">ORDER ${orderNum}</div>` : ''}
   ${content.showDateTime ? `<div style="text-align:center; font-size:0.9em;">Placed: ${placedAt}</div>` : ''}
-  <div style="text-align:center; font-weight:700; font-size:0.95em; margin:2px 0;">
-    [ ${isDineIn ? `EAT-IN / DINE-IN ${tableNum ? `TABLE ${tableNum}` : ''}` : `${fulfillmentType} ORDER`} ]
+  ${
+    scheduleInfo.isScheduled
+      ? `
+  <div style="background:#000000; color:#FFFFFF; text-align:center; font-weight:900; padding:6px 8px; border-radius:4px; margin:6px 0;">
+    <div style="font-size:1.05em; letter-spacing:0.5px;">*** SCHEDULED ${fulfillmentLabel} ***</div>
+    <div style="font-size:0.95em; font-weight:800; margin-top:2px;">ORDER TYPE: ${fulfillmentLabel}</div>
+    <div style="font-size:1.2em; font-weight:900; margin-top:3px;">TARGET: ${scheduleInfo.scheduleTimeText}</div>
   </div>
+      `
+      : `
+  <div style="text-align:center; font-weight:700; font-size:0.95em; margin:2px 0;">
+    [ ${isDineIn ? `EAT-IN / DINE-IN ${tableNum ? `TABLE ${tableNum}` : ''}` : `${fulfillmentLabel} ORDER`} ]
+  </div>
+      `
+  }
   ${content.showTableNumber && tableNum ? `<div style="text-align:center; font-weight:800;">TABLE: ${tableNum.toUpperCase()}</div>` : ''}
   ${content.showServerWaiterName && (order.waiterName || content.serverWaiterName) ? `<div style="text-align:center; font-size:0.9em;">Server: ${order.waiterName || content.serverWaiterName}</div>` : ''}
 
@@ -453,8 +476,12 @@ export function generateThermalReceiptHtml(order: Partial<Order> & any, template
     order.deliveryAddress?.zipCode ||
     (rawAddress.match(/[A-Z]{1,2}[0-9][A-Z0-9]? ?[0-9][A-Z]{2}/i)?.[0] || '');
 
+  // Schedule info
+  const scheduleInfo = getOrderScheduleInfo(order);
+  const fulfillmentLabel = getOrderFulfillmentLabel(order);
+
   // Dates
-  const { placedAt, targetTime } = formatOrderDate(order.createdAt);
+  const { placedAt, targetTime } = formatOrderDate(order.createdAt, scheduleInfo.scheduleTimeText);
 
   // Items
   const itemsList = order.orderedItems || order.items || [];
@@ -701,15 +728,31 @@ export function generateThermalReceiptHtml(order: Partial<Order> & any, template
     </div>
     <div class="header-right">
       <div class="header-type">${fulfillmentType}</div>
-      <div class="header-asap">ASAP</div>
+      ${
+        scheduleInfo.isScheduled
+          ? `<div class="header-asap" style="background:#000000; color:#FFFFFF; border:1.5px solid #FFFFFF; padding:2px 5px; border-radius:3px; font-size:13px; font-weight:900; margin-top:2px;">SCHEDULED</div>`
+          : `<div class="header-asap">ASAP</div>`
+      }
     </div>
   </div>
 
-  <!-- Delivery Time Target -->
+  <!-- Delivery / Scheduled Time Target -->
+  ${
+    scheduleInfo.isScheduled
+      ? `
+  <div style="background-color: #000000; color: #FFFFFF; padding: 7px 8px; margin: 6px 0; border-radius: 4px; text-align: center;">
+    <div style="font-size: 14px; font-weight: 900; letter-spacing: 0.5px;">*** SCHEDULED ${fulfillmentLabel} ***</div>
+    <div style="font-size: 13px; font-weight: 800; margin-top: 2px;">ORDER TYPE: ${fulfillmentLabel}</div>
+    <div style="font-size: 16px; font-weight: 900; margin-top: 3px; color: #FFFFFF;">TARGET TIME: ${scheduleInfo.scheduleTimeText}</div>
+  </div>
+      `
+      : `
   <div class="timing-row">
     <span>Delivery time</span>
     <span class="timing-target">${targetTime}</span>
   </div>
+      `
+  }
 
   <div class="divider-solid"></div>
 

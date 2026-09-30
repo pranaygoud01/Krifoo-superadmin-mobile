@@ -137,7 +137,7 @@ export interface OrderItem {
 export interface Order {
   _id: string;
   orderNumber?: string;
-  orderType?: 'delivery' | 'pickup' | 'dine_in' | string;
+  orderType?: 'delivery' | 'pickup' | 'takeaway' | 'dine_in' | string;
   orderSource?: 'krifoo' | 'external' | string;
   sourceDomain?: string;
   restaurantId: {
@@ -205,6 +205,11 @@ export interface Order {
   } | any;
   notes?: string;
   scheduleTimeDate?: string;
+  collectionTime?: string;
+  deliverySlotTime?: string;
+  selectedDeliverySlotId?: any;
+  isScheduled?: boolean;
+  scheduledFor?: string;
   deliveryTime?: number;
   createdAt: string;
   updatedAt?: string;
