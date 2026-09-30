@@ -3,7 +3,7 @@
     "name": "Krifoo Admin",
     "slug": "krifoo-admin",
     "owner": "krifoos-app",
-    "version": "1.0.7",
+    "version": "1.0.8",
     "orientation": "default",
     "icon": "./assets/logo.png",
     "scheme": "krifooadmin",
@@ -30,7 +30,7 @@
         "backgroundColor": "#FFFFFF"
       },
       "package": "com.krifoo.admin",
-      "versionCode": 12,
+      "versionCode": 13,
       "supportsTablet": true,
       "androidNavigationBar": {
         "enforceContrast": false
