@@ -8,6 +8,9 @@
     "icon": "./assets/logo.png",
     "scheme": "krifooadmin",
     "userInterfaceStyle": "dark",
+    "androidNavigationBar": {
+      "enforceContrast": false
+    },
     "newArchEnabled": true,
     "splash": {
       "image": "./assets/logo.png",
@@ -31,10 +34,6 @@
       },
       "package": "com.krifoo.admin",
       "versionCode": 13,
-      "supportsTablet": true,
-      "androidNavigationBar": {
-        "enforceContrast": false
-      },
       "googleServicesFile": "./google-services.json",
       "permissions": [
         "RECEIVE_BOOT_COMPLETED",
@@ -75,7 +74,7 @@
         "expo-build-properties",
         {
           "android": {
-            "minSdkVersion": 21,
+            "minSdkVersion": 24,
             "usesCleartextTraffic": true,
             "enableProguardInReleaseBuilds": true,
             "extraProguardRules": "-keep class com.swmansion.reanimated.** { *; }\n-keep class com.facebook.react.turbomodule.** { *; }\n-keep class com.swmansion.rnscreens.** { *; }\n-keep class com.swmansion.gesturehandler.** { *; }\n-keep class com.swmansion.worklets.** { *; }\n-keep class com.sunmi.** { *; }\n-dontwarn com.sunmi.**\n-keep class woyou.aidlservice.jiuiv5.** { *; }\n-dontwarn woyou.aidlservice.jiuiv5.**\n-keep class com.un1v3r.** { *; }\n-dontwarn com.un1v3r.**\n-keep class com.tencent.mmkv.** { *; }\n-dontwarn com.tencent.mmkv.**\n-keep class com.horcrux.svg.** { *; }\n-keep class expo.modules.** { *; }\n-keep class com.google.firebase.** { *; }"
