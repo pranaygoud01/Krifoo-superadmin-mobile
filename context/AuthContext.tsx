@@ -30,7 +30,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const migrateApiUrl = async () => {
     try {
       const stored = await AsyncStorage.getItem(STORAGE_KEYS.API_BASE_URL);
-      if (stored && stored.endsWith('/api')) {
+      if (stored && (stored.includes('10.123.62.9') || stored.includes(':3000'))) {
+        await AsyncStorage.removeItem(STORAGE_KEYS.API_BASE_URL);
+        console.warn(`[AuthContext] Cleared stale local API URL: "${stored}"`);
+      } else if (stored && stored.endsWith('/api')) {
         const fixed = stored.slice(0, -4);
         await AsyncStorage.setItem(STORAGE_KEYS.API_BASE_URL, fixed);
         console.warn(`[AuthContext] Migrated API URL: "${stored}" → "${fixed}"`);

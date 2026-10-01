@@ -30,6 +30,10 @@ export interface ApiResponse<T = any> {
 export async function getApiBaseUrl(): Promise<string> {
   try {
     const customUrl = await AsyncStorage.getItem(STORAGE_KEYS.API_BASE_URL);
+    if (customUrl && (customUrl.includes('10.123.62.9') || customUrl.includes(':3000'))) {
+      await AsyncStorage.removeItem(STORAGE_KEYS.API_BASE_URL);
+      return DEFAULT_API_URL;
+    }
     if (!customUrl) return DEFAULT_API_URL;
 
     // Migration: if the stored URL ends with /api, strip it so we don't get double /api
