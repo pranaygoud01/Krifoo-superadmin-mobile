@@ -60,6 +60,7 @@ export interface ReceiptContentConfig {
   qrCodeType: QrCodeType;
   qrCodeData: string;
   qrCodeLabel: string;
+  showScheduledTime?: boolean;
 }
 
 export interface ReceiptTemplate {
@@ -134,6 +135,7 @@ export const DEFAULT_RECEIPT_TEMPLATE: ReceiptTemplate = {
     qrCodeType: 'website',
     qrCodeData: 'https://krifoo.co.uk',
     qrCodeLabel: 'Order online at krifoo.co.uk',
+    showScheduledTime: true,
   },
 };
 
@@ -195,6 +197,7 @@ export const COMPACT_TAKEAWAY_TEMPLATE: ReceiptTemplate = {
     qrCodeType: 'website',
     qrCodeData: '',
     qrCodeLabel: '',
+    showScheduledTime: true,
   },
 };
 
@@ -256,6 +259,7 @@ export const DINE_IN_INVOICE_TEMPLATE: ReceiptTemplate = {
     qrCodeType: 'feedback',
     qrCodeData: 'https://g.page/r/krifoo-feedback/review',
     qrCodeLabel: 'Scan for Google Review & Feedback',
+    showScheduledTime: true,
   },
 };
 
@@ -266,26 +270,73 @@ export const PRELOADED_TEMPLATES: ReceiptTemplate[] = [
 ];
 
 /**
- * Get all receipt templates for a restaurant
+ * Helper to merge template arrays by ID, keeping the latest updatedAt version
+ */
+function mergeTemplatesByLatest(listA: ReceiptTemplate[], listB: ReceiptTemplate[]): ReceiptTemplate[] {
+  const map = new Map<string, ReceiptTemplate>();
+
+  for (const item of listA) {
+    if (item && item.id) {
+      map.set(item.id, item);
+    }
+  }
+
+  for (const item of listB) {
+    if (item && item.id) {
+      const existing = map.get(item.id);
+      if (!existing) {
+        map.set(item.id, item);
+      } else {
+        const timeExisting = new Date(existing.updatedAt || 0).getTime();
+        const timeNew = new Date(item.updatedAt || 0).getTime();
+        if (timeNew >= timeExisting) {
+          map.set(item.id, item);
+        }
+      }
+    }
+  }
+
+  return Array.from(map.values());
+}
+
+/**
+ * Get all receipt templates for a restaurant, seamlessly merging restaurant-specific & global customizations
  */
 export async function getAllReceiptTemplates(restaurantId?: string): Promise<ReceiptTemplate[]> {
   try {
-    const key = restaurantId ? `${TEMPLATES_STORAGE_KEY}_${restaurantId}` : TEMPLATES_STORAGE_KEY;
-    let raw = await AsyncStorage.getItem(key);
+    let localTemplates: ReceiptTemplate[] = [];
+    let globalTemplates: ReceiptTemplate[] = [];
 
-    // Fall back to global templates storage if specific restaurant key is empty
-    if (!raw && restaurantId) {
-      raw = await AsyncStorage.getItem(TEMPLATES_STORAGE_KEY);
+    // 1. Load restaurant-specific templates if ID provided
+    if (restaurantId) {
+      const key = `${TEMPLATES_STORAGE_KEY}_${restaurantId}`;
+      const raw = await AsyncStorage.getItem(key);
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) localTemplates = parsed;
+        } catch {
+          // ignore corrupted local key
+        }
+      }
     }
 
-    if (!raw) {
-      return PRELOADED_TEMPLATES;
+    // 2. Load global templates
+    const globalRaw = await AsyncStorage.getItem(TEMPLATES_STORAGE_KEY);
+    if (globalRaw) {
+      try {
+        const parsedGlobal = JSON.parse(globalRaw);
+        if (Array.isArray(parsedGlobal)) globalTemplates = parsedGlobal;
+      } catch {
+        // ignore
+      }
     }
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed) || parsed.length === 0) {
-      return PRELOADED_TEMPLATES;
-    }
-    return parsed;
+
+    // Merge: preloaded -> local -> global (latest edit wins)
+    let merged = mergeTemplatesByLatest(PRELOADED_TEMPLATES, localTemplates);
+    merged = mergeTemplatesByLatest(merged, globalTemplates);
+
+    return merged.length > 0 ? merged : PRELOADED_TEMPLATES;
   } catch (err) {
     console.warn('[ReceiptCustomization] Failed to load templates, returning defaults:', err);
     return PRELOADED_TEMPLATES;
@@ -293,15 +344,16 @@ export async function getAllReceiptTemplates(restaurantId?: string): Promise<Rec
 }
 
 /**
- * Get active template for a restaurant, with seamless global fallback
+ * Get active template for a restaurant, with unified global and restaurant synchronization
  */
 export async function getActiveReceiptTemplate(restaurantId?: string): Promise<ReceiptTemplate> {
   try {
-    const activeKey = restaurantId ? `${ACTIVE_TEMPLATE_KEY}_${restaurantId}` : ACTIVE_TEMPLATE_KEY;
-    let activeId = await AsyncStorage.getItem(activeKey);
-
-    // Fall back to global active template ID if restaurant-specific key has none
-    if (!activeId && restaurantId) {
+    // Check restaurant active key, fallback to global active key
+    let activeId: string | null = null;
+    if (restaurantId) {
+      activeId = await AsyncStorage.getItem(`${ACTIVE_TEMPLATE_KEY}_${restaurantId}`);
+    }
+    if (!activeId) {
       activeId = await AsyncStorage.getItem(ACTIVE_TEMPLATE_KEY);
     }
 
@@ -310,13 +362,6 @@ export async function getActiveReceiptTemplate(restaurantId?: string): Promise<R
     if (activeId) {
       const found = templates.find((t) => t.id === activeId);
       if (found) return found;
-    }
-
-    // Also check global templates list if not found in restaurant-specific list
-    if (restaurantId && activeId) {
-      const globalTemplates = await getAllReceiptTemplates();
-      const foundGlobal = globalTemplates.find((t) => t.id === activeId);
-      if (foundGlobal) return foundGlobal;
     }
 
     const defaultTpl = templates.find((t) => t.isDefault) || templates[0] || DEFAULT_RECEIPT_TEMPLATE;
@@ -336,13 +381,16 @@ export async function saveReceiptTemplate(
   setAsActive: boolean = true
 ): Promise<ReceiptTemplate> {
   try {
-    const key = restaurantId ? `${TEMPLATES_STORAGE_KEY}_${restaurantId}` : TEMPLATES_STORAGE_KEY;
     const existing = await getAllReceiptTemplates(restaurantId);
 
     const now = new Date().toISOString();
     const updatedTemplate: ReceiptTemplate = {
       ...template,
       updatedAt: now,
+      content: {
+        ...template.content,
+        showScheduledTime: template.content.showScheduledTime !== false,
+      },
     };
 
     const index = existing.findIndex((t) => t.id === template.id);
@@ -355,19 +403,22 @@ export async function saveReceiptTemplate(
     }
 
     const jsonString = JSON.stringify(newList);
-    await AsyncStorage.setItem(key, jsonString);
 
-    // Always synchronize to global templates storage so other components querying without restaurantId stay updated
+    // Synchronize to global templates storage
+    await AsyncStorage.setItem(TEMPLATES_STORAGE_KEY, jsonString);
+
+    // Synchronize to specific restaurant key if provided
     if (restaurantId) {
-      await AsyncStorage.setItem(TEMPLATES_STORAGE_KEY, jsonString);
+      await AsyncStorage.setItem(`${TEMPLATES_STORAGE_KEY}_${restaurantId}`, jsonString);
     }
 
     if (setAsActive) {
-      const activeKey = restaurantId ? `${ACTIVE_TEMPLATE_KEY}_${restaurantId}` : ACTIVE_TEMPLATE_KEY;
-      await AsyncStorage.setItem(activeKey, template.id);
-
-      // Always synchronize active template ID globally
+      // Synchronize active template ID globally
       await AsyncStorage.setItem(ACTIVE_TEMPLATE_KEY, template.id);
+
+      if (restaurantId) {
+        await AsyncStorage.setItem(`${ACTIVE_TEMPLATE_KEY}_${restaurantId}`, template.id);
+      }
     }
 
     console.log(`[ReceiptCustomization] Saved template '${template.name}' (${template.id}) as active: ${setAsActive}`);
@@ -383,22 +434,22 @@ export async function saveReceiptTemplate(
  */
 export async function deleteReceiptTemplate(templateId: string, restaurantId?: string): Promise<void> {
   try {
-    const key = restaurantId ? `${TEMPLATES_STORAGE_KEY}_${restaurantId}` : TEMPLATES_STORAGE_KEY;
     const existing = await getAllReceiptTemplates(restaurantId);
     const filtered = existing.filter((t) => t.id !== templateId);
 
     const jsonString = JSON.stringify(filtered);
-    await AsyncStorage.setItem(key, jsonString);
+    await AsyncStorage.setItem(TEMPLATES_STORAGE_KEY, jsonString);
     if (restaurantId) {
-      await AsyncStorage.setItem(TEMPLATES_STORAGE_KEY, jsonString);
+      await AsyncStorage.setItem(`${TEMPLATES_STORAGE_KEY}_${restaurantId}`, jsonString);
     }
 
-    const activeKey = restaurantId ? `${ACTIVE_TEMPLATE_KEY}_${restaurantId}` : ACTIVE_TEMPLATE_KEY;
-    const activeId = await AsyncStorage.getItem(activeKey);
+    const activeId = await AsyncStorage.getItem(ACTIVE_TEMPLATE_KEY);
     if (activeId === templateId) {
       const fallback = filtered[0]?.id || DEFAULT_RECEIPT_TEMPLATE.id;
-      await AsyncStorage.setItem(activeKey, fallback);
       await AsyncStorage.setItem(ACTIVE_TEMPLATE_KEY, fallback);
+      if (restaurantId) {
+        await AsyncStorage.setItem(`${ACTIVE_TEMPLATE_KEY}_${restaurantId}`, fallback);
+      }
     }
   } catch (err) {
     console.error('[ReceiptCustomization] Failed to delete template:', err);
@@ -411,11 +462,10 @@ export async function deleteReceiptTemplate(templateId: string, restaurantId?: s
  */
 export async function setActiveReceiptTemplateId(templateId: string, restaurantId?: string): Promise<void> {
   try {
-    const activeKey = restaurantId ? `${ACTIVE_TEMPLATE_KEY}_${restaurantId}` : ACTIVE_TEMPLATE_KEY;
-    await AsyncStorage.setItem(activeKey, templateId);
-
-    // Always mirror to global active key so all prints everywhere in the app use this active template
     await AsyncStorage.setItem(ACTIVE_TEMPLATE_KEY, templateId);
+    if (restaurantId) {
+      await AsyncStorage.setItem(`${ACTIVE_TEMPLATE_KEY}_${restaurantId}`, templateId);
+    }
     console.log(`[ReceiptCustomization] Active template updated globally to: ${templateId}`);
   } catch (err) {
     console.error('[ReceiptCustomization] Failed to set active template:', err);
@@ -497,11 +547,14 @@ export function getCachedStoreProfile(): { restaurantName?: string; phoneNumber?
  */
 export function getSampleOrderForPreview(
   type: 'dine_in' | 'delivery' | 'pickup' = 'dine_in',
-  storeNameOverride?: string
+  storeNameOverride?: string,
+  isScheduled: boolean = false
 ): Partial<Order> & any {
   const storeName = storeNameOverride || _cachedStoreProfile?.restaurantName || 'Restaurant Name';
   const storePhone = _cachedStoreProfile?.phoneNumber || 'Phone Number';
   const storeAddress = formatRestaurantAddress(_cachedStoreProfile?.address) || 'Store Address, Store City, Postcode';
+
+  const scheduledTarget = type === 'delivery' ? 'Today, 18:00 - 18:30' : 'Today, 18:30';
 
   return {
     _id: '65f8a9e2d3b4c10023456789',
@@ -509,6 +562,10 @@ export function getSampleOrderForPreview(
     orderType: type,
     status: 'preparing',
     createdAt: new Date().toISOString(),
+    isScheduled: isScheduled,
+    scheduleTimeDate: isScheduled ? scheduledTarget : undefined,
+    collectionTime: isScheduled && type === 'pickup' ? '18:30' : undefined,
+    deliverySlotTime: isScheduled && type === 'delivery' ? '18:00 - 18:30' : undefined,
     restaurantId: {
       _id: 'rest_001',
       restaurantName: storeName,
@@ -520,17 +577,19 @@ export function getSampleOrderForPreview(
     restaurantAddress: storeAddress,
     customerDetails: {
       name: 'Customer Name',
-      phoneNumber: 'Phone Number',
-      address: 'Address Line ',
+      phoneNumber: '07700 900123',
+      address: type === 'pickup' ? 'Self Pickup' : '14 Cambridge Road, CB2 1AB',
     },
-    deliveryAddress: {
-      addressLine1: 'Address Line 1',
-      street: 'Street',
-      city: 'City',
-      postalCode: 'Postal Code',
-      formattedAddress: 'Address Line , City, Postal Code',
-    },
-    tableNumber: 'Table Name',
+    deliveryAddress: type === 'pickup'
+      ? 'Self Pickup, Store Counter'
+      : {
+          addressLine1: '14 Cambridge Road',
+          street: 'Cambridge Road',
+          city: 'Cambridge',
+          postalCode: 'CB2 1AB',
+          formattedAddress: '14 Cambridge Road, Cambridge, CB2 1AB',
+        },
+    tableNumber: type === 'dine_in' ? 'Table 7' : undefined,
     notes: 'Please make chicken tikka extra crispy. Cutlery requested.',
     paymentType: 'card',
     paymentStatus: 'paid',

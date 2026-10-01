@@ -1,7 +1,7 @@
 import { Order } from '../../types';
 import { PosPrinterConfig } from '../pos-config.service';
 import { ReceiptTemplate, getCachedStoreProfile } from '../receipt-customization.service';
-import { buildCustomizedReceiptDocument } from './receipt-document';
+import { buildCustomizedReceiptDocument, getOrderScheduleInfo } from './receipt-document';
 import { EscPosEncoder } from './encoders/escpos-encoder';
 
 /**
@@ -15,7 +15,7 @@ function formatMoney(amount?: number): string {
 /**
  * Format order date into UK style strings
  */
-function formatOrderDate(dateString?: string): { placedAt: string; targetTime: string } {
+function formatOrderDate(dateString?: string, scheduledText?: string | null): { placedAt: string; targetTime: string } {
   const now = dateString ? new Date(dateString) : new Date();
 
   const options: Intl.DateTimeFormatOptions = {
@@ -26,6 +26,10 @@ function formatOrderDate(dateString?: string): { placedAt: string; targetTime: s
     hour12: false,
   };
   const placedAt = now.toLocaleDateString('en-GB', options);
+
+  if (scheduledText && scheduledText.trim()) {
+    return { placedAt, targetTime: scheduledText.trim() };
+  }
 
   const targetDate = new Date(now.getTime() + 35 * 60000);
   const hours = String(targetDate.getHours()).padStart(2, '0');
@@ -301,9 +305,18 @@ export function buildEscPosReceipt(order: Partial<Order> & any, config: PosPrint
   }
 
   const orderNum = order.orderNumber || (order._id ? `#${order._id.slice(-5).toUpperCase()}` : '#00000');
-  const fulfillmentType = (order.orderType || order.deliveryType || (deliveryAddress ? 'DELIVERY' : 'COLLECTION')).toUpperCase();
-  const isDelivery = fulfillmentType.includes('DELIV') || Boolean(deliveryAddress);
-  const { placedAt, targetTime } = formatOrderDate(order.createdAt);
+  const rawType = (order.orderType || order.deliveryType || '').toString().toUpperCase();
+  const isPickup =
+    rawType.includes('PICKUP') ||
+    rawType.includes('COLLECT') ||
+    rawType.includes('TAKEAWAY') ||
+    (!rawType.includes('DELIV') && !rawType.includes('DINE') && (deliveryAddress ? deliveryAddress.toLowerCase().includes('pickup') : false));
+  const isDineIn = rawType.includes('DINE') || rawType.includes('EAT') || Boolean(order.tableNumber || order.table);
+  const isDelivery = !isPickup && !isDineIn && (rawType.includes('DELIV') || (Boolean(deliveryAddress) && !deliveryAddress.toLowerCase().includes('pickup')));
+  const fulfillmentType = isPickup ? 'PICKUP' : isDineIn ? 'DINE-IN' : 'DELIVERY';
+
+  const scheduleInfo = getOrderScheduleInfo(order);
+  const { placedAt, targetTime } = formatOrderDate(order.createdAt, scheduleInfo.scheduleTimeText);
 
   // 1. HEADER
   builder.alignCenter();
@@ -320,9 +333,22 @@ export function buildEscPosReceipt(order: Partial<Order> & any, config: PosPrint
   builder.bold(false);
   builder.divider();
 
+  // SCHEDULED BANNER (If Scheduled)
+  if (scheduleInfo.isScheduled && scheduleInfo.scheduleTimeText) {
+    builder.doubleDivider();
+    builder.bold(true).setSize(1, 2).line(`*** SCHEDULED ${fulfillmentType} ***`);
+    builder.setSize(1, 1).line(`TARGET TIME: ${scheduleInfo.scheduleTimeText.toUpperCase()}`);
+    builder.bold(false);
+    builder.doubleDivider();
+  }
+
   // 2. TIMINGS & CUSTOMER
   builder.alignLeft();
-  builder.line(`Placed: ${placedAt}  Target: ${targetTime}`);
+  if (scheduleInfo.isScheduled && scheduleInfo.scheduleTimeText) {
+    builder.line(`Placed: ${placedAt}  Target: ${scheduleInfo.scheduleTimeText}`);
+  } else {
+    builder.line(`Placed: ${placedAt}  Target: ${targetTime}`);
+  }
   builder.divider();
 
   builder.bold(true).line('CUSTOMER:').bold(false);
@@ -338,6 +364,8 @@ export function buildEscPosReceipt(order: Partial<Order> & any, config: PosPrint
       builder.line(`  POSTCODE: ${deliveryPostcode}`);
     }
     builder.bold(false);
+  } else if (isPickup && deliveryAddress && !deliveryAddress.toLowerCase().includes('pickup')) {
+    builder.line(`  Cust Addr: ${deliveryAddress}`);
   }
 
   if (order.deliveryInstructions || order.notes) {

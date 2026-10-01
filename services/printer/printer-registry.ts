@@ -10,6 +10,8 @@ import { SppTransport } from './transports/spp.transport';
 import { SunmiTransport } from './transports/sunmi.transport';
 import { SystemTransport } from './transports/system.transport';
 
+import { ReceiptTemplate } from '../receipt-customization.service';
+
 export interface RegisteredPrinter {
   id: string;
   model: string; // Informational label, e.g. 'Epson ePOS HTTP', 'Sunmi AIDL'
@@ -23,6 +25,7 @@ export interface ResolvePrinterOptions {
   paperWidth?: '80mm' | '58mm';
   orderContext?: any;
   configContext?: any;
+  templateContext?: ReceiptTemplate;
 }
 
 /**
@@ -76,7 +79,7 @@ export function resolvePrinter(
         model: 'SUNMI Built-in POS Terminal',
         profile,
         encoder: EscPosEncoder,
-        transport: new SunmiTransport(options?.orderContext, options?.configContext),
+        transport: new SunmiTransport(options?.orderContext, options?.configContext, options?.templateContext),
       };
 
     case 'system':

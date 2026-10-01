@@ -95,6 +95,7 @@ export type CanvaElementId =
   | 'address_phone'
   | 'tax_id'
   | 'order_banner'
+  | 'scheduled_time'
   | 'date_time'
   | 'order_mode'
   | 'table_server'
@@ -133,6 +134,7 @@ export default function ReceiptCustomizationScreen() {
 
   // Sample order preview mode
   const [sampleOrderType, setSampleOrderType] = useState<'dine_in' | 'delivery' | 'pickup'>('dine_in');
+  const [isPreviewScheduled, setIsPreviewScheduled] = useState<boolean>(true);
 
   // Canva-Style Visual Editor State
   const [canvaMode, setCanvaMode] = useState<boolean>(true);
@@ -523,7 +525,7 @@ export default function ReceiptCustomizationScreen() {
 
   // Mock order for preview - populated with real backend restaurant data
   const sampleOrder = useMemo(() => {
-    const base = getSampleOrderForPreview(sampleOrderType, backendRestaurantName);
+    const base = getSampleOrderForPreview(sampleOrderType, backendRestaurantName, isPreviewScheduled);
     const resolvedAddress = formatRestaurantAddress(backendRestaurantAddress) || base.restaurantAddress;
     const resolvedPhone = backendRestaurantPhone || base.restaurantId?.phoneNumber;
     base.restaurantId = {
@@ -536,7 +538,7 @@ export default function ReceiptCustomizationScreen() {
     base.restaurantName = backendRestaurantName || base.restaurantName;
     base.restaurantAddress = resolvedAddress;
     return base;
-  }, [sampleOrderType, backendRestaurantName, backendRestaurantAddress, backendRestaurantPhone]);
+  }, [sampleOrderType, backendRestaurantName, backendRestaurantAddress, backendRestaurantPhone, isPreviewScheduled]);
 
   // Render Align Selector Component
   const renderAlignPicker = (
@@ -714,6 +716,9 @@ export default function ReceiptCustomizationScreen() {
     } else if (id === 'order_banner') {
       updateContent((c) => ({ ...c, showOrderNumber: false }));
       showToast({ title: 'Order # Hidden', message: 'Restored anytime from + Add Elements below', type: 'info' });
+    } else if (id === 'scheduled_time') {
+      updateContent((c) => ({ ...c, showScheduledTime: false }));
+      showToast({ title: 'Scheduled Time Banner Hidden', message: 'Restored anytime from + Add Elements below', type: 'info' });
     } else if (id === 'date_time') {
       updateContent((c) => ({ ...c, showDateTime: false }));
       showToast({ title: 'Date & Time Hidden', message: 'Restored anytime from + Add Elements below', type: 'info' });
@@ -789,6 +794,11 @@ export default function ReceiptCustomizationScreen() {
         updateContent((c) => ({ ...c, showOrderNumber: true }));
         setSelectedCanvaId('order_banner');
         showToast({ title: 'Order Banner Added', message: 'Order number banner is visible', type: 'success' });
+        break;
+      case 'scheduled_time':
+        updateContent((c) => ({ ...c, showScheduledTime: true }));
+        setSelectedCanvaId('scheduled_time');
+        showToast({ title: 'Scheduled Time Banner Added', message: 'Scheduled target time banner is visible', type: 'success' });
         break;
       case 'date_time':
         updateContent((c) => ({ ...c, showDateTime: true }));
@@ -979,6 +989,7 @@ export default function ReceiptCustomizationScreen() {
       address_phone: 'Address & Phone',
       tax_id: 'Tax / VAT ID',
       order_banner: 'Order Number Banner',
+      scheduled_time: 'Scheduled Time Banner',
       date_time: 'Date & Time Stamp',
       order_mode: 'Order Type Tag',
       table_server: 'Table & Waiter',
@@ -1131,6 +1142,7 @@ export default function ReceiptCustomizationScreen() {
     if (!content.showPhone) availableToRestore.push({ key: 'phone', label: '+ Phone', icon: FileText });
     if (!content.showTaxId) availableToRestore.push({ key: 'tax_id', label: '+ Tax / VAT ID', icon: FileText });
     if (!content.showOrderNumber) availableToRestore.push({ key: 'order_banner', label: '+ Order # Banner', icon: Receipt });
+    if (content.showScheduledTime === false) availableToRestore.push({ key: 'scheduled_time', label: '+ Scheduled Time Banner', icon: Clock });
     if (!content.showDateTime) availableToRestore.push({ key: 'date_time', label: '+ Date & Time', icon: FileText });
     if (!content.showTableNumber) availableToRestore.push({ key: 'table_number', label: '+ Table #', icon: UtensilsCrossed });
     if (!content.showServerWaiterName) availableToRestore.push({ key: 'server_name', label: '+ Server Name', icon: FileText });
@@ -1413,6 +1425,27 @@ export default function ReceiptCustomizationScreen() {
                 ],
                 (val) => updateContent((c) => ({ ...c, showDateTime: val === 'visible' }))
               )}
+
+              {/* Dropdown 7: Scheduled Order Banner Visibility */}
+              {renderDropdownField(
+                'showScheduledTime',
+                'Scheduled Time Banner',
+                <Clock size={13} color="#475569" />,
+                currentTemplate.content.showScheduledTime !== false ? 'Print Banner (Target Time)' : 'Hidden from Receipt',
+                [
+                  {
+                    value: 'visible',
+                    label: 'Print Banner (Target Time)',
+                    desc: 'Print scheduled slot target time and banner',
+                  },
+                  {
+                    value: 'hidden',
+                    label: 'Hidden from Receipt',
+                    desc: 'Do not print special scheduled banner',
+                  },
+                ],
+                (val) => updateContent((c) => ({ ...c, showScheduledTime: val === 'visible' }))
+              )}
             </View>
           </View>
         )}
@@ -1482,6 +1515,16 @@ export default function ReceiptCustomizationScreen() {
               <ShoppingBag size={12} color={sampleOrderType === 'pickup' ? '#FFFFFF' : '#64748B'} />
               <Text style={[styles.sampleChipText, sampleOrderType === 'pickup' && styles.sampleChipTextActive]}>
                 Takeaway
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.sampleChip, isPreviewScheduled && styles.sampleChipActiveScheduled]}
+              onPress={() => setIsPreviewScheduled(!isPreviewScheduled)}
+            >
+              <Clock size={12} color={isPreviewScheduled ? '#FFFFFF' : '#64748B'} />
+              <Text style={[styles.sampleChipText, isPreviewScheduled && styles.sampleChipTextActive]}>
+                {isPreviewScheduled ? '⏰ Slot: 18:30' : '⚡ ASAP'}
               </Text>
             </TouchableOpacity>
           </View>
@@ -1749,14 +1792,33 @@ export default function ReceiptCustomizationScreen() {
               )
             ) : null}
 
+            {/* Scheduled Order Banner */}
+            {content.showScheduledTime !== false && isPreviewScheduled ? (
+              renderCanvaBox(
+                'scheduled_time',
+                'Scheduled Time Banner',
+                <View style={styles.paperScheduledBanner}>
+                  <Text style={[styles.paperScheduledBannerText, { fontSize: fontSize, fontWeight: '900' }]}>
+                    *** SCHEDULED {isDine ? 'DINE-IN' : isDeliv ? 'DELIVERY' : 'PICKUP'} ***
+                  </Text>
+                  <Text style={[styles.paperScheduledTargetText, { fontSize: fontSize - 0.5, fontWeight: '800' }]}>
+                    TARGET: Today by 18:30
+                  </Text>
+                </View>
+              )
+            ) : null}
+
             {/* Date & Time */}
             {content.showDateTime ? (
               renderCanvaBox(
                 'date_time',
                 'Date & Time Stamp',
-                <Text style={[styles.paperText, { textAlign: 'center', fontSize: fontSize - 2 }]}>
-                  Placed: {content.dateTimeFormat === 'time_only' ? '19:45' : '08/09/2026 19:45'}
-                </Text>
+                <View style={{ alignItems: 'center' }}>
+                  <Text style={[styles.paperText, { textAlign: 'center', fontSize: fontSize - 2 }]}>
+                    Placed: {content.dateTimeFormat === 'time_only' ? '13:23' : content.dateTimeFormat === 'short' ? '01/10 13:23' : '01/10/2026 13:23'}
+                    {content.showScheduledTime !== false && isPreviewScheduled ? '   Target: Today by 18:30' : ''}
+                  </Text>
+                </View>
               )
             ) : null}
 
@@ -2957,6 +3019,7 @@ const styles = StyleSheet.create({
     borderColor: '#CBD5E1',
   },
   sampleChipActive: { backgroundColor: '#0F172A', borderColor: '#0F172A' },
+  sampleChipActiveScheduled: { backgroundColor: '#7C3AED', borderColor: '#6D28D9' },
   sampleChipText: { fontSize: 10.5, fontWeight: '700', color: '#475569' },
   sampleChipTextActive: { color: '#FFFFFF' },
 
@@ -3052,6 +3115,26 @@ const styles = StyleSheet.create({
   paperOrderBannerText: {
     color: '#FFFFFF',
     letterSpacing: 0.5,
+  },
+  paperScheduledBanner: {
+    borderWidth: 1.5,
+    borderColor: '#000000',
+    borderStyle: 'dashed',
+    paddingVertical: 4,
+    paddingHorizontal: 6,
+    marginVertical: 4,
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+  },
+  paperScheduledBannerText: {
+    color: '#000000',
+    letterSpacing: 0.5,
+    textAlign: 'center',
+  },
+  paperScheduledTargetText: {
+    color: '#000000',
+    marginTop: 2,
+    textAlign: 'center',
   },
   paperItemsHeaderRow: {
     flexDirection: 'row',

@@ -23,20 +23,45 @@ export type ReceiptCommand =
 /**
  * Formats a raw schedule timestamp (ISO string, date string, or custom slot)
  * into a clear, human-readable format with date and time.
- * Example: "2026-09-08T13:00:00.000Z" -> "Tue, 08 Sep 2026, 01:00 PM"
+ * Examples:
+ *   "2026-10-01T18:30:00.000Z" -> "Thu, 01 Oct 2026, 06:30 PM"
+ *   "Pickup: 18:30" -> "Today, 18:30"
+ *   "Slot: 18:00 - 18:30" -> "18:00 - 18:30"
  */
 export function formatScheduleDisplay(raw: string | null | undefined): string {
   if (!raw) return '';
   const trimmed = String(raw).trim();
   if (!trimmed) return '';
 
-  if (trimmed.toLowerCase() === 'asap' || trimmed.toLowerCase() === 'scheduled') {
-    return trimmed;
+  if (trimmed.toLowerCase() === 'asap') {
+    return 'ASAP';
+  }
+
+  // Strip prefixes like "Pickup: ", "Slot: ", "Delivery: ", "Target: ", "Scheduled: "
+  const prefixMatch = trimmed.match(/^(pickup|slot|delivery|target|scheduled)\s*:\s*/i);
+  let cleanTime = trimmed;
+  if (prefixMatch) {
+    cleanTime = trimmed.slice(prefixMatch[0].length).trim();
+  }
+
+  // If already a time range like "14:00 - 14:30" or "14:00 to 14:30"
+  if (/^\d{1,2}:\d{2}\s*(-|to)\s*\d{1,2}:\d{2}/i.test(cleanTime)) {
+    return cleanTime;
+  }
+
+  // If plain time like "18:30" or "18:30:00"
+  if (/^\d{1,2}:\d{2}(:\d{2})?$/i.test(cleanTime)) {
+    const parts = cleanTime.split(':');
+    const h = parseInt(parts[0], 10);
+    const m = parts[1] || '00';
+    const ampm = h >= 12 ? 'PM' : 'AM';
+    const h12 = h % 12 || 12;
+    return `Today, ${String(h12).padStart(2, '0')}:${m} ${ampm} (${cleanTime.slice(0, 5)})`;
   }
 
   // Check if it's an ISO or date format
-  const dateObj = new Date(trimmed);
-  if (!isNaN(dateObj.getTime()) && (trimmed.includes('-') || trimmed.includes('/') || trimmed.includes('T'))) {
+  const dateObj = new Date(cleanTime);
+  if (!isNaN(dateObj.getTime()) && (cleanTime.includes('-') || cleanTime.includes('/') || cleanTime.includes('T'))) {
     try {
       const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
       const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -55,11 +80,11 @@ export function formatScheduleDisplay(raw: string | null | undefined): string {
 
       return `${dayName}, ${day} ${month} ${year}, ${formattedHour}:${minutes} ${ampm}`;
     } catch {
-      return trimmed;
+      return cleanTime;
     }
   }
 
-  return trimmed;
+  return cleanTime;
 }
 
 /**
@@ -72,24 +97,71 @@ export function getOrderScheduleInfo(order: any): {
 } {
   if (!order) return { isScheduled: false, scheduleTimeText: null, scheduledLabel: 'ASAP' };
 
-  const slotTime = order.deliverySlotTime || order.deliverySlot || order.slotTime;
-  const collectionTime = order.collectionTime;
-  const scheduleTimeDate = order.scheduleTimeDate || order.scheduledFor || order.scheduledTime;
+  // 1. Delivery slot extraction (string or object)
+  let slotTime: string | null = null;
+  if (order.deliverySlotTime && typeof order.deliverySlotTime === 'string') {
+    slotTime = order.deliverySlotTime;
+  } else if (order.deliverySlot) {
+    if (typeof order.deliverySlot === 'string') {
+      slotTime = order.deliverySlot;
+    } else if (typeof order.deliverySlot === 'object') {
+      slotTime = order.deliverySlot.slotTime || order.deliverySlot.time ||
+        (order.deliverySlot.startTime ? `${order.deliverySlot.startTime}${order.deliverySlot.endTime ? ` - ${order.deliverySlot.endTime}` : ''}` : null);
+      if (order.deliverySlot.date && slotTime) {
+        slotTime = `${order.deliverySlot.date} ${slotTime}`;
+      }
+    }
+  }
+  if (!slotTime && order.selectedDeliverySlotId && typeof order.selectedDeliverySlotId === 'object') {
+    slotTime = order.selectedDeliverySlotId.slotTime || order.selectedDeliverySlotId.time ||
+      (order.selectedDeliverySlotId.startTime ? `${order.selectedDeliverySlotId.startTime}${order.selectedDeliverySlotId.endTime ? ` - ${order.selectedDeliverySlotId.endTime}` : ''}` : null);
+  }
+  if (!slotTime && order.slotTime && typeof order.slotTime === 'string') {
+    slotTime = order.slotTime;
+  }
 
-  if (slotTime && typeof slotTime === 'string' && slotTime.trim()) {
+  // 2. Collection Time (pickup / takeaway)
+  let collectionTime: string | null = null;
+  if (typeof order.collectionTime === 'string' && order.collectionTime.trim().toLowerCase() !== 'asap') {
+    collectionTime = order.collectionTime.trim();
+  }
+
+  // 3. General schedule timestamp/date
+  let scheduleTimeDate: string | null = null;
+  if (order.scheduleTimeDate && typeof order.scheduleTimeDate === 'string' && order.scheduleTimeDate.trim().toLowerCase() !== 'asap') {
+    scheduleTimeDate = order.scheduleTimeDate.trim();
+  } else if (order.scheduledFor && typeof order.scheduledFor === 'string') {
+    scheduleTimeDate = order.scheduledFor.trim();
+  } else if (order.scheduledTime && typeof order.scheduledTime === 'string') {
+    scheduleTimeDate = order.scheduledTime.trim();
+  } else if (order.targetDeliveryTime && typeof order.targetDeliveryTime === 'string') {
+    scheduleTimeDate = order.targetDeliveryTime.trim();
+  } else if (order.targetTime && typeof order.targetTime === 'string' && !order.targetTime.toLowerCase().includes('today by')) {
+    scheduleTimeDate = order.targetTime.trim();
+  }
+
+  if (order.scheduledDate && order.scheduledTime && typeof order.scheduledDate === 'string' && typeof order.scheduledTime === 'string') {
+    scheduleTimeDate = `${order.scheduledDate} ${order.scheduledTime}`;
+  }
+
+  if (slotTime && slotTime.trim() && slotTime.trim().toLowerCase() !== 'asap') {
     const formatted = formatScheduleDisplay(slotTime.trim());
     return { isScheduled: true, scheduleTimeText: formatted, scheduledLabel: `SLOT: ${formatted}` };
   }
-  if (collectionTime && typeof collectionTime === 'string' && collectionTime.trim()) {
+
+  if (collectionTime && collectionTime.trim()) {
     const formatted = formatScheduleDisplay(collectionTime.trim());
     return { isScheduled: true, scheduleTimeText: formatted, scheduledLabel: `PICKUP: ${formatted}` };
   }
-  if (scheduleTimeDate && typeof scheduleTimeDate === 'string' && scheduleTimeDate.trim()) {
+
+  if (scheduleTimeDate && scheduleTimeDate.trim()) {
     const formatted = formatScheduleDisplay(scheduleTimeDate.trim());
     return { isScheduled: true, scheduleTimeText: formatted, scheduledLabel: `SCHEDULED: ${formatted}` };
   }
+
   if (order.isScheduled) {
-    const formatted = formatScheduleDisplay(order.scheduledTime || 'Scheduled');
+    const fallback = order.scheduledTime || order.scheduleTime || order.collectionTime || order.deliverySlotTime;
+    const formatted = fallback ? formatScheduleDisplay(fallback) : 'Scheduled Order';
     return { isScheduled: true, scheduleTimeText: formatted, scheduledLabel: 'SCHEDULED' };
   }
 
@@ -621,11 +693,12 @@ export function buildCustomizedReceiptDocument(
 
   const customScheduleInfo = getOrderScheduleInfo(order);
   const customFulfillmentLabel = getOrderFulfillmentLabel(order);
-  if (customScheduleInfo.isScheduled && customScheduleInfo.scheduleTimeText) {
+  const showSched = content.showScheduledTime !== false && customScheduleInfo.isScheduled && customScheduleInfo.scheduleTimeText;
+  if (showSched) {
     commands.push({ type: 'line', char: '=' });
     commands.push({ type: 'text', value: `*** SCHEDULED ${customFulfillmentLabel} ***`, bold: true, align: 'center', size: 'double', font });
     commands.push({ type: 'text', value: `ORDER TYPE: ${customFulfillmentLabel}`, bold: true, align: 'center', size: 'normal', font });
-    commands.push({ type: 'text', value: `TARGET: ${customScheduleInfo.scheduleTimeText.toUpperCase()}`, bold: true, align: 'center', size: 'normal', font });
+    commands.push({ type: 'text', value: `TARGET: ${(customScheduleInfo.scheduleTimeText || '').toUpperCase()}`, bold: true, align: 'center', size: 'normal', font });
     commands.push({ type: 'line', char: '=' });
   } else {
     commands.push({ type: 'line' });
@@ -661,7 +734,9 @@ export function buildCustomizedReceiptDocument(
       order.deliveryAddress?.addressLine1 ||
       (typeof order.deliveryAddress === 'string' ? order.deliveryAddress : null);
 
-    if (rawAddress && !isDineIn) {
+    const isPickupOrder = isCustomTakeaway || fulfillmentType.includes('PICKUP') || fulfillmentType.includes('COLLECT') || fulfillmentType.includes('TAKEAWAY');
+
+    if (rawAddress && !isDineIn && !isPickupOrder && !rawAddress.toLowerCase().includes('pickup')) {
       commands.push({ type: 'text', value: `Address:  ${rawAddress}`, bold: true, align: 'left', font });
       if (order.deliveryAddress?.postalCode || order.deliveryAddress?.postcode) {
         const pc = (order.deliveryAddress?.postalCode || order.deliveryAddress?.postcode).toUpperCase();

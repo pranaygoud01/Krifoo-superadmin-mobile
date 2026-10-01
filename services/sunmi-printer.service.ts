@@ -2,6 +2,7 @@ import { Platform } from 'react-native';
 import * as RN from 'react-native';
 import { Order } from '../types';
 import { getActiveReceiptTemplate, ReceiptTemplate, getCachedStoreProfile, formatRestaurantAddress } from './receipt-customization.service';
+import { getOrderScheduleInfo } from './printer/receipt-document';
 
 export enum AlignValue {
   LEFT = 0,
@@ -85,9 +86,9 @@ function formatMoney(amount?: number): string {
 }
 
 /**
- * Format order date into UK style strings
+ * Format order date into UK style strings, honoring any scheduled target time
  */
-function formatOrderDate(dateString?: string): { placedAt: string; targetTime: string } {
+function formatOrderDate(dateString?: string, scheduledText?: string | null): { placedAt: string; targetTime: string } {
   const now = dateString ? new Date(dateString) : new Date();
 
   const options: Intl.DateTimeFormatOptions = {
@@ -98,6 +99,10 @@ function formatOrderDate(dateString?: string): { placedAt: string; targetTime: s
     hour12: false,
   };
   const placedAt = now.toLocaleDateString('en-GB', options);
+
+  if (scheduledText && scheduledText.trim()) {
+    return { placedAt, targetTime: scheduledText.trim() };
+  }
 
   const targetDate = new Date(now.getTime() + 35 * 60000);
   const hours = String(targetDate.getHours()).padStart(2, '0');
@@ -235,9 +240,18 @@ export async function printSunmiOrderReceipt(
     }
 
     const orderNum = order.orderNumber || (order._id ? `#${order._id.slice(-5).toUpperCase()}` : '#00000');
-    const fulfillmentType = (order.orderType || order.deliveryType || (deliveryAddress ? 'DELIVERY' : 'COLLECTION')).toUpperCase();
-    const isDelivery = fulfillmentType.includes('DELIV') || Boolean(deliveryAddress);
-    const { placedAt, targetTime } = formatOrderDate(order.createdAt);
+    const rawType = (order.orderType || order.deliveryType || '').toString().toUpperCase();
+    const isPickup =
+      rawType.includes('PICKUP') ||
+      rawType.includes('COLLECT') ||
+      rawType.includes('TAKEAWAY') ||
+      (!rawType.includes('DELIV') && !rawType.includes('DINE') && (deliveryAddress ? deliveryAddress.toLowerCase().includes('pickup') : false));
+    const isDineIn = rawType.includes('DINE') || rawType.includes('EAT') || Boolean(order.tableNumber || order.table);
+    const isDelivery = !isPickup && !isDineIn && (rawType.includes('DELIV') || (Boolean(deliveryAddress) && !deliveryAddress.toLowerCase().includes('pickup')));
+    const fulfillmentType = isPickup ? 'PICKUP' : isDineIn ? 'DINE-IN' : 'DELIVERY';
+
+    const scheduleInfo = getOrderScheduleInfo(order);
+    const { placedAt, targetTime } = formatOrderDate(order.createdAt, scheduleInfo.scheduleTimeText);
 
     // ==========================================
     // 1. HEADER SECTION (Template Driven)
@@ -312,6 +326,22 @@ export async function printSunmiOrderReceipt(
     }
 
     // ==========================================
+    // 2B. SCHEDULED ORDER BANNER (If Scheduled)
+    // ==========================================
+    const showScheduledBanner = template.content.showScheduledTime !== false && scheduleInfo.isScheduled && scheduleInfo.scheduleTimeText;
+    if (showScheduledBanner) {
+      sunmi.setAlignment(AlignValue.CENTER);
+      sunmi.setFontSize(baseFontSize + 4);
+      sunmi.setFontWeight(true);
+      sunmi.printerText(doubleLine);
+      sunmi.printerText(`*** SCHEDULED ${fulfillmentType} ***\n`);
+      sunmi.setFontSize(baseFontSize + 2);
+      sunmi.printerText(`TARGET TIME: ${(scheduleInfo.scheduleTimeText || '').toUpperCase()}\n`);
+      sunmi.printerText(doubleLine);
+      sunmi.setAlignment(AlignValue.LEFT);
+    }
+
+    // ==========================================
     // 3. TIMINGS & CUSTOMER SECTION
     // ==========================================
     sunmi.setAlignment(AlignValue.LEFT);
@@ -323,7 +353,11 @@ export async function printSunmiOrderReceipt(
       } else if (template.content.dateTimeFormat === 'short') {
         dateDisplay = new Date(order.createdAt || Date.now()).toLocaleDateString('en-GB', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
       }
-      sunmi.printerText(`Placed: ${dateDisplay}    Target: ${targetTime}\n`);
+      if (scheduleInfo.isScheduled && scheduleInfo.scheduleTimeText) {
+        sunmi.printerText(`Placed: ${dateDisplay}    Target: ${scheduleInfo.scheduleTimeText}\n`);
+      } else {
+        sunmi.printerText(`Placed: ${dateDisplay}    Target: ${targetTime}\n`);
+      }
       sunmi.printerText(dividerLine);
     }
 
@@ -345,6 +379,10 @@ export async function printSunmiOrderReceipt(
           sunmi.printerText(`  POSTCODE: ${deliveryPostcode}\n`);
         }
         sunmi.setFontWeight(false);
+        sunmi.setFontSize(baseFontSize);
+      } else if (isPickup && deliveryAddress && !deliveryAddress.toLowerCase().includes('pickup')) {
+        sunmi.setFontSize(baseFontSize - 2);
+        sunmi.printerText(`  Cust Addr: ${deliveryAddress}\n`);
         sunmi.setFontSize(baseFontSize);
       }
 

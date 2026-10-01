@@ -1139,6 +1139,7 @@ export async function printThermalReceipt(
           paperWidth: config.paperWidth,
           orderContext: order,
           configContext: config,
+          templateContext: template,
         });
 
         console.log(`[PRINT ATTEMPT] Dispatching to ${printer.model} via PrintQueue (Copy ${copy}/${copies})...`);
