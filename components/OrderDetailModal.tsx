@@ -7,6 +7,7 @@ import { X, Store, User, MapPin, Bike, CreditCard, Phone, ShoppingBag, UtensilsC
 import { Linking } from 'react-native';
 import { orderService } from '../services/order.service';
 import { printThermalReceipt, getLastPrintJobReport, getOrderScheduleInfo } from '../services/thermal-print.service';
+import { getSanitizedOrderNotes } from '../services/printer/receipt-document';
 import { useToast } from '../context/ToastContext';
 
 interface OrderDetailModalProps {
@@ -171,22 +172,25 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
   const notes = typeof order.notes === 'string' ? order.notes.toLowerCase() : '';
   const custName = (order.customerDetails?.name || (order.customerId as any)?.fullName || '').toLowerCase();
   const phone = (order.customerDetails?.phoneNumber || (order.customerId as any)?.phoneNumber || '').replace(/\D/g, '');
-  const isTakeaway =
-    orderTypeRaw === 'takeaway' ||
-    domain.includes('swaad-takeaway') ||
-    domain.includes('swaadtakeaway') ||
-    notes.includes('takeaway') ||
-    custName.includes('takeaway') ||
-    custName.includes('swaad takeaway') ||
-    phone.includes('7783448291') ||
-    (order as any).appName === 'swaad-takeaway';
-
   const isDineIn =
     orderTypeRaw.includes('dine') ||
     orderTypeRaw.includes('eat') ||
     Boolean((order as any).tableNumber) ||
     notes.includes('dine-in') ||
+    notes.includes('dine in') ||
     notes.includes('table');
+
+  const isTakeaway =
+    !isDineIn && (
+      orderTypeRaw === 'takeaway' ||
+      domain.includes('swaad-takeaway') ||
+      domain.includes('swaadtakeaway') ||
+      notes.includes('takeaway') ||
+      custName.includes('takeaway') ||
+      custName.includes('swaad takeaway') ||
+      phone.includes('7783448291') ||
+      (order as any).appName === 'swaad-takeaway'
+    );
 
   const isDeliveryOrder = !isTakeaway && !isDineIn && (orderTypeRaw === 'delivery' || (!orderTypeRaw && !!order.deliveryAddress && typeof order.deliveryAddress === 'object'));
 
@@ -202,9 +206,9 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
       if (typeof custAddr === 'string' && custAddr.trim()) {
         return custAddr.trim();
       }
-      return isTakeaway ? 'Takeaway Order' : isDineIn ? 'Dine In' : 'Self Pickup';
+      return isTakeaway ? 'Takeaway Order' : isDineIn ? 'Dine In (Takeaway)' : 'Self Pickup';
     }
-    if (typeof addr === 'string') return addr.trim() || (isTakeaway ? 'Takeaway Order' : isDineIn ? 'Dine In' : 'Self Pickup');
+    if (typeof addr === 'string') return addr.trim() || (isTakeaway ? 'Takeaway Order' : isDineIn ? 'Dine In (Takeaway)' : 'Self Pickup');
     if (addr.formattedAddress && typeof addr.formattedAddress === 'string' && addr.formattedAddress.trim()) return addr.formattedAddress.trim();
 
     const parts = [
@@ -218,7 +222,7 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
       addr.postalCode || addr.postcode || addr.zipCode,
     ].filter(Boolean);
 
-    return parts.length > 0 ? parts.join(', ') : (addr.fullAddress || addr.address || (isTakeaway ? 'Takeaway Order' : isDineIn ? 'Dine In' : 'Self Pickup'));
+    return parts.length > 0 ? parts.join(', ') : (addr.fullAddress || addr.address || (isTakeaway ? 'Takeaway Order' : isDineIn ? 'Dine In (Takeaway)' : 'Self Pickup'));
   };
 
   const addressText = formatAddress();
@@ -236,15 +240,19 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
         <View style={styles.modalContent}>
           <View style={styles.header}>
             <View>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <Text style={styles.headerTitle}>
                   Order #{order.orderNumber || order._id?.substring(0, 8)}
                 </Text>
-                {isTakeaway && (
+                {isDineIn ? (
+                  <View style={{ backgroundColor: '#F5F3FF', borderColor: '#DDD6FE', borderWidth: 1, paddingHorizontal: 7, paddingVertical: 2, borderRadius: 5 }}>
+                    <Text style={{ fontSize: 10, fontWeight: '800', color: '#7C3AED' }}>DINE IN (TAKEAWAY)</Text>
+                  </View>
+                ) : isTakeaway ? (
                   <View style={{ backgroundColor: '#FEF3C7', borderColor: '#FDE68A', borderWidth: 1, paddingHorizontal: 7, paddingVertical: 2, borderRadius: 5 }}>
                     <Text style={{ fontSize: 10, fontWeight: '800', color: '#B45309' }}>TAKEAWAY ORDER</Text>
                   </View>
-                )}
+                ) : null}
               </View>
               <Text style={styles.headerSub}>
                 {order.createdAt ? new Date(order.createdAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : ''}
@@ -351,7 +359,7 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
                   
                   let domainUrl = 'krifoo.co.uk';
                   if (isTakeaway) {
-                    domainUrl = 'Swaad Takeaway App';
+                    domainUrl = 'Swaad App';
                   } else if (isExt) {
                     domainUrl = rawDomain && rawDomain !== 'External Website' && rawDomain !== 'External Web'
                       ? rawDomain
@@ -362,7 +370,7 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
                     return (
                       <View style={{ backgroundColor: '#FEF3C7', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6, borderWidth: 1, borderColor: '#FDE68A' }}>
                         <Text style={{ fontSize: 13, fontWeight: '700', color: '#B45309' }}>
-                          {isTakeaway ? '🥡 Swaad Takeaway App' : `🌐 ${domainUrl}`}
+                          {isTakeaway ? '🥡 Swaad App' : `🌐 ${domainUrl}`}
                         </Text>
                       </View>
                     );
@@ -396,8 +404,8 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
 
             {/* Customer & Location */}
             <View style={styles.card}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-                <View style={styles.cardHeader}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+                    <View style={[styles.cardHeader, { marginBottom: 0 }]}>
                   <User size={16} color={Colors.info} />
                   <Text style={styles.cardTitle}>Customer & Location</Text>
                 </View>
@@ -408,6 +416,7 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
                       paddingVertical: 3,
                       borderRadius: 6,
                       borderWidth: 1,
+                      alignSelf: 'flex-start',
                     },
                     isDeliveryOrder
                       ? { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }
@@ -420,7 +429,7 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
                 >
                   <Text
                     style={[
-                      { fontSize: 11, fontWeight: '800' },
+                          { fontSize: 10.5, fontWeight: '800' },
                       isDeliveryOrder
                         ? { color: '#2563EB' }
                         : isDineIn
@@ -430,7 +439,7 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
                         : { color: '#EA580C' },
                     ]}
                   >
-                    {isDeliveryOrder ? '🛵 DELIVERY' : isDineIn ? '🍽️ DINE-IN' : isTakeaway ? '🥡 TAKEAWAY ORDER' : '🛍️ SELF PICKUP'}
+                        {isDeliveryOrder ? '🛵 DELIVERY' : isDineIn ? '🍽️ DINE IN (TAKEAWAY)' : isTakeaway ? '🥡 TAKEAWAY ORDER' : '🛍️ SELF PICKUP'}
                   </Text>
                 </View>
               </View>
@@ -460,12 +469,15 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
                 <Text style={styles.addressText}>{addressText}</Text>
               </View>
 
-              {order.notes ? (
-                <View style={styles.notesBox}>
-                  <Text style={styles.notesTitle}>Special Instructions / Notes:</Text>
-                  <Text style={styles.notesText}>{order.notes}</Text>
-                </View>
-              ) : null}
+                  {(() => {
+                    const cleanNote = getSanitizedOrderNotes(order.notes);
+                    return cleanNote ? (
+                      <View style={styles.notesBox}>
+                        <Text style={styles.notesTitle}>Special Instructions / Notes:</Text>
+                        <Text style={styles.notesText}>{cleanNote}</Text>
+                      </View>
+                    ) : null;
+                  })()}
             </View>
 
             {/* Items List */}

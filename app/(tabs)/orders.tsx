@@ -56,6 +56,7 @@ import {
   Sparkles,
 } from 'lucide-react-native';
 import { printThermalReceipt, isAutoPrintEnabled, getLastPrintJobReport, getOrderScheduleInfo } from '../../services/thermal-print.service';
+import { getSanitizedOrderNotes } from '../../services/printer/receipt-document';
 import { getPosPrinterConfig } from '../../services/pos-config.service';
 import { getActiveReceiptTemplate } from '../../services/receipt-customization.service';
 
@@ -289,6 +290,7 @@ function getOrderFulfillmentType(order: Order): 'delivery' | 'pickup' | 'takeawa
     (order as any).tableNumber ||
     notes.includes('eat-in') ||
     notes.includes('dine-in') ||
+    notes.includes('dine in') ||
     notes.includes('table') ||
     addr1.startsWith('table')
   ) {
@@ -868,7 +870,7 @@ const OrderCardItem: React.FC<OrderCardProps> = ({ order, onPress, onAssignDeliv
           <View style={[styles.dineInTag, isTablet && { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 }]}>
             <UtensilsCrossed size={isTablet ? 14 : 12} color="#7C3AED" />
             <Text style={[styles.dineInTagText, isTablet && { fontSize: 12 }]}>
-              Eat-In (Dine In) {
+                Dine In (Takeaway) {
                 (order as any).tableNumber
                   ? `• Table ${(order as any).tableNumber}`
                   : (order.deliveryAddress as any)?.addressLine1?.toLowerCase().startsWith('table')
@@ -947,7 +949,7 @@ const OrderCardItem: React.FC<OrderCardProps> = ({ order, onPress, onAssignDeliv
             {fulfillmentType === 'delivery'
               ? 'DELIVERY'
               : fulfillmentType === 'dine_in'
-              ? 'EAT-IN (DINE IN)'
+                ? 'DINE IN (TAKEAWAY)'
               : fulfillmentType === 'takeaway'
               ? 'TAKEAWAY ORDER'
               : 'PICKUP'}
@@ -982,12 +984,15 @@ const OrderCardItem: React.FC<OrderCardProps> = ({ order, onPress, onAssignDeliv
               </View>
             );
           })}
-          {order.notes ? (
-            <View style={styles.noteRow}>
-              <Text style={[styles.noteLabel, isTablet && { fontSize: 12 }]}>Note: </Text>
-              <Text style={[styles.noteText, isTablet && { fontSize: 12 }]}>{order.notes}</Text>
-            </View>
-          ) : null}
+          {(() => {
+            const cleanNote = getSanitizedOrderNotes(order.notes);
+            return cleanNote ? (
+              <View style={styles.noteRow}>
+                <Text style={[styles.noteLabel, isTablet && { fontSize: 12 }]}>Note: </Text>
+                <Text style={[styles.noteText, isTablet && { fontSize: 12 }]}>{cleanNote}</Text>
+              </View>
+            ) : null;
+          })()}
         </View>
       )}
 

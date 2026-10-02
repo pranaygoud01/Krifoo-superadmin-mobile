@@ -34,6 +34,7 @@ import {
   Clock,
 } from 'lucide-react-native';
 import { printThermalReceipt, isAutoPrintEnabled, getLastPrintJobReport, getOrderScheduleInfo } from '../services/thermal-print.service';
+import { getSanitizedOrderNotes } from '../services/printer/receipt-document';
 import { getPosPrinterConfig } from '../services/pos-config.service';
 import { getActiveReceiptTemplate } from '../services/receipt-customization.service';
 
@@ -262,22 +263,25 @@ export default function OrderDetailsScreen() {
   const notes = typeof order.notes === 'string' ? order.notes.toLowerCase() : '';
   const custName = (order.customerDetails?.name || (order.customerId as any)?.fullName || '').toLowerCase();
   const phone = (order.customerDetails?.phoneNumber || (order.customerId as any)?.phoneNumber || '').replace(/\D/g, '');
-  const isTakeaway =
-    orderTypeRaw === 'takeaway' ||
-    domain.includes('swaad-takeaway') ||
-    domain.includes('swaadtakeaway') ||
-    notes.includes('takeaway') ||
-    custName.includes('takeaway') ||
-    custName.includes('swaad takeaway') ||
-    phone.includes('7783448291') ||
-    (order as any).appName === 'swaad-takeaway';
-
   const isDineIn =
     orderTypeRaw.includes('dine') ||
     orderTypeRaw.includes('eat') ||
     Boolean((order as any).tableNumber) ||
     notes.includes('dine-in') ||
+    notes.includes('dine in') ||
     notes.includes('table');
+
+  const isTakeaway =
+    !isDineIn && (
+      orderTypeRaw === 'takeaway' ||
+      domain.includes('swaad-takeaway') ||
+      domain.includes('swaadtakeaway') ||
+      notes.includes('takeaway') ||
+      custName.includes('takeaway') ||
+      custName.includes('swaad takeaway') ||
+      phone.includes('7783448291') ||
+      (order as any).appName === 'swaad-takeaway'
+    );
 
   const isDeliveryOrder = !isTakeaway && !isDineIn && (orderTypeRaw === 'delivery' || (!orderTypeRaw && !!order.deliveryAddress && typeof order.deliveryAddress === 'object'));
 
@@ -288,8 +292,8 @@ export default function OrderDetailsScreen() {
 
   const addressText =
     typeof order.deliveryAddress === 'object'
-      ? order.deliveryAddress?.addressLine1 || order.deliveryAddress?.formattedAddress || (isTakeaway ? 'Takeaway Order' : isDineIn ? 'Dine In' : 'Self Pickup')
-      : order.deliveryAddress || (isTakeaway ? 'Takeaway Order' : isDineIn ? 'Dine In' : 'Self Pickup');
+      ? order.deliveryAddress?.addressLine1 || order.deliveryAddress?.formattedAddress || (isTakeaway ? 'Takeaway Order' : isDineIn ? 'Dine In (Takeaway)' : 'Self Pickup')
+      : order.deliveryAddress || (isTakeaway ? 'Takeaway Order' : isDineIn ? 'Dine In (Takeaway)' : 'Self Pickup');
 
   const scheduleInfo = getOrderScheduleInfo(order);
 
@@ -461,8 +465,8 @@ export default function OrderDetailsScreen() {
 
         {/* Customer Information Card */}
         <View style={styles.card}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-            <View style={styles.cardHeader}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+            <View style={[styles.cardHeader, { marginBottom: 0 }]}>
               <User size={16} color={Colors.info} />
               <Text style={styles.cardTitle}>Customer Information</Text>
             </View>
@@ -473,6 +477,7 @@ export default function OrderDetailsScreen() {
                   paddingVertical: 3,
                   borderRadius: 6,
                   borderWidth: 1,
+                  alignSelf: 'flex-start',
                 },
                 isDeliveryOrder
                   ? { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }
@@ -485,7 +490,7 @@ export default function OrderDetailsScreen() {
             >
               <Text
                 style={[
-                  { fontSize: 11, fontWeight: '800' },
+                  { fontSize: 10.5, fontWeight: '800' },
                   isDeliveryOrder
                     ? { color: '#2563EB' }
                     : isDineIn
@@ -495,7 +500,7 @@ export default function OrderDetailsScreen() {
                     : { color: '#EA580C' },
                 ]}
               >
-                {isDeliveryOrder ? '🛵 DELIVERY' : isDineIn ? '🍽️ DINE-IN' : isTakeaway ? '🥡 TAKEAWAY ORDER' : '🛍️ SELF PICKUP'}
+                {isDeliveryOrder ? '🛵 DELIVERY' : isDineIn ? '🍽️ DINE IN (TAKEAWAY)' : isTakeaway ? '🥡 TAKEAWAY ORDER' : '🛍️ SELF PICKUP'}
               </Text>
             </View>
           </View>
@@ -532,12 +537,15 @@ export default function OrderDetailsScreen() {
             </TouchableOpacity>
           </View>
 
-          {order.notes ? (
-            <View style={styles.notesBox}>
-              <Text style={styles.notesTitle}>Special Instructions / Notes:</Text>
-              <Text style={styles.notesText}>{order.notes}</Text>
-            </View>
-          ) : null}
+          {(() => {
+            const cleanNote = getSanitizedOrderNotes(order.notes);
+            return cleanNote ? (
+              <View style={styles.notesBox}>
+                <Text style={styles.notesTitle}>Special Instructions / Notes:</Text>
+                <Text style={styles.notesText}>{cleanNote}</Text>
+              </View>
+            ) : null;
+          })()}
         </View>
 
         {/* Items & Pricing Breakdown Card */}

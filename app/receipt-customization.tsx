@@ -1827,7 +1827,7 @@ export default function ReceiptCustomizationScreen() {
               'order_mode',
               'Order Type Tag',
               <Text style={[styles.paperText, { textAlign: 'center', fontWeight: '800', marginTop: 2 }]}>
-                [ {isDine ? 'EAT-IN / DINE-IN' : isDeliv ? 'DELIVERY ORDER' : 'PICKUP / TAKEAWAY'} ]
+                [ {isDine ? 'DINE IN (TAKEAWAY)' : isDeliv ? 'DELIVERY ORDER' : 'PICKUP / TAKEAWAY'} ]
               </Text>
             )}
 

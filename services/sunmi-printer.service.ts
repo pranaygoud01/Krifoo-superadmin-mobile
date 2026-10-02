@@ -2,7 +2,7 @@ import { Platform } from 'react-native';
 import * as RN from 'react-native';
 import { Order } from '../types';
 import { getActiveReceiptTemplate, ReceiptTemplate, getCachedStoreProfile, formatRestaurantAddress } from './receipt-customization.service';
-import { getOrderScheduleInfo } from './printer/receipt-document';
+import { getOrderScheduleInfo, getSanitizedOrderNotes } from './printer/receipt-document';
 
 export enum AlignValue {
   LEFT = 0,
@@ -386,10 +386,10 @@ export async function printSunmiOrderReceipt(
         sunmi.setFontSize(baseFontSize);
       }
 
-      if (order.deliveryInstructions || order.notes) {
-        const note = order.deliveryInstructions || order.notes;
+      const cleanNote = getSanitizedOrderNotes(order.deliveryInstructions || order.notes);
+      if (cleanNote) {
         sunmi.setFontWeight(true);
-        sunmi.printerText(`SPECIAL NOTE: ${note}\n`);
+        sunmi.printerText(`SPECIAL NOTE: ${cleanNote}\n`);
         sunmi.setFontWeight(false);
       }
     }

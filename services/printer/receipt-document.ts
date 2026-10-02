@@ -210,6 +210,32 @@ export function getOrderFulfillmentLabel(order: any): string {
   return rawFType || 'DELIVERY';
 }
 
+export function getSanitizedOrderNotes(notes?: string): string {
+  if (!notes || typeof notes !== 'string') return '';
+  const cleaned = notes
+    .split('•')
+    .map((s) => s.trim())
+    .filter((s) => {
+      const lower = s.toLowerCase();
+      return (
+        !lower.includes('dine-in order') &&
+        !lower.includes('dine in order') &&
+        !lower.includes('dine in (takeaway)') &&
+        !lower.includes('takeaway order') &&
+        !lower.includes('eat-in order') &&
+        !lower.includes('eat in order') &&
+        lower !== 'dine in' &&
+        lower !== 'dine-in' &&
+        lower !== 'takeaway' &&
+        lower !== 'eat-in' &&
+        lower !== 'eat in'
+      );
+    })
+    .join(' • ')
+    .trim();
+  return cleaned;
+}
+
 function formatMoney(amount?: number): string {
   if (amount === undefined || amount === null || isNaN(amount)) return '£0.00';
   return `£${Number(amount).toFixed(2)}`;
@@ -352,7 +378,7 @@ export function buildReceiptDocument(order: Partial<Order> & any, config?: Parti
   commands.push({ type: 'text', value: `Placed: ${placedDate}`, align: 'center' });
 
   // 3. Fulfillment Badge & Scheduled Notice
-  let badgeText = isDineIn ? `[ EAT-IN / DINE-IN ${tableInfo} ]` : isTakeaway ? `[ TAKEAWAY ORDER ]` : `[ ${rawFType} ORDER ]`;
+  let badgeText = isDineIn ? `[ DINE IN (TAKEAWAY) ${tableInfo} ]` : isTakeaway ? `[ TAKEAWAY ORDER ]` : `[ ${rawFType} ORDER ]`;
   commands.push({ type: 'text', value: badgeText, bold: true, align: 'center', size: 'normal' });
 
   const scheduleInfo = getOrderScheduleInfo(order);
@@ -478,9 +504,10 @@ export function buildReceiptDocument(order: Partial<Order> & any, config?: Parti
   commands.push({ type: 'text', value: paymentText, bold: true, align: 'center' });
 
   // 8. Order Notes
-  if (order.notes && order.notes.trim()) {
+  const displayNotes = getSanitizedOrderNotes(order.notes);
+  if (displayNotes) {
     commands.push({ type: 'line' });
-    commands.push({ type: 'text', value: `NOTE: ${order.notes.trim()}`, bold: true, align: 'left' });
+    commands.push({ type: 'text', value: `NOTE: ${displayNotes}`, bold: true, align: 'left' });
   }
 
   // 9. Footer & Cut / Drawer
@@ -685,7 +712,7 @@ export function buildCustomizedReceiptDocument(
     (order as any).appName === 'swaad-takeaway';
 
   const badgeText = isDineIn
-    ? `[ EAT-IN / DINE-IN ${tableNum ? `TABLE ${tableNum}` : ''} ]`
+    ? `[ DINE IN (TAKEAWAY) ${tableNum ? `TABLE ${tableNum}` : ''} ]`
     : isCustomTakeaway
     ? `[ TAKEAWAY ORDER ]`
     : `[ ${fulfillmentType} ORDER ]`;
@@ -848,9 +875,10 @@ export function buildCustomizedReceiptDocument(
   }
 
   // 7. Order Notes / Special Instructions
-  if (order.notes && order.notes.trim()) {
+  const customDisplayNotes = getSanitizedOrderNotes(order.notes);
+  if (customDisplayNotes) {
     commands.push({ type: 'line' });
-    commands.push({ type: 'text', value: `NOTE: ${order.notes.trim()}`, bold: true, align: 'left', font });
+    commands.push({ type: 'text', value: `NOTE: ${customDisplayNotes}`, bold: true, align: 'left', font });
   }
 
   // 8. Footer Message & QR Code

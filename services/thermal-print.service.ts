@@ -5,7 +5,7 @@ import { isSunmiAvailable, printSunmiOrderReceipt } from './sunmi-printer.servic
 import { getPosPrinterConfig, savePosPrinterConfig, PosPrinterConfig, POS_BRANDS, getBrandOption, getBrandName, profileFromConfig } from './pos-config.service';
 import { printNetworkOrderReceipt, testNetworkPrinter } from './printer/network-printer.service';
 import { printEpsonOrderReceipt, testEpsonPrinter, discoverEpsonPrinters } from './printer/epson-printer.service';
-import { buildReceiptDocument, buildDrawerKickDocument, buildCustomizedReceiptDocument, getOrderScheduleInfo, formatScheduleDisplay, getOrderFulfillmentLabel } from './printer/receipt-document';
+import { buildReceiptDocument, buildDrawerKickDocument, buildCustomizedReceiptDocument, getOrderScheduleInfo, formatScheduleDisplay, getOrderFulfillmentLabel, getSanitizedOrderNotes } from './printer/receipt-document';
 import { resolvePrinter } from './printer/printer-registry';
 import { PrintQueueService } from './printer/print-queue.service';
 import { getActiveReceiptTemplate, ReceiptTemplate, getSampleOrderForPreview, getCachedStoreProfile, setCachedStoreProfile, formatRestaurantAddress } from './receipt-customization.service';
@@ -199,7 +199,7 @@ export function generateCustomizedThermalReceiptHtml(order: Partial<Order> & any
   const paymentType = order.paymentType || 'Card';
   const paymentStatus = (order.paymentStatus || 'Paid').toUpperCase();
   const isPaid = paymentStatus === 'PAID' || paymentStatus === 'COMPLETED';
-  const specialNotes = order.notes || order.specialInstructions || '';
+  const specialNotes = getSanitizedOrderNotes(order.notes || order.specialInstructions || '');
 
   return `
 <!DOCTYPE html>
@@ -327,7 +327,7 @@ export function generateCustomizedThermalReceiptHtml(order: Partial<Order> & any
       `
       : `
   <div style="text-align:center; font-weight:700; font-size:0.95em; margin:2px 0;">
-    [ ${isDineIn ? `EAT-IN / DINE-IN ${tableNum ? `TABLE ${tableNum}` : ''}` : `${fulfillmentLabel} ORDER`} ]
+    [ ${isDineIn ? `DINE IN (TAKEAWAY) ${tableNum ? `TABLE ${tableNum}` : ''}` : `${fulfillmentLabel} ORDER`} ]
   </div>
       `
   }
@@ -503,7 +503,7 @@ export function generateThermalReceiptHtml(order: Partial<Order> & any, template
   const isPaid = paymentStatus === 'PAID' || paymentStatus === 'COMPLETED';
 
   // Notes
-  const specialNotes = order.notes || order.specialInstructions || '';
+  const specialNotes = getSanitizedOrderNotes(order.notes || order.specialInstructions || '');
 
   return `
 <!DOCTYPE html>

@@ -1,7 +1,7 @@
 import { Order } from '../../types';
 import { PosPrinterConfig } from '../pos-config.service';
 import { ReceiptTemplate, getCachedStoreProfile } from '../receipt-customization.service';
-import { buildCustomizedReceiptDocument, getOrderScheduleInfo } from './receipt-document';
+import { buildCustomizedReceiptDocument, getOrderScheduleInfo, getSanitizedOrderNotes } from './receipt-document';
 import { EscPosEncoder } from './encoders/escpos-encoder';
 
 /**
@@ -368,9 +368,9 @@ export function buildEscPosReceipt(order: Partial<Order> & any, config: PosPrint
     builder.line(`  Cust Addr: ${deliveryAddress}`);
   }
 
-  if (order.deliveryInstructions || order.notes) {
-    const note = order.deliveryInstructions || order.notes;
-    builder.bold(true).line(`NOTE: ${note}`).bold(false);
+  const cleanNote = getSanitizedOrderNotes(order.deliveryInstructions || order.notes);
+  if (cleanNote) {
+    builder.bold(true).line(`NOTE: ${cleanNote}`).bold(false);
   }
 
   builder.doubleDivider();
