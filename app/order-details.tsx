@@ -641,31 +641,13 @@ export default function OrderDetailsScreen() {
                 </Text>
                 <Text style={{ color: Colors.textMuted, fontSize: 11, marginTop: 1 }}>
                   {(order.paymentType || 'cash').toLowerCase() === 'cash'
-                    ? 'Pay on fulfillment / COD'
-                    : 'Processed via Stripe'}
+                    ? (isTakeaway || isDineIn ? 'Cash at Counter' : 'Pay on fulfillment / COD')
+                    : (order.paymentType?.toLowerCase() === 'card' && (isTakeaway || isDineIn) ? 'Card at Counter / Terminal' : 'Processed via Stripe')}
                 </Text>
               </View>
             </View>
 
-            <View
-              style={[
-                { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 14, borderWidth: 1 },
-                order.paymentStatus === 'paid' || order.status === 'delivered'
-                  ? { backgroundColor: '#DCFCE7', borderColor: '#86EFAC' }
-                  : { backgroundColor: '#FEF3C7', borderColor: '#FDE68A' },
-              ]}
-            >
-              <Text
-                style={[
-                  { fontSize: 11, fontWeight: '800', letterSpacing: 0.5 },
-                  order.paymentStatus === 'paid' || order.status === 'delivered'
-                    ? { color: '#15803D' }
-                    : { color: '#B45309' },
-                ]}
-              >
-                {order.paymentStatus === 'paid' || order.status === 'delivered' ? 'PAID' : (order.paymentStatus || 'PENDING').toUpperCase()}
-              </Text>
-            </View>
+            <StatusBadge status={order.paymentStatus || 'pending'} type="payment" />
           </View>
         </View>
 

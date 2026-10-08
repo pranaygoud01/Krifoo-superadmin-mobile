@@ -246,11 +246,23 @@ function formatDateTime(iso: string) {
 }
 
 function formatPaymentLabel(order: Order) {
-  const pType = (order.paymentType || '').toLowerCase();
+  const pType = (order.paymentType || (order as any).paymentMethod || '').toLowerCase();
+  const fulfillment = getOrderFulfillmentType(order);
+  const isCounter = fulfillment === 'dine_in' || fulfillment === 'pickup' || fulfillment === 'takeaway';
+
   if (pType === 'cash') {
-    return 'Payment : COD';
+    return isCounter ? 'Payment : Cash at Counter' : 'Payment : COD';
   }
-  return 'Payment : Online (Stripe/Card)';
+  if (pType === 'card') {
+    return isCounter ? 'Payment : Card at Counter' : 'Payment : Card / Online';
+  }
+  if (pType === 'stripe' || pType === 'online') {
+    return 'Payment : Online (Stripe)';
+  }
+  if (!pType) {
+    return 'Payment : Not Specified';
+  }
+  return `Payment : ${pType.charAt(0).toUpperCase() + pType.slice(1)}`;
 }
 
 export function getOrderStatusColor(status?: string): string {
@@ -479,7 +491,10 @@ const OrderCardItem: React.FC<OrderCardProps> = ({ order, onPress, onAssignDeliv
   const customerPhone = getCustomerPhone(order);
   const restaurantName = getRestaurantName(order);
   const totalAmount = getTotalAmount(order);
-  const isPaid = order.paymentStatus === 'paid' || order.paymentStatus === 'completed';
+  const pStatus = (order.paymentStatus || 'pending').toLowerCase();
+  const isPaid = pStatus === 'paid' || pStatus === 'completed';
+  const isFailed = pStatus === 'failed';
+  const isRefunded = pStatus === 'refunded';
   const paymentLabel = formatPaymentLabel(order);
   const orderItems = getOrderItems(order);
   const itemCount = orderItems.length;
@@ -802,7 +817,23 @@ const OrderCardItem: React.FC<OrderCardProps> = ({ order, onPress, onAssignDeliv
         <View style={styles.kanbanOrderIdCol}>
           <View style={styles.kanbanOrderIdRow}>
             <Text style={[styles.kanbanOrderId, isTablet && styles.kanbanOrderIdTablet]}>#{orderNum}</Text>
-            {isPaid && <View style={styles.paidBadge}><Text style={[styles.paidBadgeText, isTablet && { fontSize: 10 }]}>PAID</Text></View>}
+            {isPaid ? (
+              <View style={styles.paidBadge}>
+                <Text style={[styles.paidBadgeText, isTablet && { fontSize: 10 }]}>PAID</Text>
+              </View>
+            ) : isFailed ? (
+              <View style={styles.failedBadge}>
+                <Text style={[styles.failedBadgeText, isTablet && { fontSize: 10 }]}>FAILED</Text>
+              </View>
+            ) : isRefunded ? (
+              <View style={styles.refundedBadge}>
+                <Text style={[styles.refundedBadgeText, isTablet && { fontSize: 10 }]}>REFUNDED</Text>
+              </View>
+            ) : (
+              <View style={styles.pendingBadge}>
+                <Text style={[styles.pendingBadgeText, isTablet && { fontSize: 10 }]}>UNPAID</Text>
+              </View>
+            )}
           </View>
           <Text style={[styles.kanbanPaymentBelowId, isTablet && styles.kanbanPaymentBelowIdTablet]}>{paymentLabel}</Text>
         </View>
@@ -3115,6 +3146,12 @@ const styles = StyleSheet.create({
   kanbanPaymentBelowId: { fontSize: 11, fontWeight: '700', color: '#687076', marginTop: 2 },
   paidBadge: { backgroundColor: '#ECFDF5', borderRadius: 4, paddingHorizontal: 5, paddingVertical: 2 },
   paidBadgeText: { fontSize: 9, fontWeight: '800', color: '#065F46', letterSpacing: 0.5 },
+  pendingBadge: { backgroundColor: '#FFFBEB', borderRadius: 4, paddingHorizontal: 5, paddingVertical: 2 },
+  pendingBadgeText: { fontSize: 9, fontWeight: '800', color: '#B45309', letterSpacing: 0.5 },
+  failedBadge: { backgroundColor: '#FEF2F2', borderRadius: 4, paddingHorizontal: 5, paddingVertical: 2 },
+  failedBadgeText: { fontSize: 9, fontWeight: '800', color: '#DC2626', letterSpacing: 0.5 },
+  refundedBadge: { backgroundColor: '#F3E8FF', borderRadius: 4, paddingHorizontal: 5, paddingVertical: 2 },
+  refundedBadgeText: { fontSize: 9, fontWeight: '800', color: '#7C3AED', letterSpacing: 0.5 },
   kanbanAmountRow: { alignItems: 'flex-end' },
   kanbanAmount: { fontSize: 15, fontWeight: '800', color: '#11181C' },
   kanbanItemCount: { fontSize: 10, color: '#9BA1A6', marginTop: 1 },

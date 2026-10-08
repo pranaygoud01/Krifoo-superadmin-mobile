@@ -1211,9 +1211,12 @@ export default function DashboardScreen() {
                       >
                         <View style={styles.recentOrderTop}>
                           <View style={styles.recentOrderInfo}>
-                            <Text style={styles.recentOrderId}>
-                              #{order.orderNumber || order._id?.substring(0, 8)}
-                            </Text>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                              <Text style={styles.recentOrderId}>
+                                #{order.orderNumber || order._id?.substring(0, 8)}
+                              </Text>
+                              <StatusBadge status={order.paymentStatus || 'pending'} type="payment" />
+                            </View>
                             <Text style={styles.recentOrderSub} numberOfLines={1}>
                               {restName} • {custName}
                             </Text>

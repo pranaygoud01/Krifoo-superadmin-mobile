@@ -74,6 +74,7 @@ export const OrderCard: React.FC<OrderCardProps> = ({ order, onPress, onAssignDe
         <View style={styles.orderIdBox}>
           <ShoppingBag size={14} color={Colors.primary} />
           <Text style={styles.orderIdText}>#{order.orderNumber || order._id?.substring(0, 8)}</Text>
+          <StatusBadge status={order.paymentStatus || 'pending'} type="payment" />
         </View>
 
         <StatusBadge status={order.status} type="order" />
@@ -110,8 +111,10 @@ export const OrderCard: React.FC<OrderCardProps> = ({ order, onPress, onAssignDe
 
       <View style={styles.footer}>
         <View style={styles.footerAmountContainer}>
-          <Text style={styles.totalLabel}>Total Amount</Text>
-          <Text style={styles.totalValue}>€{(totalAmount || 0).toFixed(2)}</Text>
+          <Text style={styles.totalLabel}>
+            {order.paymentType ? `${order.paymentType.toUpperCase()} • ` : ''}Total Amount
+          </Text>
+          <Text style={styles.totalValue}>£{(totalAmount || 0).toFixed(2)}</Text>
         </View>
 
         <View style={styles.footerRight}>

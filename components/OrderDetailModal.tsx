@@ -626,31 +626,13 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
                     </Text>
                     <Text style={styles.paymentMethodSub}>
                       {(order.paymentType || 'cash').toLowerCase() === 'cash'
-                        ? 'Pay on fulfillment / COD'
-                        : 'Processed via Stripe'}
+                        ? (isTakeaway || isDineIn ? 'Cash at Counter' : 'Pay on fulfillment / COD')
+                        : (order.paymentType?.toLowerCase() === 'card' && (isTakeaway || isDineIn) ? 'Card at Counter / Terminal' : 'Processed via Stripe')}
                     </Text>
                   </View>
                 </View>
 
-                <View
-                  style={[
-                    styles.paymentStatusBadge,
-                    order.paymentStatus === 'paid' || order.status === 'delivered'
-                      ? { backgroundColor: '#DCFCE7', borderColor: '#86EFAC' }
-                      : { backgroundColor: '#FEF3C7', borderColor: '#FDE68A' },
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.paymentStatusBadgeText,
-                      order.paymentStatus === 'paid' || order.status === 'delivered'
-                        ? { color: '#15803D' }
-                        : { color: '#B45309' },
-                    ]}
-                  >
-                    {order.paymentStatus === 'paid' || order.status === 'delivered' ? 'PAID' : (order.paymentStatus || 'PENDING').toUpperCase()}
-                  </Text>
-                </View>
+                <StatusBadge status={order.paymentStatus || 'pending'} type="payment" />
               </View>
             </View>
 
