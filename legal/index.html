@@ -1,0 +1,1237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Krifoo — Legal Documentation, Privacy Policy & Terms</title>
+  <meta name="description" content="Official documentary legal portal for Krifoo and Krifoo Admin. Full text of the Privacy Policy, Terms and Conditions, and Account Deletion procedure.">
+  <meta name="robots" content="index, follow">
+  <style>
+    :root {
+      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      
+      --color-bg: #FFFFFF;
+      --color-surface: #F8FAFC;
+      --color-border: #E2E8F0;
+      --color-border-dark: #CBD5E1;
+      --color-text: #0F172A;
+      --color-text-muted: #334155;
+      --color-text-subtle: #64748B;
+      --color-accent: #0F172A;
+      --color-accent-subtle: #F1F5F9;
+      --color-highlight: #EA580C;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      color: var(--color-text);
+      background-color: var(--color-bg);
+      line-height: 1.65;
+      font-size: 15px;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Top Utility Header */
+    header.doc-header {
+      border-bottom: 1px solid var(--color-border);
+      background-color: var(--color-bg);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .header-inner {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 0.75rem 1.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+
+    .brand-block {
+      display: flex;
+      align-items: baseline;
+      gap: 0.75rem;
+      text-decoration: none;
+      color: var(--color-text);
+    }
+
+    .brand-title {
+      font-size: 1.1rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .brand-divider {
+      color: var(--color-border-dark);
+      font-weight: 300;
+    }
+
+    .brand-sub {
+      font-size: 0.85rem;
+      color: var(--color-text-subtle);
+      letter-spacing: 0.02em;
+    }
+
+    /* Text-Only Document Tabs */
+    nav.doc-nav {
+      display: flex;
+      align-items: center;
+      gap: 0.25rem;
+      flex-wrap: wrap;
+    }
+
+    .nav-tab {
+      background: transparent;
+      border: none;
+      border-bottom: 2px solid transparent;
+      padding: 0.6rem 0.85rem;
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: var(--color-text-muted);
+      cursor: pointer;
+      text-decoration: none;
+      transition: color 0.15s ease, border-color 0.15s ease;
+      font-family: var(--font-sans);
+    }
+
+    .nav-tab:hover {
+      color: var(--color-text);
+    }
+
+    .nav-tab.active {
+      color: var(--color-text);
+      font-weight: 600;
+      border-bottom-color: var(--color-text);
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .btn-action {
+      background: transparent;
+      border: 1px solid var(--color-border-dark);
+      padding: 0.35rem 0.75rem;
+      border-radius: 4px;
+      font-size: 0.8rem;
+      font-weight: 500;
+      color: var(--color-text-muted);
+      cursor: pointer;
+      font-family: var(--font-sans);
+      transition: all 0.15s ease;
+    }
+
+    .btn-action:hover {
+      background: var(--color-surface);
+      color: var(--color-text);
+      border-color: var(--color-text);
+    }
+
+    /* Documentary Title & Meta Block */
+    .doc-meta-banner {
+      border-bottom: 1px solid var(--color-border);
+      background-color: var(--color-surface);
+      padding: 2.25rem 1.5rem 2rem;
+    }
+
+    .meta-inner {
+      max-width: 1120px;
+      margin: 0 auto;
+    }
+
+    .doc-kicker {
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--color-text-subtle);
+      margin-bottom: 0.5rem;
+    }
+
+    h1.doc-heading {
+      font-size: 2rem;
+      font-weight: 700;
+      color: var(--color-text);
+      letter-spacing: -0.015em;
+      line-height: 1.25;
+      margin-bottom: 0.6rem;
+    }
+
+    p.doc-summary {
+      font-size: 1rem;
+      color: var(--color-text-muted);
+      max-width: 820px;
+      margin-bottom: 1.5rem;
+      line-height: 1.6;
+    }
+
+    /* Documentary Metadata Grid */
+    .metadata-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1rem 1.5rem;
+      padding-top: 1.25rem;
+      border-top: 1px solid var(--color-border);
+      font-size: 0.825rem;
+    }
+
+    .meta-cell {
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+    }
+
+    .meta-label {
+      color: var(--color-text-subtle);
+      text-transform: uppercase;
+      font-size: 0.7rem;
+      letter-spacing: 0.05em;
+      font-weight: 600;
+    }
+
+    .meta-value {
+      color: var(--color-text);
+      font-weight: 600;
+    }
+
+    .meta-value code {
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      background: #EDE8E8;
+      padding: 0.1rem 0.35rem;
+      border-radius: 3px;
+    }
+
+    /* Tab Panes */
+    .tab-pane {
+      display: none;
+    }
+
+    .tab-pane.active {
+      display: block;
+    }
+
+    /* Layout Container */
+    .layout-container {
+      max-width: 1120px;
+      margin: 2.5rem auto 4.5rem;
+      padding: 0 1.5rem;
+      display: grid;
+      grid-template-columns: 240px 1fr;
+      gap: 3rem;
+      align-items: start;
+    }
+
+    .layout-container.single-column {
+      grid-template-columns: 1fr;
+      max-width: 840px;
+    }
+
+    /* Sticky Sidebar Navigation */
+    aside.doc-sidebar {
+      position: sticky;
+      top: 75px;
+      max-height: calc(100vh - 90px);
+      overflow-y: auto;
+      padding-right: 0.75rem;
+    }
+
+    .sidebar-heading {
+      font-size: 0.725rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--color-text-subtle);
+      margin-bottom: 0.75rem;
+      padding-bottom: 0.4rem;
+      border-bottom: 1px solid var(--color-border);
+    }
+
+    .sidebar-nav {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+    }
+
+    .sidebar-nav a {
+      color: var(--color-text-muted);
+      text-decoration: none;
+      font-size: 0.825rem;
+      line-height: 1.4;
+      display: block;
+      padding: 0.35rem 0.5rem;
+      border-left: 2px solid transparent;
+      transition: all 0.12s ease-in-out;
+    }
+
+    .sidebar-nav a:hover {
+      color: var(--color-text);
+      border-left-color: var(--color-border-dark);
+      background: var(--color-surface);
+    }
+
+    /* Main Article Content */
+    article.doc-body {
+      color: var(--color-text-muted);
+      line-height: 1.7;
+    }
+
+    article.doc-body section {
+      margin-bottom: 2.75rem;
+      scroll-margin-top: 85px;
+    }
+
+    article.doc-body section:last-child {
+      margin-bottom: 0;
+    }
+
+    h2.section-header {
+      font-size: 1.35rem;
+      font-weight: 700;
+      color: var(--color-text);
+      letter-spacing: -0.01em;
+      margin-bottom: 1rem;
+      padding-bottom: 0.4rem;
+      border-bottom: 1px solid var(--color-border);
+    }
+
+    h3.sub-header {
+      font-size: 1.05rem;
+      font-weight: 600;
+      color: var(--color-text);
+      margin: 1.5rem 0 0.5rem;
+    }
+
+    p {
+      margin-bottom: 1rem;
+    }
+
+    ul, ol {
+      margin-left: 1.25rem;
+      margin-bottom: 1.25rem;
+    }
+
+    li {
+      margin-bottom: 0.4rem;
+    }
+
+    strong {
+      color: var(--color-text);
+      font-weight: 600;
+    }
+
+    code {
+      font-family: var(--font-mono);
+      font-size: 0.85em;
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      padding: 0.1em 0.35em;
+      border-radius: 3px;
+      color: var(--color-text);
+    }
+
+    /* Documentary Callout Box */
+    .doc-callout {
+      border: 1px solid var(--color-border);
+      border-left: 3px solid var(--color-text);
+      background-color: var(--color-surface);
+      padding: 1.15rem 1.25rem;
+      margin: 1.5rem 0;
+      border-radius: 2px;
+    }
+
+    .doc-callout-title {
+      font-size: 0.85rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--color-text);
+      margin-bottom: 0.4rem;
+    }
+
+    .doc-callout p:last-child {
+      margin-bottom: 0;
+    }
+
+    /* Structured Data Table */
+    .table-container {
+      overflow-x: auto;
+      margin: 1.5rem 0;
+      border: 1px solid var(--color-border);
+      border-radius: 2px;
+    }
+
+    table.doc-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.875rem;
+      text-align: left;
+    }
+
+    table.doc-table th {
+      background-color: var(--color-surface);
+      color: var(--color-text);
+      font-weight: 600;
+      padding: 0.65rem 0.85rem;
+      border-bottom: 1px solid var(--color-border);
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    table.doc-table td {
+      padding: 0.75rem 0.85rem;
+      border-bottom: 1px solid var(--color-border);
+      color: var(--color-text-muted);
+      vertical-align: top;
+    }
+
+    table.doc-table tr:last-child td {
+      border-bottom: none;
+    }
+
+    .scope-tag {
+      display: inline-block;
+      font-family: var(--font-mono);
+      font-size: 0.725rem;
+      font-weight: 600;
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      padding: 0.15rem 0.4rem;
+      border-radius: 2px;
+      color: var(--color-text);
+    }
+
+    /* Documentary Form Styles */
+    .form-panel {
+      border: 1px solid var(--color-border);
+      background-color: var(--color-surface);
+      padding: 1.75rem;
+      margin: 1.5rem 0;
+      border-radius: 2px;
+    }
+
+    .form-group {
+      margin-bottom: 1.25rem;
+    }
+
+    .form-label {
+      display: block;
+      font-size: 0.8rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      color: var(--color-text);
+      margin-bottom: 0.35rem;
+    }
+
+    .form-input, .form-textarea {
+      width: 100%;
+      padding: 0.65rem 0.75rem;
+      border: 1px solid var(--color-border-dark);
+      background-color: #FFFFFF;
+      font-family: inherit;
+      font-size: 0.9rem;
+      color: var(--color-text);
+      border-radius: 2px;
+    }
+
+    .form-input:focus, .form-textarea:focus {
+      outline: none;
+      border-color: var(--color-text);
+      box-shadow: 0 0 0 2px rgba(15, 23, 42, 0.1);
+    }
+
+    .btn-submit {
+      background-color: var(--color-text);
+      color: #FFFFFF;
+      border: 1px solid var(--color-text);
+      padding: 0.65rem 1.25rem;
+      font-size: 0.85rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      cursor: pointer;
+      border-radius: 2px;
+      font-family: inherit;
+      transition: background 0.15s ease;
+    }
+
+    .btn-submit:hover {
+      background-color: #334155;
+    }
+
+    /* Overview Application Grid */
+    .doc-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+      margin: 1.5rem 0;
+    }
+
+    .doc-grid-item {
+      border: 1px solid var(--color-border);
+      padding: 1.5rem;
+      background-color: var(--color-surface);
+    }
+
+    .doc-grid-title {
+      font-size: 1.05rem;
+      font-weight: 700;
+      color: var(--color-text);
+      margin-bottom: 0.35rem;
+    }
+
+    .doc-grid-code {
+      font-family: var(--font-mono);
+      font-size: 0.775rem;
+      color: var(--color-text-subtle);
+      margin-bottom: 0.75rem;
+    }
+
+    /* Footer */
+    footer.doc-footer {
+      border-top: 1px solid var(--color-border);
+      background-color: var(--color-surface);
+      padding: 2.5rem 1.5rem 2rem;
+      font-size: 0.825rem;
+      color: var(--color-text-subtle);
+    }
+
+    .footer-inner {
+      max-width: 1120px;
+      margin: 0 auto;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 1.5rem;
+    }
+
+    .footer-links {
+      display: flex;
+      gap: 1.25rem;
+    }
+
+    .footer-links a {
+      color: var(--color-text-muted);
+      text-decoration: none;
+    }
+
+    .footer-links a:hover {
+      color: var(--color-text);
+      text-decoration: underline;
+    }
+
+    /* Responsive */
+    @media (max-width: 820px) {
+      .layout-container {
+        grid-template-columns: 1fr;
+      }
+
+      aside.doc-sidebar {
+        display: none;
+      }
+
+      .doc-grid {
+        grid-template-columns: 1fr;
+      }
+
+      h1.doc-heading {
+        font-size: 1.65rem;
+      }
+    }
+
+    @media print {
+      header.doc-header,
+      aside.doc-sidebar,
+      footer.doc-footer,
+      .btn-action,
+      .header-actions {
+        display: none !important;
+      }
+
+      .tab-pane {
+        display: block !important;
+        page-break-after: always;
+        margin-bottom: 3rem;
+      }
+
+      body {
+        font-size: 10pt;
+        line-height: 1.5;
+        color: #000;
+        background: #fff;
+      }
+
+      .layout-container {
+        padding: 0;
+        margin: 0;
+        grid-template-columns: 1fr;
+      }
+
+      .doc-meta-banner {
+        background: transparent;
+        padding: 1rem 0;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Formal Header -->
+  <header class="doc-header">
+    <div class="header-inner">
+      <div class="brand-block">
+        <span class="brand-title">KRIFOO</span>
+        <span class="brand-divider">/</span>
+        <span class="brand-sub">Legal & Compliance Documentation</span>
+      </div>
+
+      <!-- Text-Only Formal Navigation Tabs -->
+      <nav class="doc-nav" role="tablist">
+        <button class="nav-tab active" id="btn-privacy" onclick="selectDocument('privacy')">Privacy Policy</button>
+        <button class="nav-tab" id="btn-terms" onclick="selectDocument('terms')">Terms & Conditions</button>
+        <button class="nav-tab" id="btn-delete" onclick="selectDocument('delete')">Account Deletion</button>
+        <button class="nav-tab" id="btn-overview" onclick="selectDocument('overview')">App Scope</button>
+      </nav>
+
+      <div class="header-actions">
+        <button class="btn-action" onclick="window.print()">Print Document</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Documentary Metadata Banner -->
+  <section class="doc-meta-banner">
+    <div class="meta-inner">
+      <div class="doc-kicker">Document Specification</div>
+      <h1 class="doc-heading" id="doc-title">Privacy Policy</h1>
+      <p class="doc-summary" id="doc-summary">
+        Formal disclosure regarding the collection, processing, storage, and erasure of personal data across the Krifoo mobile and merchant applications.
+      </p>
+
+      <div class="metadata-grid">
+        <div class="meta-cell">
+          <span class="meta-label">Issuing Entity</span>
+          <span class="meta-value">Krifoo Technologies</span>
+        </div>
+        <div class="meta-cell">
+          <span class="meta-label">Effective Date</span>
+          <span class="meta-value">9 October 2026</span>
+        </div>
+        <div class="meta-cell">
+          <span class="meta-label">App Identifier (Customer)</span>
+          <span class="meta-value"><code>com.krifoo.mobile</code></span>
+        </div>
+        <div class="meta-cell">
+          <span class="meta-label">App Identifier (Merchant)</span>
+          <span class="meta-value"><code>com.krifoo.admin</code></span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========================================================================= -->
+  <!-- DOCUMENT 1: PRIVACY POLICY                                                -->
+  <!-- ========================================================================= -->
+  <div id="pane-privacy" class="tab-pane active">
+    <div class="layout-container">
+      <aside class="doc-sidebar">
+        <div class="sidebar-heading">Document Contents</div>
+        <ul class="sidebar-nav">
+          <li><a href="#p-sec-1">1. Scope & Ecosystem</a></li>
+          <li><a href="#p-sec-2">2. Information Collection</a></li>
+          <li><a href="#p-sec-3">3. Hardware Permissions</a></li>
+          <li><a href="#p-sec-4">4. Processing Purposes</a></li>
+          <li><a href="#p-sec-5">5. Third-Party Disclosures</a></li>
+          <li><a href="#p-sec-6">6. Retention Schedules</a></li>
+          <li><a href="#p-sec-7">7. Account & Data Erasure</a></li>
+          <li><a href="#p-sec-8">8. Security Controls</a></li>
+          <li><a href="#p-sec-9">9. Minors & Children</a></li>
+          <li><a href="#p-sec-10">10. Statutory Rights (GDPR/CCPA)</a></li>
+          <li><a href="#p-sec-11">11. Amendments</a></li>
+          <li><a href="#p-sec-12">12. Contact Information</a></li>
+        </ul>
+      </aside>
+
+      <article class="doc-body">
+        <section id="p-sec-1">
+          <h2 class="section-header">1. Scope and Applications</h2>
+          <p>
+            This Privacy Policy sets forth the principles under which <strong>Krifoo</strong> ("we", "us", or "our") governs the collection, recording, storage, and processing of personal data. This document applies to all users interacting with our mobile applications and related web services:
+          </p>
+          <ul>
+            <li><strong>Krifoo Mobile</strong>: Consumer client application for iOS (Bundle ID: <code>com.krifoo.mobile</code>) and Android (Package Name: <code>com.krifoo.mobile</code>). Used by customers to view restaurant menus, execute table reservations, place takeaway and delivery orders, and monitor order progression.</li>
+            <li><strong>Krifoo Admin</strong>: Merchant client application for iOS (Bundle ID: <code>com.krifoo.admin</code>) and Android (Package Name: <code>com.krifoo.admin</code>). Used by licensed restaurant operators and kitchen personnel to accept orders, manage catalog availability, organize seating, and execute point-of-sale receipt printing.</li>
+            <li><strong>Web Applications & APIs</strong>: Hosted at <code>https://krifoo.com</code> and <code>https://krifoo.co.uk</code>.</li>
+          </ul>
+
+          <div class="doc-callout">
+            <div class="doc-callout-title">Notice on Data Monetization</div>
+            <p>
+              Krifoo does not sell, lease, commercialize, or rent consumer personal data or device geolocation coordinates to third-party data brokers, advertising networks, or marketing intermediaries.
+            </p>
+          </div>
+        </section>
+
+        <section id="p-sec-2">
+          <h2 class="section-header">2. Categories of Data Collected</h2>
+          <p>We process personal data provided directly by users and technical telemetry generated through system interaction:</p>
+
+          <h3 class="sub-header">2.1 Customer Profile & Transaction Data (Krifoo Mobile)</h3>
+          <ul>
+            <li><strong>Identification Records</strong>: Full legal name, verified mobile contact number, email address, and optional avatar photograph.</li>
+            <li><strong>Fulfillment Addresses</strong>: Delivery locations, street designations, postal codes, and specific courier access instructions.</li>
+            <li><strong>Transaction Histories</strong>: Item line-orders, dining reservation schedules, special dietary annotations, subtotal and tax amounts, and timestamps.</li>
+            <li><strong>Payment Information</strong>: Encrypted payment tokens. Payment card numbers, expiration dates, and CVVs are handled exclusively by Level 1 PCI-DSS certified payment processors. Krifoo does not retain unencrypted payment credentials.</li>
+            <li><strong>Communications & Feedback</strong>: Support inquiries, ratings, reviews, and damaged item reports submitted through support channels.</li>
+          </ul>
+
+          <h3 class="sub-header">2.2 Commercial Partner Data (Krifoo Admin)</h3>
+          <ul>
+            <li><strong>Commercial Entity Records</strong>: Registered restaurant business name, operating premises address, manager contact details, and corporate identifiers.</li>
+            <li><strong>Catalog & Operational Content</strong>: Menu specifications, pricing matrices, dish availability statuses, table capacities, and kitchen schedules.</li>
+            <li><strong>Hardware Identifiers</strong>: Bluetooth hardware addresses, local network IP addresses, and printer specifications (e.g., Epson TM-m30III, ESC/POS hardware) utilized for thermal ticket printing.</li>
+          </ul>
+
+          <h3 class="sub-header">2.3 Telemetry & Technical Metrics</h3>
+          <ul>
+            <li><strong>Device Diagnostics</strong>: Hardware manufacturer, device model, operating system build, network operator, and network IP addresses.</li>
+            <li><strong>Performance Data</strong>: Application crash stack traces, API response latencies, and system event logs.</li>
+          </ul>
+        </section>
+
+        <section id="p-sec-3">
+          <h2 class="section-header">3. Hardware & System Permissions</h2>
+          <p>
+            In compliance with Apple App Store Review Guideline 5.1.1 and Google Play Developer Policies, permissions are requested strictly on an as-needed basis:
+          </p>
+
+          <div class="table-container">
+            <table class="doc-table">
+              <thead>
+                <tr>
+                  <th>Permission Type</th>
+                  <th>Application Scope</th>
+                  <th>Technical Key</th>
+                  <th>Functional Justification</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Location (GPS / Network)</strong></td>
+                  <td><span class="scope-tag">Krifoo Mobile</span></td>
+                  <td><code>ACCESS_FINE_LOCATION</code><br><code>NSLocationWhenInUseUsageDescription</code></td>
+                  <td>Enables discovery of nearby restaurants, validates delivery radii, and assists in accurate address selection. Revocable in OS settings.</td>
+                </tr>
+                <tr>
+                  <td><strong>Optical Camera</strong></td>
+                  <td><span class="scope-tag">Krifoo Mobile</span></td>
+                  <td><code>CAMERA</code><br><code>NSCameraUsageDescription</code></td>
+                  <td>Enables scanning of physical QR codes affixed to dining tables to load in-restaurant digital menus.</td>
+                </tr>
+                <tr>
+                  <td><strong>Photo Library / Storage</strong></td>
+                  <td><span class="scope-tag">Both Applications</span></td>
+                  <td><code>NSPhotoLibraryUsageDescription</code><br><code>READ_MEDIA_IMAGES</code></td>
+                  <td>Facilitates profile avatar updates and permits attaching visual evidence when filing order damage claims.</td>
+                </tr>
+                <tr>
+                  <td><strong>Push Notifications</strong></td>
+                  <td><span class="scope-tag">Both Applications</span></td>
+                  <td><code>POST_NOTIFICATIONS</code></td>
+                  <td>Transmits critical order lifecycle events: order acceptance, preparation state, dispatch, and reservation status.</td>
+                </tr>
+                <tr>
+                  <td><strong>Bluetooth & Local Network</strong></td>
+                  <td><span class="scope-tag">Krifoo Admin</span></td>
+                  <td><code>BLUETOOTH_CONNECT</code><br><code>NSLocalNetworkUsageDescription</code></td>
+                  <td>Discovers and communicates with POS thermal ticket printers and kitchen hardware over Bluetooth or local Wi-Fi.</td>
+                </tr>
+                <tr>
+                  <td><strong>System Wake Lock</strong></td>
+                  <td><span class="scope-tag">Krifoo Admin</span></td>
+                  <td><code>WAKE_LOCK</code></td>
+                  <td>Prevents merchant operational terminals from sleeping during business shifts to avoid missed orders.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="p-sec-4">
+          <h2 class="section-header">4. Processing Purposes</h2>
+          <p>Personal data is processed under contractual necessity, statutory obligation, and legitimate commercial interests:</p>
+          <ol>
+            <li><strong>Order Fulfillment</strong>: Relaying order details to merchant kitchens, facilitating delivery routing, and confirming table reservations.</li>
+            <li><strong>Account Verification</strong>: Authenticating user sessions via One-Time Passcodes (OTP) and defending against automated credential abuse.</li>
+            <li><strong>Operational Communications</strong>: Issuing transactional receipts, order progression updates, and resolving customer service requests.</li>
+            <li><strong>Merchant Operations</strong>: Powering kitchen dispatch screens, automated thermal ticket printing, and sales accounting.</li>
+            <li><strong>Legal & Statutory Compliance</strong>: Adhering to applicable taxation, accounting standards, and food product traceability laws.</li>
+          </ol>
+        </section>
+
+        <section id="p-sec-5">
+          <h2 class="section-header">5. Third-Party Disclosures</h2>
+          <p>Data is transferred only to authorized processors bound by data protection obligations:</p>
+          <ul>
+            <li><strong>Partner Restaurants</strong>: Merchant kitchens receive only the item specifications, recipient first name, phone number, and physical delivery address necessary for fulfillment.</li>
+            <li><strong>Geographic Information Services</strong>: Google Maps Platform API is utilized to translate coordinates and calculate transit times under Google's Privacy Policy.</li>
+            <li><strong>Push Notification Gateways</strong>: Firebase Cloud Messaging (FCM) and Expo Push Service are utilized to deliver real-time operational notifications.</li>
+            <li><strong>Payment Gateways</strong>: Certified PCI-DSS Level 1 payment processors receive tokenized payment authorizations.</li>
+            <li><strong>Statutory Authorities</strong>: Disclosures made strictly when required by enforceable judicial orders or statutory mandates.</li>
+          </ul>
+        </section>
+
+        <section id="p-sec-6">
+          <h2 class="section-header">6. Data Retention Schedules</h2>
+          <ul>
+            <li><strong>Active Profile Data</strong>: Maintained for the duration of active account registration.</li>
+            <li><strong>Fiscal & Transaction Records</strong>: Preserved for up to six (6) years following transaction execution in compliance with statutory taxation and accounting laws.</li>
+            <li><strong>Transit Telemetry</strong>: GPS coordinates are processed transiently in memory and discarded upon order completion.</li>
+            <li><strong>Account Deletion Requests</strong>: Personal profile identifiers are permanently erased from production databases within thirty (30) days of verified request receipt.</li>
+          </ul>
+        </section>
+
+        <section id="p-sec-7">
+          <h2 class="section-header">7. Account & Data Erasure (Apple Guideline 5.1.1(v) Compliant)</h2>
+          <p>
+            Users hold the right to obtain the permanent erasure of their account records and personal data:
+          </p>
+          <div class="doc-callout">
+            <div class="doc-callout-title">Erasure Procedures</div>
+            <ol>
+              <li><strong>Direct In-App Erasure</strong>: Navigate to <em>Profile &rarr; Personal Info &rarr; Delete Account</em> within Krifoo Mobile.</li>
+              <li><strong>Web Submission</strong>: Utilize the <a href="#pane-delete" onclick="selectDocument('delete')">Account Deletion Tab</a> within this portal.</li>
+              <li><strong>Written Request</strong>: Issue an email to <a href="mailto:admin@krifoo.com?subject=Account%20Deletion%20Request">admin@krifoo.com</a> with the subject header <em>"Account Deletion Request"</em>.</li>
+            </ol>
+          </div>
+        </section>
+
+        <section id="p-sec-8">
+          <h2 class="section-header">8. Security Safeguards</h2>
+          <p>
+            We implement administrative, logical, and physical security measures. Network communications utilize TLS 1.2 / TLS 1.3 encryption. Production databases are encrypted at rest with AES-256. Database access is strictly confined to authorized systems engineers under least-privilege principles.
+          </p>
+        </section>
+
+        <section id="p-sec-9">
+          <h2 class="section-header">9. Protection of Minors</h2>
+          <p>
+            Our services are not directed to individuals under thirteen (13) years of age (or under sixteen (16) within the UK and European Economic Area). We do not knowingly solicit or maintain personal data from minors. In the event an unauthorized minor account is identified, it will be deleted immediately upon notification.
+          </p>
+        </section>
+
+        <section id="p-sec-10">
+          <h2 class="section-header">10. Statutory Rights (GDPR, UK GDPR, CCPA/CPRA)</h2>
+          <p>
+            Subject to jurisdiction, data subjects may exercise statutory rights of access, rectification, erasure, restriction of processing, and data portability without discriminatory treatment. Requests may be directed to our compliance desk at <a href="mailto:admin@krifoo.com">admin@krifoo.com</a>.
+          </p>
+        </section>
+
+        <section id="p-sec-11">
+          <h2 class="section-header">11. Amendments</h2>
+          <p>
+            This Privacy Policy may be updated to reflect procedural, regulatory, or technical changes. Material modifications will be accompanied by in-app notices or direct email communication prior to the effective date.
+          </p>
+        </section>
+
+        <section id="p-sec-12">
+          <h2 class="section-header">12. Compliance Contact</h2>
+          <div class="doc-callout">
+            <div class="doc-callout-title">Compliance Desk</div>
+            <p><strong>Entity:</strong> Krifoo Technologies</p>
+            <p><strong>Email:</strong> <a href="mailto:admin@krifoo.com">admin@krifoo.com</a></p>
+            <p><strong>Domains:</strong> <a href="https://krifoo.co.uk" target="_blank">https://krifoo.co.uk</a> | <a href="https://krifoo.com" target="_blank">https://krifoo.com</a></p>
+          </div>
+        </section>
+      </article>
+    </div>
+  </div>
+
+  <!-- ========================================================================= -->
+  <!-- DOCUMENT 2: TERMS AND CONDITIONS                                          -->
+  <!-- ========================================================================= -->
+  <div id="pane-terms" class="tab-pane">
+    <div class="layout-container">
+      <aside class="doc-sidebar">
+        <div class="sidebar-heading">Terms Contents</div>
+        <ul class="sidebar-nav">
+          <li><a href="#t-sec-1">1. Acceptance of Terms</a></li>
+          <li><a href="#t-sec-2">2. Eligibility & Accounts</a></li>
+          <li><a href="#t-sec-3">3. Marketplace Services</a></li>
+          <li><a href="#t-sec-4">4. Table Reservations</a></li>
+          <li><a href="#t-sec-5">5. Pricing & Payments</a></li>
+          <li><a href="#t-sec-6">6. Cancellations & Remedies</a></li>
+          <li><a href="#t-sec-7">7. Merchant Terms (Admin)</a></li>
+          <li><a href="#t-sec-8">8. Dietary & Allergen Disclaimer</a></li>
+          <li><a href="#t-sec-9">9. Proprietary Rights</a></li>
+          <li><a href="#t-sec-10">10. Prohibited Use</a></li>
+          <li><a href="#t-sec-11">11. Warranty Disclaimers</a></li>
+          <li><a href="#t-sec-12">12. Liability Limitations</a></li>
+          <li><a href="#t-sec-13">13. Termination</a></li>
+          <li><a href="#t-sec-14">14. Governing Law</a></li>
+          <li><a href="#t-sec-15">15. Legal Notice Desk</a></li>
+        </ul>
+      </aside>
+
+      <article class="doc-body">
+        <section id="t-sec-1">
+          <h2 class="section-header">1. Acceptance of Terms</h2>
+          <p>
+            These Terms and Conditions constitute a legally enforceable agreement between you and <strong>Krifoo Technologies</strong> ("Krifoo", "we", "us"). By accessing or utilizing the <strong>Krifoo Mobile Application</strong> (<code>com.krifoo.mobile</code>), the <strong>Krifoo Admin Application</strong> (<code>com.krifoo.admin</code>), or related platforms, you accept and agree to be bound by these terms.
+          </p>
+          <div class="doc-callout">
+            <div class="doc-callout-title">Notice of Mandatory Compliance</div>
+            <p>If you do not accept these terms in full, you must cease use of the applications immediately and uninstall them from your hardware.</p>
+          </div>
+        </section>
+
+        <section id="t-sec-2">
+          <h2 class="section-header">2. Eligibility and User Accounts</h2>
+          <p>
+            Users must be at least 18 years of age (or the age of legal majority in the applicable jurisdiction) to execute orders or register as a merchant partner. Registration requires true and accurate mobile contact information. Users remain liable for all transactions conducted under their session tokens.
+          </p>
+        </section>
+
+        <section id="t-sec-3">
+          <h2 class="section-header">3. Marketplace Ordering & Takeaway</h2>
+          <p>
+            Krifoo acts as an intermediary platform connecting consumers with independent dining establishments. Contracts for the purchase and delivery of meals are executed directly between the consumer and the fulfilling restaurant. Stated preparation and delivery timelines are non-binding estimates influenced by kitchen volume and road conditions.
+          </p>
+        </section>
+
+        <section id="t-sec-4">
+          <h2 class="section-header">4. Table Reservations</h2>
+          <p>
+            Dine-in reservations are confirmed only once accepted by the respective merchant through Krifoo Admin. In the event a dining party does not arrive within fifteen (15) minutes of the reserved time, the merchant reserves the right to reallocate the table.
+          </p>
+        </section>
+
+        <section id="t-sec-5">
+          <h2 class="section-header">5. Pricing, Charges & Payments</h2>
+          <p>
+            Product prices are established by partner merchants. Applicable sales taxes, delivery charges, and platform processing fees are presented in full prior to checkout authorization. Payment must be completed via approved digital payment instruments or Cash on Delivery where permitted.
+          </p>
+        </section>
+
+        <section id="t-sec-6">
+          <h2 class="section-header">6. Cancellations, Refunds & Claims</h2>
+          <h3 class="sub-header">6.1 Immediate Cancellation Window</h3>
+          <p>
+            Due to the rapid preparation of perishable foodstuffs, orders may be revoked through the application within sixty (60) seconds of initial submission. Once food preparation has begun, cancellation for change-of-mind is void.
+          </p>
+          <h3 class="sub-header">6.2 Defective or Missing Items</h3>
+          <p>
+            Notice of missing or physically damaged goods must be logged via Order History within two (2) hours of receipt, accompanied by photographic evidence. Confirmed claims will be resolved via item replacement, merchant credit, or monetary reimbursement within 3 to 7 banking days.
+          </p>
+        </section>
+
+        <section id="t-sec-7">
+          <h2 class="section-header">7. Merchant Obligations (Krifoo Admin)</h2>
+          <p>
+            Operators utilizing Krifoo Admin warrant strict compliance with municipal hygiene, food preparation, and occupational health regulations. Merchants are responsible for maintaining hardware connectivity for thermal ticket printers (Epson TM-m30III, ESC/POS hardware) and preserving customer contact confidentiality.
+          </p>
+        </section>
+
+        <section id="t-sec-8">
+          <h2 class="section-header">8. Dietary & Allergen Disclaimer</h2>
+          <div class="doc-callout">
+            <div class="doc-callout-title">Critical Food Safety Notice</div>
+            <p>
+              Krifoo does not operate food preparation kitchens. Descriptions, nutritional assertions, and allergen warnings (including nuts, gluten, dairy, shellfish, and religious dietary standards) are provided solely by individual restaurants. Diners with medical dietary allergies must contact the preparing kitchen directly prior to placing orders.
+            </p>
+          </div>
+        </section>
+
+        <section id="t-sec-9">
+          <h2 class="section-header">9. Proprietary Intellectual Property</h2>
+          <p>
+            All application source code, designs, typography, brand marks, and software compilation rights are the exclusive property of Krifoo Technologies. Users receive a revocable, non-exclusive license solely for authorized operational use.
+          </p>
+        </section>
+
+        <section id="t-sec-10">
+          <h2 class="section-header">10. Prohibited Conduct</h2>
+          <p>
+            Prohibited activities include: submitting fictitious orders, automated scraping of menu data, verbal or physical harassment of couriers or merchant personnel, fraudulent refund submissions, and software reverse engineering.
+          </p>
+        </section>
+
+        <section id="t-sec-11">
+          <h2 class="section-header">11. Disclaimer of Warranties</h2>
+          <p>
+            THE SERVICES ARE PROVIDED ON AN "AS IS" AND "AS AVAILABLE" BASIS WITHOUT WARRANTIES OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING FITNESS FOR A PARTICULAR PURPOSE, MERCHANTABILITY, OR UNINTERRUPTED EXECUTION.
+          </p>
+        </section>
+
+        <section id="t-sec-12">
+          <h2 class="section-header">12. Limitation of Liability</h2>
+          <p>
+            TO THE FULLEST EXTENT PERMISSIBLE UNDER APPLICABLE LAW, KRIFOO TECHNOLOGIES SHALL NOT BE HELD LIABLE FOR INDIRECT, INCIDENTAL, OR CONSEQUENTIAL LOSSES. AGGREGATE LIABILITY SHALL NOT EXCEED THE TRANSACTION VALUE OF THE DISPUTED ORDER OR $50.00 USD.
+          </p>
+        </section>
+
+        <section id="t-sec-13">
+          <h2 class="section-header">13. Termination</h2>
+          <p>
+            We reserve the right to suspend or terminate access without notice in the event of documented fraudulent behavior, abusive conduct, or breach of these Terms.
+          </p>
+        </section>
+
+        <section id="t-sec-14">
+          <h2 class="section-header">14. Governing Law & Dispute Resolution</h2>
+          <p>
+            These Terms are governed by the statutory laws of our corporate registration jurisdiction. Parties agree to pursue resolution via informal consultation prior to seeking judicial recourse.
+          </p>
+        </section>
+
+        <section id="t-sec-15">
+          <h2 class="section-header">15. Legal Notice Desk</h2>
+          <div class="doc-callout">
+            <div class="doc-callout-title">Formal Legal Contact</div>
+            <p><strong>Department:</strong> Legal & Governance</p>
+            <p><strong>Email:</strong> <a href="mailto:admin@krifoo.com">admin@krifoo.com</a></p>
+            <p><strong>Official Web:</strong> <a href="https://krifoo.co.uk" target="_blank">https://krifoo.co.uk</a> | <a href="https://krifoo.com" target="_blank">https://krifoo.com</a></p>
+          </div>
+        </section>
+      </article>
+    </div>
+  </div>
+
+  <!-- ========================================================================= -->
+  <!-- DOCUMENT 3: ACCOUNT DELETION                                              -->
+  <!-- ========================================================================= -->
+  <div id="pane-delete" class="tab-pane">
+    <div class="layout-container single-column">
+      <article class="doc-body">
+        <h2 class="section-header">Account Deletion & Data Erasure Procedure</h2>
+        <p>
+          In accordance with Apple App Store Review Guideline 5.1.1(v) and Google Play Data Safety policies, users may request the permanent erasure of their account credentials and associated personal data.
+        </p>
+
+        <div class="doc-callout">
+          <div class="doc-callout-title">Notice on Irreversibility</div>
+          <p>
+            Executing an account erasure request is permanent. Saved delivery addresses, account preferences, order histories, table reservation logs, and reward balances cannot be restored once purged.
+          </p>
+        </div>
+
+        <h3 class="sub-header">Method A: Direct In-App Erasure (Instant)</h3>
+        <p>Follow these steps on a registered mobile device:</p>
+        <ol>
+          <li>Open the <strong>Krifoo Mobile Client</strong>.</li>
+          <li>Navigate to the <strong>Profile</strong> tab on the primary navigation bar.</li>
+          <li>Select <strong>Personal Info</strong>.</li>
+          <li>Scroll to the base of the interface and tap <strong>Delete Account</strong>.</li>
+          <li>Confirm the prompt. Current authentication sessions will be terminated and database records queued for deletion.</li>
+        </ol>
+
+        <h3 class="sub-header">Method B: Web Erasure Request Form</h3>
+        <p>For users who no longer have the client installed:</p>
+
+        <div class="form-panel">
+          <form onsubmit="handleDocumentErasure(event)">
+            <div class="form-group">
+              <label class="form-label" for="del-name">Full Name</label>
+              <input type="text" id="del-name" class="form-input" placeholder="Legal Name" required>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="del-email">Registered Email Address</label>
+              <input type="email" id="del-email" class="form-input" placeholder="user@domain.com" required>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="del-phone">Registered Telephone Number</label>
+              <input type="text" id="del-phone" class="form-input" placeholder="+44 7000 000000 or +91 9000000000" required>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="del-notes">Reason for Erasure (Optional)</label>
+              <textarea id="del-notes" class="form-textarea" rows="3" placeholder="Optional context"></textarea>
+            </div>
+
+            <button type="submit" class="btn-submit">Submit Erasure Request</button>
+          </form>
+
+          <div id="erasure-ack" style="display: none; margin-top: 1.25rem; padding: 1rem; border: 1px solid var(--color-border); background: #FFFFFF; font-size: 0.875rem;">
+            <strong>Request Received.</strong> A confirmation request has been prepared for dispatch to our compliance desk. Account deletion will be completed within 30 days of ownership verification.
+          </div>
+        </div>
+
+        <h3 class="sub-header">Method C: Email Written Notice</h3>
+        <p>
+          Send an email from your registered account to <a href="mailto:admin@krifoo.com?subject=Account%20Deletion%20Request">admin@krifoo.com</a> with the subject header <code>"Account Deletion Request"</code>.
+        </p>
+
+        <h3 class="sub-header">Data Retention Schedule</h3>
+        <ul>
+          <li><strong>Permanently Erased</strong>: Account authentication profiles, saved addresses, notification device tokens, customer avatar images.</li>
+          <li><strong>Anonymized</strong>: Aggregated sales transaction statistics with all personal identifiers removed.</li>
+          <li><strong>Statutorily Retained</strong>: Accounting records and tax invoices retained for up to six (6) years under legal fiscal requirements.</li>
+        </ul>
+      </article>
+    </div>
+  </div>
+
+  <!-- ========================================================================= -->
+  <!-- DOCUMENT 4: APPLICATION ECOSYSTEM & SCOPE                                 -->
+  <!-- ========================================================================= -->
+  <div id="pane-overview" class="tab-pane">
+    <div class="layout-container single-column">
+      <article class="doc-body">
+        <h2 class="section-header">Application Scope & System Architecture</h2>
+        <p>
+          This legal documentation governs the two software clients comprising the Krifoo ecosystem:
+        </p>
+
+        <div class="doc-grid">
+          <div class="doc-grid-item">
+            <div class="doc-grid-title">Krifoo Mobile</div>
+            <div class="doc-grid-code">iOS: com.krifoo.mobile | Android: com.krifoo.mobile</div>
+            <p style="font-size: 0.9rem;">
+              Consumer client application providing menu browsing, table reservation management, takeaway ordering, and real-time delivery status updates.
+            </p>
+            <p style="font-size: 0.8rem; color: var(--color-text-subtle); margin-bottom: 0;">
+              <strong>Permissions:</strong> Fine/Coarse Location, Optical Camera, Media Library, Push Notifications.
+            </p>
+          </div>
+
+          <div class="doc-grid-item">
+            <div class="doc-grid-title">Krifoo Admin</div>
+            <div class="doc-grid-code">iOS: com.krifoo.admin | Android: com.krifoo.admin</div>
+            <p style="font-size: 0.9rem;">
+              Merchant terminal software for restaurant operators to manage kitchen queues, process incoming orders, confirm reservations, and trigger thermal POS ticket printing.
+            </p>
+            <p style="font-size: 0.8rem; color: var(--color-text-subtle); margin-bottom: 0;">
+              <strong>Permissions:</strong> Bluetooth Scan/Connect, Local Area Network, Wake Lock, Push Notifications.
+            </p>
+          </div>
+        </div>
+
+        <h3 class="sub-header">Notes for Application Review Teams</h3>
+        <p>
+          This documentation is prepared to satisfy the verification criteria of the <strong>Apple App Store Review Guidelines (Guideline 5.1.1)</strong> and the <strong>Google Play Data Safety Program</strong>.
+        </p>
+        <p>
+          For reviewer access or credential validation inquiries, contact the mobile release engineering team at <a href="mailto:admin@krifoo.com">admin@krifoo.com</a>.
+        </p>
+      </article>
+    </div>
+  </div>
+
+  <!-- Documentary Footer -->
+  <footer class="doc-footer">
+    <div class="footer-inner">
+      <div>&copy; 2026 Krifoo Technologies. All rights reserved. Public Legal Record.</div>
+      <div class="footer-links">
+        <a href="#privacy" onclick="selectDocument('privacy')">Privacy Policy</a>
+        <a href="#terms" onclick="selectDocument('terms')">Terms & Conditions</a>
+        <a href="#delete" onclick="selectDocument('delete')">Account Deletion</a>
+        <a href="#overview" onclick="selectDocument('overview')">App Scope</a>
+        <a href="mailto:admin@krifoo.com">Contact</a>
+      </div>
+    </div>
+  </footer>
+
+  <!-- Script for Tab Switching & Hash Navigation -->
+  <script>
+    const documentMetadata = {
+      privacy: {
+        title: "Privacy Policy",
+        summary: "Formal disclosure regarding the collection, processing, storage, and erasure of personal data across the Krifoo mobile and merchant applications."
+      },
+      terms: {
+        title: "Terms and Conditions",
+        summary: "Formal End User License Agreement (EULA), marketplace ordering stipulations, table reservation regulations, and merchant partner obligations."
+      },
+      delete: {
+        title: "Account Deletion & Data Erasure",
+        summary: "Self-service erasure portal and procedures compliant with Apple App Store Guideline 5.1.1(v) and Google Play Data Safety policies."
+      },
+      overview: {
+        title: "Application Scope & System Architecture",
+        summary: "Technical and functional overview of published client applications, identifier mappings, and hardware permission rationales."
+      }
+    };
+
+    function selectDocument(docId) {
+      if (docId === 'delete-account' || docId === 'delete') docId = 'delete';
+      if (!documentMetadata[docId]) docId = 'privacy';
+
+      document.querySelectorAll('.tab-pane').forEach(el => el.classList.remove('active'));
+      document.querySelectorAll('.nav-tab').forEach(el => el.classList.remove('active'));
+
+      const targetPane = document.getElementById('pane-' + docId);
+      const targetBtn = document.getElementById('btn-' + docId);
+
+      if (targetPane) targetPane.classList.add('active');
+      if (targetBtn) targetBtn.classList.add('active');
+
+      document.getElementById('doc-title').innerText = documentMetadata[docId].title;
+      document.getElementById('doc-summary').innerText = documentMetadata[docId].summary;
+
+      if (history.pushState) {
+        history.pushState(null, null, '#' + docId);
+      } else {
+        location.hash = '#' + docId;
+      }
+
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      const hash = window.location.hash.replace('#', '').toLowerCase();
+      if (hash) {
+        if (hash === 'terms' || hash === 'terms-and-conditions') {
+          selectDocument('terms');
+        } else if (hash === 'delete' || hash === 'delete-account') {
+          selectDocument('delete');
+        } else if (hash === 'overview' || hash === 'scope') {
+          selectDocument('overview');
+        } else {
+          selectDocument('privacy');
+        }
+      }
+    });
+
+    function handleDocumentErasure(e) {
+      e.preventDefault();
+      const name = document.getElementById('del-name').value;
+      const email = document.getElementById('del-email').value;
+      const phone = document.getElementById('del-phone').value;
+      const notes = document.getElementById('del-notes').value;
+
+      const subject = encodeURIComponent('Account Deletion Request - ' + name);
+      const body = encodeURIComponent(
+        'Request for Permanent Account and Data Deletion\n\n' +
+        'Name: ' + name + '\n' +
+        'Email: ' + email + '\n' +
+        'Phone: ' + phone + '\n' +
+        'Notes: ' + (notes || 'None') + '\n' +
+        'Date: ' + new Date().toISOString()
+      );
+
+      document.getElementById('erasure-ack').style.display = 'block';
+      window.location.href = 'mailto:admin@krifoo.com?subject=' + subject + '&body=' + body;
+    }
+  </script>
+</body>
+</html>

@@ -54,13 +54,34 @@ import {
   CreditCard,
   Banknote,
   Sparkles,
+  Plus,
+  Minus,
 } from 'lucide-react-native';
 import { printThermalReceipt, isAutoPrintEnabled, getLastPrintJobReport, getOrderScheduleInfo } from '../../services/thermal-print.service';
 import { getSanitizedOrderNotes } from '../../services/printer/receipt-document';
 import { getPosPrinterConfig } from '../../services/pos-config.service';
 import { getActiveReceiptTemplate } from '../../services/receipt-customization.service';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const TABLET_BREAKPOINT = 768;
+const BOARD_COLUMNS_STORAGE_KEY = '@krifoo_board_columns_count';
+
+export type BoardColumnsOption = 'auto' | 1 | 2 | 3 | 4 | 5 | 6;
+
+export interface BoardColumnPreset {
+  value: BoardColumnsOption;
+  title: string;
+}
+
+const BOARD_COLUMN_PRESETS: BoardColumnPreset[] = [
+  { value: 'auto', title: 'Auto (Responsive)' },
+  { value: 1, title: '1 Tab per Screen' },
+  { value: 2, title: '2 Tabs per Screen' },
+  { value: 3, title: '3 Tabs per Screen' },
+  { value: 4, title: '4 Tabs per Screen' },
+  { value: 5, title: '5 Tabs per Screen' },
+  { value: 6, title: '6 Tabs (Fit All)' },
+];
 
 const STATUS_TABS = [
   { id: 'all', label: 'All Orders', subtitle: 'All Statuses', statuses: [] as OrderStatus[], accentColor: '#11181C', Icon: List },
@@ -481,11 +502,20 @@ interface OrderCardProps {
   onUpdateStatus: (orderId: string, newStatus: string) => void;
   onPrint: (o: Order) => void;
   paperRollSize?: string;
+  compact?: boolean;
 }
 
-const OrderCardItem: React.FC<OrderCardProps> = ({ order, onPress, onAssignDelivery, onUpdateStatus, onPrint, paperRollSize = '58' }) => {
+const OrderCardItem: React.FC<OrderCardProps> = ({
+  order,
+  onPress,
+  onAssignDelivery,
+  onUpdateStatus,
+  onPrint,
+  paperRollSize = '58',
+  compact = false,
+}) => {
   const { width: cardScreenWidth } = useWindowDimensions();
-  const isTablet = cardScreenWidth >= TABLET_BREAKPOINT;
+  const isTablet = cardScreenWidth >= TABLET_BREAKPOINT && !compact;
   const [expanded, setExpanded] = useState(false);
   const customerName = getCustomerName(order);
   const customerPhone = getCustomerPhone(order);
@@ -784,7 +814,15 @@ const OrderCardItem: React.FC<OrderCardProps> = ({ order, onPress, onAssignDeliv
   const statusColor = getOrderStatusColor(order.status);
 
   return (
-    <TouchableOpacity activeOpacity={0.88} onPress={() => onPress(order)} style={[styles.kanbanCard, isTablet && styles.kanbanCardTablet]}>
+    <TouchableOpacity
+      activeOpacity={0.88}
+      onPress={() => onPress(order)}
+      style={[
+        styles.kanbanCard,
+        isTablet && styles.kanbanCardTablet,
+        compact && styles.kanbanCardCompact,
+      ]}
+    >
       {/* Top Status Accent Strip */}
       <View
         style={[
@@ -1035,19 +1073,84 @@ const OrderCardItem: React.FC<OrderCardProps> = ({ order, onPress, onAssignDeliv
 export default function OrdersScreen() {
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const isTablet = windowWidth >= TABLET_BREAKPOINT;
+  const isMobile = windowWidth < TABLET_BREAKPOINT;
 
-  // Tablet & responsive column layout:
-  // On tablet screens (>= 768px in portrait or landscape):
-  // Each order column/card occupies approximately 50% of the available screen width (2 columns per view row),
-  // accounting for horizontal padding on both sides (16 * 2 = 32) and column gap (16) = 48px total.
-  // On phones (< 768px): 75% of screen width to show single focused column with adjacent peek.
-  const boardHorizontalPadding = isTablet ? 16 : 12;
-  const boardColumnGap = isTablet ? 16 : 12;
-  const columnWidth = isTablet
-    ? Math.floor((windowWidth - (boardHorizontalPadding * 2 + boardColumnGap)) / 2)
-    : Math.round(windowWidth * 0.75);
+  // Board view layout customization:
+  // Users can customize how many status tabs / columns fit per screen (e.g. 1, 2, 3, 4, 5, 6, or 'auto').
+  const [boardColumnsSetting, setBoardColumnsSetting] = useState<BoardColumnsOption>('auto');
+  const [boardColumnsModalOpen, setBoardColumnsModalOpen] = useState(false);
+
+  // Auto-calculated columns based on screen width
+  const autoColumns = useMemo(() => {
+    if (windowWidth >= 1500) return 4;
+    if (windowWidth >= 1100) return 3;
+    if (windowWidth >= 768) return 2;
+    return 1;
+  }, [windowWidth]);
+
+  const effectiveColumns = useMemo(() => {
+    if (boardColumnsSetting === 'auto') return autoColumns;
+    return boardColumnsSetting;
+  }, [boardColumnsSetting, autoColumns]);
+
+  const boardHorizontalPadding = isTablet ? 16 : 10;
+  const boardColumnGap = effectiveColumns >= 4 ? 8 : (isTablet ? 12 : 10);
+
+  const columnWidth = useMemo(() => {
+    if (effectiveColumns === 1) {
+      if (boardColumnsSetting === 1) {
+        return windowWidth - (boardHorizontalPadding * 2);
+      }
+      return isTablet
+        ? windowWidth - (boardHorizontalPadding * 2)
+        : Math.round(windowWidth * 0.82);
+    }
+    const totalPadding = boardHorizontalPadding * 2;
+    const totalGaps = (effectiveColumns - 1) * boardColumnGap;
+    const rawWidth = Math.floor((windowWidth - totalPadding - totalGaps) / effectiveColumns);
+    return Math.max(isTablet ? 200 : 160, rawWidth);
+  }, [effectiveColumns, boardColumnsSetting, windowWidth, boardHorizontalPadding, boardColumnGap, isTablet]);
+
+  const isCompact = columnWidth < 260 || effectiveColumns >= 4;
   const snapInterval = columnWidth + boardColumnGap;
-  const columnMaxHeight = Math.max(420, windowHeight - (isTablet ? 190 : 210));
+  const columnMaxHeight = Math.max(450, windowHeight - (isTablet ? 210 : 230));
+
+  // Load saved Board view columns setting from AsyncStorage
+  useEffect(() => {
+    const loadSavedBoardColumns = async () => {
+      try {
+        const saved = await AsyncStorage.getItem(BOARD_COLUMNS_STORAGE_KEY);
+        if (saved) {
+          if (saved === 'auto') {
+            setBoardColumnsSetting('auto');
+          } else {
+            const num = parseInt(saved, 10);
+            if (num >= 1 && num <= 6) {
+              setBoardColumnsSetting(num as 1 | 2 | 3 | 4 | 5 | 6);
+            }
+          }
+        }
+      } catch (e) {
+        // ignore error
+      }
+    };
+    loadSavedBoardColumns();
+  }, []);
+
+  const handleSetBoardColumns = useCallback(async (option: BoardColumnsOption) => {
+    setBoardColumnsSetting(option);
+    try {
+      await AsyncStorage.setItem(BOARD_COLUMNS_STORAGE_KEY, String(option));
+    } catch (e) {
+      // ignore error
+    }
+  }, []);
+
+  const handleStepColumns = useCallback((delta: -1 | 1) => {
+    const currentNum = boardColumnsSetting === 'auto' ? autoColumns : boardColumnsSetting;
+    const nextNum = Math.max(1, Math.min(6, currentNum + delta));
+    handleSetBoardColumns(nextNum as 1 | 2 | 3 | 4 | 5 | 6);
+  }, [boardColumnsSetting, autoColumns, handleSetBoardColumns]);
 
   const { showToast } = useToast();
   const [orders, setOrders] = useState<Order[]>([]);
@@ -1535,42 +1638,58 @@ export default function OrdersScreen() {
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       {/* Page Header */}
-      <View style={styles.pageHeader}>
-        <View>
+      <View style={[styles.pageHeader, isMobile && styles.pageHeaderMobile]}>
+        <View style={{ flexShrink: 1 }}>
           <View style={styles.pageTitleRow}>
-            <Text style={styles.pageTitle}>Orders Board</Text>
+            <Text style={[styles.pageTitle, isMobile && styles.pageTitleMobile]}>Orders Board</Text>
             <View style={styles.liveBadge}>
               <View style={styles.liveDot} />
               <Text style={styles.liveText}>Live</Text>
             </View>
           </View>
-          <Text style={styles.pageSubtitle}>
-            {activeOrderCount} active order{activeOrderCount !== 1 ? 's' : ''} requiring attention
+          <Text style={[styles.pageSubtitle, isMobile && styles.pageSubtitleMobile]} numberOfLines={1}>
+            {isMobile
+              ? `${activeOrderCount} active order${activeOrderCount !== 1 ? 's' : ''}`
+              : `${activeOrderCount} active order${activeOrderCount !== 1 ? 's' : ''} requiring attention`}
           </Text>
         </View>
 
-        <View style={styles.headerRightControls}>
-          <View style={styles.viewToggleContainer}>
+        <View style={[styles.headerRightControls, isMobile && styles.headerRightControlsMobile]}>
+          {isTablet && viewMode === 'board' && (
             <TouchableOpacity
-              style={[styles.toggleBtn, viewMode === 'board' && styles.toggleBtnActive]}
+              style={styles.headerBoardLayoutBtn}
+              onPress={() => setBoardColumnsModalOpen(true)}
+              activeOpacity={0.7}
+            >
+              <LayoutGrid size={13} color="#FF5C39" />
+              <Text style={styles.headerBoardLayoutBtnText}>
+                {boardColumnsSetting === 'auto' ? `Auto (${autoColumns})` : `${boardColumnsSetting} Tabs`}
+              </Text>
+              <ChevronDown size={11} color="#FF5C39" />
+            </TouchableOpacity>
+          )}
+
+          <View style={[styles.viewToggleContainer, isMobile && styles.viewToggleContainerMobile]}>
+            <TouchableOpacity
+              style={[styles.toggleBtn, isMobile && styles.toggleBtnMobile, viewMode === 'board' && styles.toggleBtnActive]}
               onPress={() => setViewMode('board')}
               activeOpacity={0.7}
             >
-              <LayoutGrid size={13} color={viewMode === 'board' ? '#FFFFFF' : '#687076'} />
-              <Text style={[styles.toggleBtnText, viewMode === 'board' && styles.toggleBtnTextActive]}>Board</Text>
+              <LayoutGrid size={isMobile ? 12 : 13} color={viewMode === 'board' ? '#FFFFFF' : '#687076'} />
+              <Text style={[styles.toggleBtnText, isMobile && styles.toggleBtnTextMobile, viewMode === 'board' && styles.toggleBtnTextActive]}>Board</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.toggleBtn, viewMode === 'tabs' && styles.toggleBtnActive]}
+              style={[styles.toggleBtn, isMobile && styles.toggleBtnMobile, viewMode === 'tabs' && styles.toggleBtnActive]}
               onPress={() => setViewMode('tabs')}
               activeOpacity={0.7}
             >
-              <List size={13} color={viewMode === 'tabs' ? '#FFFFFF' : '#687076'} />
-              <Text style={[styles.toggleBtnText, viewMode === 'tabs' && styles.toggleBtnTextActive]}>Tabs</Text>
+              <List size={isMobile ? 12 : 13} color={viewMode === 'tabs' ? '#FFFFFF' : '#687076'} />
+              <Text style={[styles.toggleBtnText, isMobile && styles.toggleBtnTextMobile, viewMode === 'tabs' && styles.toggleBtnTextActive]}>Tabs</Text>
             </TouchableOpacity>
           </View>
 
-          <TouchableOpacity style={styles.refreshBtn} onPress={onRefresh}>
-            <RefreshCw size={16} color={Colors.textSubtle} />
+          <TouchableOpacity style={[styles.refreshBtn, isMobile && styles.refreshBtnMobile]} onPress={onRefresh}>
+            <RefreshCw size={isMobile ? 14 : 16} color={Colors.textSubtle} />
           </TouchableOpacity>
         </View>
       </View>
@@ -1583,7 +1702,7 @@ export default function OrdersScreen() {
             <Search size={14} color={Colors.textSubtle} />
             <TextInput
               style={styles.searchInput}
-              placeholder="Search #ORD, customer, item..."
+              placeholder={isMobile ? "Search orders..." : "Search #ORD, customer, item..."}
               placeholderTextColor={Colors.textSubtle}
               value={searchQuery}
               onChangeText={setSearchQuery}
@@ -2194,6 +2313,136 @@ export default function OrdersScreen() {
         </TouchableOpacity>
       </Modal>
 
+      {/* Board Columns / Tabs Per Screen Customization Modal */}
+      <Modal
+        visible={boardColumnsModalOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setBoardColumnsModalOpen(false)}
+      >
+        <TouchableOpacity
+          style={styles.dropdownOverlay}
+          activeOpacity={1}
+          onPress={() => setBoardColumnsModalOpen(false)}
+        >
+          <View
+            style={[styles.boardModalContainer, isTablet && styles.boardModalContainerTablet]}
+            onStartShouldSetResponder={() => true}
+          >
+            {/* Header */}
+            <View style={styles.boardModalHeader}>
+              <Text style={styles.boardModalTitle}>Customize Board Tabs</Text>
+              <TouchableOpacity
+                onPress={() => setBoardColumnsModalOpen(false)}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                style={styles.boardModalCloseBtn}
+              >
+                <X size={16} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Current Screen Metrics Box */}
+            <View style={styles.boardMetricsBox}>
+              <View style={styles.boardMetricItem}>
+                <Text style={styles.boardMetricLabel}>Screen Width</Text>
+                <Text style={styles.boardMetricValue}>{Math.round(windowWidth)}px</Text>
+              </View>
+              <View style={styles.boardMetricDivider} />
+              <View style={styles.boardMetricItem}>
+                <Text style={styles.boardMetricLabel}>Tabs on Screen</Text>
+                <Text style={[styles.boardMetricValue, { color: '#FF5C39' }]}>
+                  {boardColumnsSetting === 'auto' ? `${autoColumns} (Auto)` : `${boardColumnsSetting} Tabs`}
+                </Text>
+              </View>
+              <View style={styles.boardMetricDivider} />
+              <View style={styles.boardMetricItem}>
+                <Text style={styles.boardMetricLabel}>Each Tab Width</Text>
+                <Text style={styles.boardMetricValue}>{Math.round(columnWidth)}px</Text>
+              </View>
+            </View>
+
+            {/* Stepper Row */}
+            <View style={styles.boardStepperRow}>
+              <Text style={styles.boardStepperLabel}>Quick Adjust:</Text>
+              <View style={styles.boardStepperGroup}>
+                <TouchableOpacity
+                  style={[styles.stepperBtn, (boardColumnsSetting === 1 || (boardColumnsSetting === 'auto' && autoColumns <= 1)) && styles.stepperBtnDisabled]}
+                  onPress={() => handleStepColumns(-1)}
+                  disabled={boardColumnsSetting === 1}
+                  activeOpacity={0.7}
+                >
+                  <Minus size={16} color={boardColumnsSetting === 1 ? '#CBD5E1' : '#11181C'} />
+                </TouchableOpacity>
+
+                <View style={styles.stepperValueBox}>
+                  <Text style={styles.stepperValueText}>
+                    {boardColumnsSetting === 'auto' ? `Auto (${autoColumns})` : `${boardColumnsSetting} Tabs`}
+                  </Text>
+                </View>
+
+                <TouchableOpacity
+                  style={[styles.stepperBtn, (boardColumnsSetting === 6 || (boardColumnsSetting === 'auto' && autoColumns >= 6)) && styles.stepperBtnDisabled]}
+                  onPress={() => handleStepColumns(1)}
+                  disabled={boardColumnsSetting === 6}
+                  activeOpacity={0.7}
+                >
+                  <Plus size={16} color={boardColumnsSetting === 6 ? '#CBD5E1' : '#11181C'} />
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* Presets List */}
+            <ScrollView style={styles.boardPresetsScroll} showsVerticalScrollIndicator={false}>
+              {BOARD_COLUMN_PRESETS.map((preset) => {
+                const isSelected = boardColumnsSetting === preset.value;
+                return (
+                  <TouchableOpacity
+                    key={String(preset.value)}
+                    style={[styles.boardPresetItem, isSelected && styles.boardPresetItemActive]}
+                    onPress={() => handleSetBoardColumns(preset.value)}
+                    activeOpacity={0.7}
+                  >
+                    <Text
+                      style={[
+                        styles.boardPresetTitle,
+                        isSelected && styles.boardPresetTitleActive,
+                      ]}
+                    >
+                      {preset.title}
+                    </Text>
+                    {isSelected && (
+                      <View style={styles.boardPresetCheck}>
+                        <Check size={12} color="#FFFFFF" />
+                      </View>
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+
+            {/* Footer */}
+            <View style={styles.boardModalFooter}>
+              <TouchableOpacity
+                style={styles.boardModalResetBtn}
+                onPress={() => handleSetBoardColumns('auto')}
+                activeOpacity={0.8}
+              >
+                <RotateCcw size={13} color="#64748B" />
+                <Text style={styles.boardModalResetBtnText}>Reset to Auto</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.boardModalApplyBtn}
+                onPress={() => setBoardColumnsModalOpen(false)}
+                activeOpacity={0.8}
+              >
+                <Check size={14} color="#FFFFFF" />
+                <Text style={styles.boardModalApplyBtnText}>Done</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
       {/* Status Tabs Navigation Bar (Shown in Tabs mode) */}
       {viewMode === 'tabs' && (
         <View style={styles.statusTabsBarContainer}>
@@ -2220,6 +2469,57 @@ export default function OrdersScreen() {
               );
             })}
           </ScrollView>
+        </View>
+      )}
+
+      {/* Board View Column / Tab Size Customizer Toolbar (Shown in Board mode) */}
+      {viewMode === 'board' && (
+        <View style={[styles.boardToolbarContainer, isTablet ? styles.boardToolbarContainerTablet : styles.boardToolbarContainerMobile]}>
+          <View style={[styles.boardToolbarLeft, isMobile && { flex: 1, marginRight: 8 }]}>
+            {isTablet && (
+              <View style={styles.boardToolbarLabelRow}>
+                <LayoutGrid size={13} color="#687076" />
+                <Text style={styles.boardToolbarLabel}>Tabs / screen:</Text>
+              </View>
+            )}
+
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={[styles.boardColPillsScroll, isMobile && { paddingRight: 4 }]}>
+              {(['auto', 1, 2, 3, 4, 5, 6] as const).map((count) => {
+                const isSelected = boardColumnsSetting === count;
+                const labelText = count === 'auto'
+                  ? (isTablet ? `Auto (${autoColumns})` : 'Auto')
+                  : (isMobile ? `${count} Tab${count > 1 ? 's' : ''}` : `${count}`);
+                return (
+                  <TouchableOpacity
+                    key={String(count)}
+                    style={[styles.colPill, isMobile && styles.colPillMobile, isSelected && styles.colPillActive]}
+                    onPress={() => handleSetBoardColumns(count)}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.colPillText, isMobile && styles.colPillTextMobile, isSelected && styles.colPillTextActive]}>
+                      {labelText}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+
+          <TouchableOpacity
+            style={[styles.boardSettingsTrigger, isMobile && styles.boardSettingsTriggerMobile]}
+            onPress={() => setBoardColumnsModalOpen(true)}
+            activeOpacity={0.7}
+          >
+            <SlidersHorizontal size={isMobile ? 11 : 12} color="#FF5C39" />
+            <Text style={[styles.boardSettingsTriggerText, isMobile && { fontSize: 10 }]}>
+              {isTablet ? 'Customize' : 'Adjust'}
+            </Text>
+            <View style={styles.boardSettingsTriggerBadge}>
+              <Text style={styles.boardSettingsTriggerBadgeText}>
+                {Math.round(columnWidth)}px
+              </Text>
+            </View>
+          </TouchableOpacity>
         </View>
       )}
 
@@ -2271,7 +2571,12 @@ export default function OrdersScreen() {
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
-          contentContainerStyle={[styles.kanbanBoard, isTablet && styles.kanbanBoardTablet]}
+          style={styles.kanbanScrollView}
+          contentContainerStyle={[
+            styles.kanbanBoard,
+            isTablet && styles.kanbanBoardTablet,
+            effectiveColumns >= 4 && { gap: 8 },
+          ]}
           decelerationRate="fast"
           snapToInterval={snapInterval}
           snapToAlignment="start"
@@ -2289,37 +2594,80 @@ export default function OrdersScreen() {
                 style={[
                   styles.kanbanColumn,
                   isTablet && styles.kanbanColumnTablet,
-                  { width: columnWidth, maxHeight: columnMaxHeight },
+                  {
+                    width: columnWidth,
+                    minWidth: columnWidth,
+                    maxWidth: columnWidth,
+                    flexBasis: columnWidth,
+                    flexShrink: 0,
+                    flexGrow: 0,
+                    height: '100%',
+                    maxHeight: columnMaxHeight,
+                  },
                 ]}
               >
-                <View style={[styles.kanbanColumnHeader, isTablet && styles.kanbanColumnHeaderTablet, { borderLeftColor: accentColor }]}>
-                  <View style={styles.kanbanColumnHeaderLeft}>
-                    <Icon size={isTablet ? 18 : 16} color={accentColor} />
-                    <View style={{ marginLeft: 8 }}>
-                      <Text style={[styles.kanbanColumnTitle, isTablet && styles.kanbanColumnTitleTablet]}>{label}</Text>
-                      <Text style={[styles.kanbanColumnSubtitle, isTablet && styles.kanbanColumnSubtitleTablet]}>{subtitle}</Text>
-                    </View>
-                  </View>
-                  <View style={[styles.kanbanBadge, isTablet && styles.kanbanBadgeTablet, { backgroundColor: accentColor }]}>
-                    <Text style={[styles.kanbanBadgeText, isTablet && styles.kanbanBadgeTextTablet]}>{ordersInCol.length}</Text>
+                <View
+                  style={[
+                    styles.kanbanColumnHeader,
+                    isTablet && styles.kanbanColumnHeaderTablet,
+                    isCompact && styles.kanbanColumnHeaderCompact,
+                    { borderLeftColor: accentColor },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.kanbanColumnTitle,
+                      isTablet && styles.kanbanColumnTitleTablet,
+                      isCompact && styles.kanbanColumnTitleCompact,
+                      { flex: 1 },
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {label}
+                  </Text>
+                  <View
+                    style={[
+                      styles.kanbanBadge,
+                      isTablet && styles.kanbanBadgeTablet,
+                      isCompact && styles.kanbanBadgeCompact,
+                      { backgroundColor: accentColor },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.kanbanBadgeText,
+                        isTablet && styles.kanbanBadgeTextTablet,
+                        isCompact && styles.kanbanBadgeTextCompact,
+                      ]}
+                    >
+                      {ordersInCol.length}
+                    </Text>
                   </View>
                 </View>
                 {loading ? (
-                  <View style={{ padding: 10, gap: 10 }}>
+                  <View style={{ padding: 10, gap: 10, flex: 1 }}>
                     <OrderCardSkeletonItem />
                     <OrderCardSkeletonItem />
                   </View>
                 ) : ordersInCol.length === 0 ? (
-                  <View style={styles.columnCenter}>
-                    <Icon size={isTablet ? 42 : 36} color="#EEEEEE" />
-                    <Text style={[styles.emptyColumnText, isTablet && { fontSize: 13 }]}>No orders in {label.toLowerCase()}</Text>
+                  <View style={[styles.columnCenter, { flex: 1 }]}>
+                    <Icon size={isCompact ? 32 : (isTablet ? 42 : 36)} color="#EEEEEE" />
+                    <Text style={[styles.emptyColumnText, isTablet && { fontSize: 13 }, isCompact && { fontSize: 11 }]}>
+                      No orders in {label.toLowerCase()}
+                    </Text>
                   </View>
                 ) : (
                   <FlatList
                     data={ordersInCol}
                     keyExtractor={(item) => item._id}
                     showsVerticalScrollIndicator={false}
-                    contentContainerStyle={[styles.kanbanCardList, isTablet && styles.kanbanCardListTablet]}
+                    style={{ flex: 1 }}
+                    contentContainerStyle={[
+                      styles.kanbanCardList,
+                      isTablet && styles.kanbanCardListTablet,
+                      isCompact && { padding: 8, gap: 8 },
+                      { paddingBottom: isTablet ? 35 : 55 },
+                    ]}
                     refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={accentColor} colors={[accentColor]} />}
                     renderItem={({ item }) => (
                       <OrderCardItem
@@ -2329,6 +2677,7 @@ export default function OrdersScreen() {
                         onUpdateStatus={handleUpdateStatus}
                         onPrint={handlePrintOrder}
                         paperRollSize={paperRollSize}
+                        compact={isCompact}
                       />
                     )}
                   />
@@ -3087,23 +3436,34 @@ const styles = StyleSheet.create({
   emptyTitle: { fontSize: 16, fontWeight: '700', color: '#11181C', marginTop: 8 },
   emptySubtitle: { fontSize: 12, color: '#9BA1A6', textAlign: 'center' },
 
+  kanbanScrollView: {
+    flex: 1,
+    width: '100%',
+  },
   kanbanBoard: {
-    paddingHorizontal: 12, paddingTop: 12, paddingBottom: 100,
-    gap: 12, flexDirection: 'row', alignItems: 'flex-start',
+    paddingHorizontal: 12,
+    paddingTop: 10,
+    paddingBottom: 95,
+    gap: 12,
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    flexGrow: 1,
   },
   kanbanColumn: {
-    backgroundColor: '#FFFFFF', borderRadius: 14, borderWidth: 1,
-    borderColor: '#EEEEEE', overflow: 'hidden', flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#EEEEEE',
+    overflow: 'hidden',
+    height: '100%',
     maxHeight: 800,
   },
   kanbanColumnHeader: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 14, paddingVertical: 12, borderLeftWidth: 4,
+    paddingHorizontal: 14, paddingVertical: 10, borderLeftWidth: 4,
     backgroundColor: '#FAFAFA', borderBottomWidth: 1, borderBottomColor: '#F0F0F0',
   },
-  kanbanColumnHeaderLeft: { flexDirection: 'row', alignItems: 'center' },
   kanbanColumnTitle: { fontSize: 13, fontWeight: '700', color: '#11181C' },
-  kanbanColumnSubtitle: { fontSize: 10, color: '#9BA1A6', marginTop: 1 },
   kanbanBadge: { borderRadius: 20, minWidth: 26, height: 26, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 },
   kanbanBadgeText: { color: '#FFFFFF', fontSize: 12, fontWeight: '800' },
   columnCenter: { alignItems: 'center', justifyContent: 'center', paddingVertical: 48, gap: 8 },
@@ -3255,7 +3615,7 @@ const styles = StyleSheet.create({
   noteRow: { flexDirection: 'row', marginTop: 4, paddingTop: 4, borderTopWidth: 1, borderTopColor: '#F5F5F5' },
   noteLabel: { fontSize: 11, fontWeight: '700', color: '#9BA1A6' },
   noteText: { fontSize: 11, color: '#687076', flex: 1 },
-  actionButtonsRow: { flexDirection: 'row', gap: 8, marginTop: 10 },
+  actionButtonsRow: { flexDirection: 'row', gap: 8, marginTop: 10, flexWrap: 'wrap' },
   acceptBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, backgroundColor: '#10B981', borderRadius: 8, paddingVertical: 8 },
   acceptBtnText: { color: '#FFFFFF', fontSize: 12, fontWeight: '700' },
   rejectBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, backgroundColor: '#FEF2F2', borderWidth: 1, borderColor: '#EF4444', borderRadius: 8, paddingVertical: 8 },
@@ -3342,9 +3702,11 @@ const styles = StyleSheet.create({
   /* Tablet Responsive Layout Enhancements (width >= 768px) */
   kanbanBoardTablet: {
     paddingHorizontal: 16,
-    paddingTop: 16,
+    paddingTop: 12,
     paddingBottom: 110,
-    gap: 16,
+    gap: 14,
+    alignItems: 'stretch',
+    flexGrow: 1,
   },
   kanbanColumnTablet: {
     borderRadius: 16,
@@ -3570,5 +3932,399 @@ const styles = StyleSheet.create({
   sourceFilterChipTextActive: {
     color: '#FFFFFF',
     fontWeight: '700',
+  },
+
+  /* Board View Layout & Columns Customizer Styles */
+  headerBoardLayoutBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: '#FFF4F2',
+    borderWidth: 1,
+    borderColor: '#FFE4DE',
+  },
+  headerBoardLayoutBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FF5C39',
+  },
+  boardToolbarContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F0F0',
+    gap: 8,
+  },
+  boardToolbarContainerTablet: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  boardToolbarLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    gap: 8,
+  },
+  boardToolbarLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  boardToolbarLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748B',
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+  boardColPillsScroll: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingRight: 6,
+  },
+  colPill: {
+    paddingHorizontal: 9,
+    paddingVertical: 4.5,
+    borderRadius: 7,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  colPillActive: {
+    backgroundColor: '#FF5C39',
+    borderColor: '#FF5C39',
+  },
+  colPillText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  colPillTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+  },
+  boardSettingsTrigger: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 9,
+    paddingVertical: 4.5,
+    borderRadius: 7,
+    backgroundColor: '#FFF4F2',
+    borderWidth: 1,
+    borderColor: '#FED7AA',
+  },
+  boardSettingsTriggerText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#FF5C39',
+  },
+  boardSettingsTriggerBadge: {
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 5,
+    paddingVertical: 1.5,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: '#FED7AA',
+  },
+  boardSettingsTriggerBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#EA580C',
+  },
+  boardModalContainer: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    width: '92%',
+    maxWidth: 520,
+    maxHeight: '88%',
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.15,
+    shadowRadius: 16,
+    elevation: 12,
+  },
+  boardModalContainerTablet: {
+    width: 520,
+  },
+  boardModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 18,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  boardModalTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#11181C',
+    letterSpacing: -0.2,
+  },
+  boardModalCloseBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  boardMetricsBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-around',
+    backgroundColor: '#F8FAFC',
+    marginHorizontal: 20,
+    marginTop: 14,
+    paddingVertical: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  boardMetricItem: {
+    alignItems: 'center',
+  },
+  boardMetricLabel: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#64748B',
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+  boardMetricValue: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#11181C',
+    marginTop: 2,
+  },
+  boardMetricDivider: {
+    width: 1,
+    height: 28,
+    backgroundColor: '#CBD5E1',
+  },
+  boardStepperRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginHorizontal: 20,
+    marginTop: 14,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  boardStepperLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#11181C',
+  },
+  boardStepperGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  stepperBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+  },
+  stepperBtnDisabled: {
+    opacity: 0.4,
+  },
+  stepperValueBox: {
+    minWidth: 95,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#FF5C39',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+  },
+  stepperValueText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#FF5C39',
+  },
+  boardPresetsScroll: {
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    maxHeight: 280,
+  },
+  boardPresetItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    marginBottom: 8,
+    backgroundColor: '#FAFAFA',
+  },
+  boardPresetItemActive: {
+    borderColor: '#FF5C39',
+    backgroundColor: '#FFF4F2',
+  },
+  boardPresetTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#11181C',
+  },
+  boardPresetTitleActive: {
+    color: '#FF5C39',
+    fontWeight: '800',
+  },
+  boardPresetCheck: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: '#FF5C39',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  boardModalFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+    backgroundColor: '#FFFFFF',
+  },
+  boardModalResetBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F8FAFC',
+  },
+  boardModalResetBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  boardModalApplyBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 12,
+    borderRadius: 10,
+    backgroundColor: '#FF5C39',
+  },
+  boardModalApplyBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+
+  /* Compact Column & Card Styles (for 4+ tabs per screen) */
+  kanbanColumnHeaderCompact: {
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+  },
+  kanbanColumnTitleCompact: {
+    fontSize: 12,
+  },
+  kanbanColumnSubtitleCompact: {
+    fontSize: 9,
+  },
+  kanbanBadgeCompact: {
+    minWidth: 22,
+    height: 22,
+    paddingHorizontal: 4,
+  },
+  kanbanBadgeTextCompact: {
+    fontSize: 11,
+  },
+  actionButtonsRowCompact: {
+    gap: 6,
+    marginTop: 8,
+    flexWrap: 'wrap',
+  },
+  kanbanCardCompact: {
+    padding: 10,
+    paddingTop: 13,
+    borderRadius: 10,
+  },
+
+  /* Mobile Responsive Enhancements (< 768px) */
+  pageHeaderMobile: {
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    paddingBottom: 8,
+    gap: 8,
+  },
+  pageTitleMobile: {
+    fontSize: 18,
+  },
+  pageSubtitleMobile: {
+    fontSize: 11,
+  },
+  headerRightControlsMobile: {
+    gap: 6,
+  },
+  viewToggleContainerMobile: {
+    padding: 2,
+    borderRadius: 8,
+  },
+  toggleBtnMobile: {
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 6,
+    gap: 3,
+  },
+  toggleBtnTextMobile: {
+    fontSize: 11,
+  },
+  refreshBtnMobile: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+  },
+  boardToolbarContainerMobile: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    gap: 6,
+  },
+  colPillMobile: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  colPillTextMobile: {
+    fontSize: 10,
+  },
+  boardSettingsTriggerMobile: {
+    paddingHorizontal: 7,
+    paddingVertical: 4,
+    borderRadius: 6,
+    gap: 4,
   },
 });

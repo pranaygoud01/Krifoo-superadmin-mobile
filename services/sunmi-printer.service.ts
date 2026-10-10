@@ -3,6 +3,7 @@ import * as RN from 'react-native';
 import { Order } from '../types';
 import { getActiveReceiptTemplate, ReceiptTemplate, getCachedStoreProfile, formatRestaurantAddress } from './receipt-customization.service';
 import { getOrderScheduleInfo, getSanitizedOrderNotes } from './printer/receipt-document';
+import { getPosPrinterConfig } from './pos-config.service';
 
 export enum AlignValue {
   LEFT = 0,
@@ -133,17 +134,21 @@ export async function printSunmiOrderReceipt(
   try {
     console.log('[Sunmi] Initializing Sunmi Printer for order:', order.orderNumber || order._id);
 
-    // Resolve active receipt template for this restaurant/globally
+    // Resolve active receipt template and hardware posConfig
     const restId = typeof order.restaurantId === 'object' ? order.restaurantId?._id : (order.restaurantId || (order as any).restaurant);
     const template = customTemplate || (await getActiveReceiptTemplate(restId ? String(restId) : undefined));
+    const posConfig = await getPosPrinterConfig(restId ? String(restId) : undefined).catch(() => null);
 
-    const is58mm = template.layout.paperWidth === '58mm';
+    // If either the hardware printer setting or template specifies 58mm, constrain to 58mm (32 columns)
+    const is58mm = (posConfig?.paperWidth === '58mm') || (template?.layout?.paperWidth === '58mm');
     const dividerLine = is58mm ? '--------------------------------\n' : '------------------------------------------------\n';
     const doubleLine = is58mm ? '================================\n' : '================================================\n';
-    const itemCols: [number, number, number] = is58mm ? [4, 20, 8] : [6, 32, 10];
+    const itemCols: [number, number, number] = is58mm ? [4, 19, 9] : [6, 32, 10];
     const summaryCols: [number, number] = is58mm ? [20, 12] : [32, 16];
-    const totalCols: [number, number] = is58mm ? [16, 16] : [24, 24];
-    const baseFontSize = template.layout.fontSize === 'small' ? 18 : template.layout.fontSize === 'large' ? 24 : 20;
+    const totalCols: [number, number] = is58mm ? [18, 14] : [24, 24];
+    const baseFontSize = is58mm
+      ? (template.layout.fontSize === 'small' ? 16 : template.layout.fontSize === 'large' ? 22 : 19)
+      : (template.layout.fontSize === 'small' ? 18 : template.layout.fontSize === 'large' ? 24 : 20);
 
     const getAlignValue = (align: 'left' | 'center' | 'right'): AlignValue => {
       if (align === 'center') return AlignValue.CENTER;
@@ -442,7 +447,7 @@ export async function printSunmiOrderReceipt(
       }
       const priceStr = formatMoney(itemPrice);
 
-      sunmi.setFontSize(baseFontSize + 4);
+      sunmi.setFontSize(is58mm ? baseFontSize + 1 : baseFontSize + 4);
       sunmi.setFontWeight(template.layout.boldElements.itemNames);
       sunmi.printColumnsString([qtyStr, name, priceStr], itemCols, [AlignValue.LEFT, AlignValue.LEFT, AlignValue.RIGHT]);
       sunmi.setFontWeight(false);
@@ -566,9 +571,9 @@ export async function printSunmiOrderReceipt(
 
     sunmi.printerText(dividerLine);
 
-    // TOTAL AMOUNT (Double Size)
+    // TOTAL AMOUNT
     const grandTotal = order.pricing?.total !== undefined ? order.pricing.total : (order.pricing?.totalAmount !== undefined ? order.pricing.totalAmount : (order.totalAmount || order.total || subtotal));
-    sunmi.setFontSize(baseFontSize + 8);
+    sunmi.setFontSize(is58mm ? baseFontSize + 2 : baseFontSize + 8);
     sunmi.setFontWeight(template.layout.boldElements.totalAmount);
     sunmi.printColumnsString(['TOTAL:', formatMoney(grandTotal)], totalCols, [AlignValue.LEFT, AlignValue.RIGHT]);
     sunmi.setFontWeight(false);
