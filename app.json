@@ -3,7 +3,7 @@
     "name": "Krifoo Admin",
     "slug": "krifoo-admin",
     "owner": "krifoos-app",
-    "version": "1.0.8",
+    "version": "1.0.9",
     "orientation": "default",
     "icon": "./assets/logo.png",
     "scheme": "krifooadmin",

@@ -376,7 +376,7 @@ export function generateCustomizedThermalReceiptHtml(order: Partial<Order> & any
   <div class="totals-sec">
     ${subtotal > 0 ? `<div class="summary-row"><span>Subtotal</span><span>${formatMoney(subtotal)}</span></div>` : ''}
     ${deliveryFee > 0 ? `<div class="summary-row"><span>Delivery Fee</span><span>${formatMoney(deliveryFee)}</span></div>` : ''}
-    ${onlinePaymentFee > 0 ? `<div class="summary-row"><span>Online Payment Fee</span><span>${formatMoney(onlinePaymentFee)}</span></div>` : ''}
+    ${onlinePaymentFee > 0 ? `<div class="summary-row"><span>Handling Fee</span><span>${formatMoney(onlinePaymentFee)}</span></div>` : ''}
     ${handlingCharge > 0 ? `<div class="summary-row"><span>Handling Charge</span><span>${formatMoney(handlingCharge)}</span></div>` : ''}
     ${platformFee > 0 ? `<div class="summary-row"><span>Platform / Service Fee</span><span>${formatMoney(platformFee)}</span></div>` : ''}
     ${tax > 0 || content.showItemTaxBreakdown ? `
@@ -849,7 +849,7 @@ export function generateThermalReceiptHtml(order: Partial<Order> & any, template
       onlinePaymentFee > 0
         ? `
     <div class="summary-row">
-      <span>Online Payment Fee</span>
+      <span>Handling Fee</span>
       <span>${formatMoney(onlinePaymentFee)}</span>
     </div>`
         : ''

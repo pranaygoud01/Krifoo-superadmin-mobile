@@ -476,7 +476,7 @@ export function buildReceiptDocument(order: Partial<Order> & any, config?: Parti
     commands.push({ type: 'text', value: formatSummaryRow('Delivery Fee:', formatMoney(deliveryFee)), align: 'left' });
   }
   if (onlinePaymentFee > 0) {
-    commands.push({ type: 'text', value: formatSummaryRow('Online Payment Fee:', formatMoney(onlinePaymentFee)), align: 'left' });
+    commands.push({ type: 'text', value: formatSummaryRow('Handling Fee:', formatMoney(onlinePaymentFee)), align: 'left' });
   }
   if (handlingCharge > 0) {
     commands.push({ type: 'text', value: formatSummaryRow('Handling Charge:', formatMoney(handlingCharge)), align: 'left' });
@@ -836,7 +836,7 @@ export function buildCustomizedReceiptDocument(
     commands.push({ type: 'text', value: formatSummaryRow('Delivery Fee:', formatMoney(deliveryFee)), align: totalsAlign, font });
   }
   if (onlinePaymentFee > 0) {
-    commands.push({ type: 'text', value: formatSummaryRow('Online Payment Fee:', formatMoney(onlinePaymentFee)), align: totalsAlign, font });
+    commands.push({ type: 'text', value: formatSummaryRow('Handling Fee:', formatMoney(onlinePaymentFee)), align: totalsAlign, font });
   }
   if (handlingCharge > 0) {
     commands.push({ type: 'text', value: formatSummaryRow('Handling Charge:', formatMoney(handlingCharge)), align: totalsAlign, font });

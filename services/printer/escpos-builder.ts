@@ -470,7 +470,7 @@ export function buildEscPosReceipt(order: Partial<Order> & any, config: PosPrint
 
   const onlinePaymentFee = order.pricing?.onlinePaymentFee !== undefined ? order.pricing.onlinePaymentFee : (order.onlinePaymentFee !== undefined ? order.onlinePaymentFee : ((order.pricing as any)?.cardFee || (order.pricing as any)?.paymentFee));
   if (onlinePaymentFee !== undefined && onlinePaymentFee > 0) {
-    builder.twoColumn('Online Payment Fee:', formatMoney(onlinePaymentFee));
+    builder.twoColumn('Handling Fee:', formatMoney(onlinePaymentFee));
   }
 
   const handlingCharge = order.pricing?.handlingCharge !== undefined ? order.pricing.handlingCharge : order.handlingCharge;

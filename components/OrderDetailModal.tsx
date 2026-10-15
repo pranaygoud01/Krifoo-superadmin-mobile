@@ -566,7 +566,7 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
 
               {(order.pricing?.onlinePaymentFee) ? (
                 <View style={styles.priceRow}>
-                  <Text style={styles.priceLabel}>Online Card Fee (2.5%):</Text>
+                      <Text style={styles.priceLabel}>Handling Fee:</Text>
                   <Text style={styles.priceVal}>
                     £{(order.pricing?.onlinePaymentFee || 0).toFixed(2)}
                   </Text>

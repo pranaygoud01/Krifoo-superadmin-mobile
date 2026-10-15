@@ -540,7 +540,7 @@ export async function printSunmiOrderReceipt(
 
     const onlinePaymentFee = order.pricing?.onlinePaymentFee !== undefined ? order.pricing.onlinePaymentFee : (order.onlinePaymentFee !== undefined ? order.onlinePaymentFee : ((order.pricing as any)?.cardFee || (order.pricing as any)?.paymentFee));
     if (onlinePaymentFee !== undefined && onlinePaymentFee > 0) {
-      sunmi.printColumnsString(['Online Payment Fee:', formatMoney(onlinePaymentFee)], summaryCols, [AlignValue.LEFT, AlignValue.RIGHT]);
+      sunmi.printColumnsString(['Handling Fee:', formatMoney(onlinePaymentFee)], summaryCols, [AlignValue.LEFT, AlignValue.RIGHT]);
     }
 
     const handlingCharge = order.pricing?.handlingCharge !== undefined ? order.pricing.handlingCharge : order.handlingCharge;
