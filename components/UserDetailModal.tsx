@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   Switch,
   ScrollView,
+  useWindowDimensions,
 } from 'react-native';
 import { UserAccount } from '../types';
 import { Colors } from '../constants/colors';
@@ -28,12 +29,15 @@ export const UserDetailModal: React.FC<UserDetailModalProps> = ({
   onToggleActive,
   onDelete,
 }) => {
+  const { width: windowWidth } = useWindowDimensions();
+  const isTablet = windowWidth >= 768;
+
   if (!user) return null;
 
   return (
-    <Modal visible={visible} animationType="slide" transparent={true} onRequestClose={onClose}>
-      <View style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
+    <Modal visible={visible} animationType={isTablet ? 'fade' : 'slide'} transparent={true} onRequestClose={onClose}>
+      <View style={[styles.modalOverlay, isTablet && styles.modalOverlayTablet]}>
+        <View style={[styles.modalContent, isTablet && styles.modalContentTablet]}>
           {/* Header */}
           <View style={styles.header}>
             <Text style={styles.headerTitle}>User Account Details</Text>
@@ -174,12 +178,28 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(17, 24, 28, 0.45)',
     justifyContent: 'flex-end',
   },
+  modalOverlayTablet: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
   modalContent: {
     backgroundColor: Colors.background,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     maxHeight: '90%',
     paddingBottom: 20,
+  },
+  modalContentTablet: {
+    width: '100%',
+    maxWidth: 640,
+    borderRadius: 20,
+    maxHeight: '85%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.18,
+    shadowRadius: 24,
+    elevation: 12,
   },
   header: {
     flexDirection: 'row',

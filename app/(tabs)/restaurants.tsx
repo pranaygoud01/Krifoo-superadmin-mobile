@@ -8,6 +8,7 @@ import {
   RefreshControl,
   ActivityIndicator,
   Alert,
+  useWindowDimensions,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Header } from '../../components/Header';
@@ -26,6 +27,9 @@ import { ApiErrorType } from '../../services/api';
 export default function RestaurantsScreen() {
   const router = useRouter();
   const { showToast } = useToast();
+  const { width: windowWidth } = useWindowDimensions();
+  const isTablet = windowWidth >= 768;
+
   const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -275,9 +279,12 @@ export default function RestaurantsScreen() {
         </View>
       ) : (
         <FlatList
+          key={isTablet ? 'restaurants-tablet-grid' : 'restaurants-phone-list'}
+          numColumns={isTablet ? 2 : 1}
           data={filteredRestaurants}
           keyExtractor={(item) => item._id}
-          contentContainerStyle={styles.listContent}
+          contentContainerStyle={[styles.listContent, isTablet && styles.listContentTablet]}
+          columnWrapperStyle={isTablet ? styles.restaurantColumnWrapper : undefined}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -289,14 +296,16 @@ export default function RestaurantsScreen() {
           onEndReachedThreshold={0.5}
           ListFooterComponent={renderFooter}
           renderItem={({ item }) => (
-            <RestaurantCard
-              restaurant={item}
-              onViewDetails={(r) => {
-                router.push({ pathname: '/restaurant-details', params: { restaurantId: r._id } });
-              }}
-              onVerifyStatusChange={(r, status) => handleVerifyStatusChange(r, status)}
-              onToggleActive={(r, active) => handleToggleActive(r, active)}
-            />
+            <View style={isTablet ? { flex: 1 } : undefined}>
+              <RestaurantCard
+                restaurant={item}
+                onViewDetails={(r) => {
+                  router.push({ pathname: '/restaurant-details', params: { restaurantId: r._id } });
+                }}
+                onVerifyStatusChange={(r, status) => handleVerifyStatusChange(r, status)}
+                onToggleActive={(r, active) => handleToggleActive(r, active)}
+              />
+            </View>
           )}
         />
       )}
@@ -356,6 +365,16 @@ const styles = StyleSheet.create({
   listContent: {
     paddingHorizontal: 16,
     paddingBottom: 110,
+  },
+  listContentTablet: {
+    maxWidth: 1200,
+    width: '100%',
+    alignSelf: 'center',
+    paddingHorizontal: 20,
+    gap: 14,
+  },
+  restaurantColumnWrapper: {
+    gap: 14,
   },
   centerBox: {
     flex: 1,

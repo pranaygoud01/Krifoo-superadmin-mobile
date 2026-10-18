@@ -34,6 +34,7 @@ interface TabButtonProps {
   fontSize: number;
   iconGap: number;
   activeFlex: number;
+  isTablet?: boolean;
 }
 
 const TabButton: React.FC<TabButtonProps> = ({
@@ -46,6 +47,7 @@ const TabButton: React.FC<TabButtonProps> = ({
   fontSize,
   iconGap,
   activeFlex,
+  isTablet = false,
 }) => {
   const animation = React.useRef(new Animated.Value(isFocused ? 1 : 0)).current;
 
@@ -75,7 +77,7 @@ const TabButton: React.FC<TabButtonProps> = ({
       style={[
         styles.tabItem,
         { height: itemHeight, borderRadius: itemHeight / 2 },
-        isFocused ? [styles.tabItemActive, { flex: activeFlex }] : styles.tabItemInactive,
+        isFocused ? [styles.tabItemActive, { flex: activeFlex }] : [styles.tabItemInactive, isTablet && { flex: 1 }],
       ]}
     >
       <Animated.View
@@ -90,9 +92,13 @@ const TabButton: React.FC<TabButtonProps> = ({
       />
       <View style={[styles.tabContent, { gap: iconGap }]}>
         {renderIcon()}
-        {isFocused && (
+        {(isFocused || isTablet) && (
           <Text
-            style={[styles.tabLabel, { fontSize }]}
+            style={[
+              styles.tabLabel,
+              { fontSize },
+              !isFocused && styles.tabLabelInactive,
+            ]}
             numberOfLines={1}
             ellipsizeMode="tail"
           >
@@ -113,29 +119,28 @@ function AdminTabBar({ state, descriptors, navigation }: any) {
 
   // Responsive device classifications
   const isTablet = width >= 768;
+  const isLargeTablet = width >= 1024;
   const isSmallDevice = width < 360;
 
   // Dynamic bottom margin respecting safe area insets:
-  // On devices with notches/home indicators (iOS) or edge-to-edge navigation bars (Android gesture or 3-button),
-  // insets.bottom > 0. We float cleanly above the system UI.
-  // On devices with hardware buttons / zero inset, we provide comfortable breathing room.
   const bottomMargin = insets.bottom > 0
     ? insets.bottom + (Platform.OS === 'ios' ? 8 : 10)
     : (Platform.OS === 'ios' ? 18 : 14);
 
   // Responsive sizing
-  const tabBarHeight = isTablet ? 60 : (isSmallDevice ? 52 : 56);
-  const tabItemHeight = isTablet ? 50 : (isSmallDevice ? 44 : 48);
-  const iconSize = isTablet ? 22 : (isSmallDevice ? 18 : 20);
-  const fontSize = isTablet ? 13 : (isSmallDevice ? 10.5 : 12);
-  const iconGap = isSmallDevice ? 5 : 7;
+  const tabBarHeight = isTablet ? 62 : (isSmallDevice ? 52 : 56);
+  const tabItemHeight = isTablet ? 52 : (isSmallDevice ? 44 : 48);
+  const iconSize = isTablet ? 20 : (isSmallDevice ? 18 : 20);
+  const fontSize = isTablet ? 12 : (isSmallDevice ? 10.5 : 12);
+  const iconGap = isTablet ? 6 : (isSmallDevice ? 5 : 7);
 
   // Horizontal margins:
-  // On tablets, center floating dock up to max 560dp
+  // On tablets, center floating dock with comfortable 640-720dp width
   // On small phones, give 12dp side margin so 5 tabs fit comfortably
   // On standard phones, give 16dp side margin
+  const dockMaxWidth = isTablet ? (isLargeTablet ? 720 : 640) : width - (isSmallDevice ? 24 : 32);
   const horizontalMargin = isTablet
-    ? Math.max(24, Math.round((width - 560) / 2))
+    ? Math.max(24, Math.round((width - dockMaxWidth) / 2))
     : (isSmallDevice ? 12 : 16);
 
   // Filter visible tabs to compute active expansion flex accurately
@@ -145,7 +150,9 @@ function AdminTabBar({ state, descriptors, navigation }: any) {
     return true;
   });
   const totalTabs = visibleRoutes.length;
-  const activeFlex = isSmallDevice
+  const activeFlex = isTablet
+    ? 1
+    : isSmallDevice
     ? (totalTabs >= 5 ? 1.35 : 1.5)
     : (totalTabs >= 5 ? 1.45 : 1.6);
 
@@ -228,6 +235,7 @@ function AdminTabBar({ state, descriptors, navigation }: any) {
             fontSize={fontSize}
             iconGap={iconGap}
             activeFlex={activeFlex}
+            isTablet={isTablet}
           />
         );
       })}
@@ -326,5 +334,9 @@ const styles = StyleSheet.create({
   tabLabel: {
     fontWeight: '800',
     color: '#FF5C39',
+  },
+  tabLabelInactive: {
+    color: '#64748B',
+    fontWeight: '600',
   },
 });

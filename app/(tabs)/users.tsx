@@ -10,6 +10,7 @@ import {
   Switch,
   TouchableOpacity,
   Alert,
+  useWindowDimensions,
 } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import { Header } from '../../components/Header';
@@ -28,6 +29,9 @@ import { ApiErrorType } from '../../services/api';
 
 export default function UsersScreen() {
   const { showToast } = useToast();
+  const { width: windowWidth } = useWindowDimensions();
+  const isTablet = windowWidth >= 768;
+
   const params = useLocalSearchParams<{ role?: string; userType?: string }>();
   const initialRole = params.role || params.userType || 'all';
 
@@ -243,9 +247,12 @@ export default function UsersScreen() {
         </View>
       ) : (
         <FlatList
+          key={isTablet ? 'users-tablet-grid' : 'users-phone-list'}
+          numColumns={isTablet ? 2 : 1}
           data={users}
           keyExtractor={(item) => item._id}
-          contentContainerStyle={styles.listContent}
+          contentContainerStyle={[styles.listContent, isTablet && styles.listContentTablet]}
+          columnWrapperStyle={isTablet ? styles.userColumnWrapper : undefined}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -258,7 +265,7 @@ export default function UsersScreen() {
           ListFooterComponent={renderFooter}
           renderItem={({ item }) => (
             <TouchableOpacity
-              style={styles.userCard}
+              style={[styles.userCard, isTablet && styles.userCardTablet]}
               onPress={() => {
                 setSelectedUser(item);
                 setDetailModalVisible(true);
@@ -374,6 +381,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 110,
   },
+  listContentTablet: {
+    maxWidth: 1200,
+    width: '100%',
+    alignSelf: 'center',
+    paddingHorizontal: 20,
+    gap: 14,
+  },
+  userColumnWrapper: {
+    gap: 14,
+  },
   centerBox: {
     flex: 1,
     justifyContent: 'center',
@@ -404,6 +421,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     padding: 14,
     marginBottom: 12,
+  },
+  userCardTablet: {
+    flex: 1,
+    marginBottom: 0,
   },
   userHeader: {
     flexDirection: 'row',

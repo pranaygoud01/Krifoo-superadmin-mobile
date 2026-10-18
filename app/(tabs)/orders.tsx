@@ -1082,9 +1082,9 @@ export default function OrdersScreen() {
 
   // Auto-calculated columns based on screen width
   const autoColumns = useMemo(() => {
-    if (windowWidth >= 1500) return 4;
-    if (windowWidth >= 1100) return 3;
-    if (windowWidth >= 768) return 2;
+    if (windowWidth >= 1350) return 4;
+    if (windowWidth >= 960) return 3;
+    if (windowWidth >= 680) return 2;
     return 1;
   }, [windowWidth]);
 
@@ -1638,7 +1638,7 @@ export default function OrdersScreen() {
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       {/* Page Header */}
-      <View style={[styles.pageHeader, isMobile && styles.pageHeaderMobile]}>
+      <View style={[styles.pageHeader, isMobile && styles.pageHeaderMobile, isTablet && styles.pageHeaderTablet]}>
         <View style={{ flexShrink: 1 }}>
           <View style={styles.pageTitleRow}>
             <Text style={[styles.pageTitle, isMobile && styles.pageTitleMobile]}>Orders Board</Text>
@@ -1695,9 +1695,9 @@ export default function OrdersScreen() {
       </View>
 
       {/* Controls */}
-      <View style={styles.controlsRow}>
+      <View style={[styles.controlsRow, isTablet && styles.controlsRowTablet]}>
         {/* Search + Filter + Channel Row */}
-        <View style={styles.searchAndChannelRow}>
+        <View style={[styles.searchAndChannelRow, isTablet && styles.searchAndChannelRowTablet]}>
           <View style={[styles.searchBox, { flex: 1 }]}>
             <Search size={14} color={Colors.textSubtle} />
             <TextInput
@@ -1855,7 +1855,7 @@ export default function OrdersScreen() {
         animationType="slide"
         onRequestClose={() => setFilterModalOpen(false)}
       >
-        <View style={styles.filterModalOverlay}>
+        <View style={[styles.filterModalOverlay, isTablet && styles.modalOverlayTablet]}>
           <TouchableOpacity
             style={StyleSheet.absoluteFillObject}
             activeOpacity={1}
@@ -2166,11 +2166,11 @@ export default function OrdersScreen() {
         onRequestClose={() => setDateDropdownOpen(false)}
       >
         <TouchableOpacity
-          style={styles.dropdownOverlay}
+          style={[styles.dropdownOverlay, isTablet && styles.modalOverlayTablet]}
           activeOpacity={1}
           onPress={() => setDateDropdownOpen(false)}
         >
-          <View style={styles.channelDropdownSheet}>
+          <View style={[styles.channelDropdownSheet, isTablet && styles.channelDropdownSheetTablet]}>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                 <Calendar size={18} color="#FF5C39" />
@@ -2232,12 +2232,12 @@ export default function OrdersScreen() {
         onRequestClose={() => setCustomDateModalOpen(false)}
       >
         <TouchableOpacity
-          style={styles.dropdownOverlay}
+          style={[styles.dropdownOverlay, isTablet && styles.modalOverlayTablet]}
           activeOpacity={1}
           onPress={() => setCustomDateModalOpen(false)}
         >
           <TouchableOpacity activeOpacity={1} onPress={() => {}}>
-            <View style={styles.customDateSheet}>
+            <View style={[styles.customDateSheet, isTablet && styles.customDateSheetTablet]}>
               <View style={styles.customDateHeader}>
                 <Calendar size={16} color='#FF5C39' />
                 <Text style={styles.customDateTitle}>Select Date Range</Text>
@@ -2321,7 +2321,7 @@ export default function OrdersScreen() {
         onRequestClose={() => setBoardColumnsModalOpen(false)}
       >
         <TouchableOpacity
-          style={styles.dropdownOverlay}
+          style={[styles.dropdownOverlay, isTablet && styles.modalOverlayTablet]}
           activeOpacity={1}
           onPress={() => setBoardColumnsModalOpen(false)}
         >
@@ -2445,7 +2445,7 @@ export default function OrdersScreen() {
 
       {/* Status Tabs Navigation Bar (Shown in Tabs mode) */}
       {viewMode === 'tabs' && (
-        <View style={styles.statusTabsBarContainer}>
+        <View style={[styles.statusTabsBarContainer, isTablet && styles.statusTabsBarContainerTablet]}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.statusTabsBar}>
             {STATUS_TABS.map((tab) => {
               const isActive = activeTab === tab.id;
@@ -2538,10 +2538,25 @@ export default function OrdersScreen() {
             contentContainerStyle={[styles.tabOrdersList, isTablet && styles.tabOrdersListTablet]}
             showsVerticalScrollIndicator={false}
           >
-            <OrderCardSkeletonItem />
-            <OrderCardSkeletonItem />
-            <OrderCardSkeletonItem />
-            <OrderCardSkeletonItem />
+            {isTablet ? (
+              <View style={{ gap: 14 }}>
+                <View style={{ flexDirection: 'row', gap: 14 }}>
+                  <View style={{ flex: 1 }}><OrderCardSkeletonItem /></View>
+                  <View style={{ flex: 1 }}><OrderCardSkeletonItem /></View>
+                </View>
+                <View style={{ flexDirection: 'row', gap: 14 }}>
+                  <View style={{ flex: 1 }}><OrderCardSkeletonItem /></View>
+                  <View style={{ flex: 1 }}><OrderCardSkeletonItem /></View>
+                </View>
+              </View>
+            ) : (
+              <>
+                <OrderCardSkeletonItem />
+                <OrderCardSkeletonItem />
+                <OrderCardSkeletonItem />
+                <OrderCardSkeletonItem />
+              </>
+            )}
           </ScrollView>
         ) : activeTabOrders.length === 0 ? (
           <View style={styles.centerEmpty}>
@@ -2551,19 +2566,24 @@ export default function OrdersScreen() {
           </View>
         ) : (
           <FlatList
+            key={isTablet ? 'orders-tab-grid-2col' : 'orders-tab-list-1col'}
             data={activeTabOrders}
             keyExtractor={(item) => item._id}
+            numColumns={isTablet ? 2 : 1}
+            columnWrapperStyle={isTablet ? styles.ordersColumnWrapper : undefined}
             contentContainerStyle={[styles.tabOrdersList, isTablet && styles.tabOrdersListTablet]}
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#FF5C39" colors={['#FF5C39']} />}
             renderItem={({ item }) => (
-              <OrderCardItem
-                order={item}
-                onPress={(o) => { setSelectedOrder(o); setDetailModalVisible(true); }}
-                onAssignDelivery={(o) => { setSelectedOrder(o); setAssignModalVisible(true); }}
-                onUpdateStatus={handleUpdateStatus}
-                onPrint={handlePrintOrder}
-                paperRollSize={paperRollSize}
-              />
+              <View style={isTablet ? styles.orderGridItemWrapper : undefined}>
+                <OrderCardItem
+                  order={item}
+                  onPress={(o) => { setSelectedOrder(o); setDetailModalVisible(true); }}
+                  onAssignDelivery={(o) => { setSelectedOrder(o); setAssignModalVisible(true); }}
+                  onUpdateStatus={handleUpdateStatus}
+                  onPrint={handlePrintOrder}
+                  paperRollSize={paperRollSize}
+                />
+              </View>
             )}
           />
         )
@@ -3837,11 +3857,50 @@ const styles = StyleSheet.create({
     borderRadius: 9,
   },
   tabOrdersListTablet: {
-    maxWidth: 860,
+    maxWidth: 1300,
     width: '100%',
     alignSelf: 'center',
-    padding: 20,
+    paddingHorizontal: 24,
+    paddingVertical: 18,
     gap: 14,
+  },
+  ordersColumnWrapper: {
+    gap: 14,
+  },
+  orderGridItemWrapper: {
+    flex: 1,
+  },
+  pageHeaderTablet: {
+    paddingHorizontal: 24,
+    paddingVertical: 14,
+  },
+  controlsRowTablet: {
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+  },
+  searchAndChannelRowTablet: {
+    gap: 12,
+  },
+  statusTabsBarContainerTablet: {
+    paddingHorizontal: 24,
+    paddingVertical: 10,
+  },
+  modalOverlayTablet: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  channelDropdownSheetTablet: {
+    maxWidth: 480,
+    width: '100%',
+    borderRadius: 20,
+    alignSelf: 'center',
+  },
+  customDateSheetTablet: {
+    maxWidth: 480,
+    width: '100%',
+    borderRadius: 20,
+    alignSelf: 'center',
   },
   kanbanRestaurantRow: {
     marginTop: 6,

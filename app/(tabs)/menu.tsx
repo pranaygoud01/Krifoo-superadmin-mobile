@@ -13,6 +13,7 @@ import {
   Switch,
   Modal,
   Platform,
+  useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
@@ -55,6 +56,9 @@ export default function MenuScreen() {
   const router = useRouter();
   const { user } = useAuth();
   const isSuperAdmin = user?.userType === 'super_admin';
+  const { width: windowWidth } = useWindowDimensions();
+  const isTablet = windowWidth >= 768;
+
   const restaurantId =
     (typeof user?.restaurantId === 'object' ? user?.restaurantId?._id : user?.restaurantId) ||
     user?._id ||
@@ -665,9 +669,12 @@ export default function MenuScreen() {
         </View>
       ) : (
         <FlatList
+          key={isTablet ? 'menu-tablet-grid' : 'menu-phone-list'}
+          numColumns={isTablet ? 2 : 1}
           data={filteredItems}
           keyExtractor={(item) => item._id}
-              contentContainerStyle={styles.tabItemsList}
+          contentContainerStyle={[styles.tabItemsList, isTablet && styles.tabItemsListTablet]}
+          columnWrapperStyle={isTablet ? styles.menuColumnWrapper : undefined}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -686,7 +693,7 @@ export default function MenuScreen() {
 
             return (
               <TouchableOpacity
-                style={styles.menuCard}
+                style={[styles.menuCard, isTablet && styles.menuCardTablet]}
                 onPress={() => !isSuperAdmin && openEditPage(item)}
                 activeOpacity={0.92}
               >
@@ -1470,6 +1477,16 @@ const styles = StyleSheet.create({
     gap: 12,
     paddingBottom: 110,
   },
+  tabItemsListTablet: {
+    paddingHorizontal: 20,
+    maxWidth: 1200,
+    width: '100%',
+    alignSelf: 'center',
+    gap: 14,
+  },
+  menuColumnWrapper: {
+    gap: 14,
+  },
   centerEmpty: {
     flex: 1,
     justifyContent: 'center',
@@ -1515,6 +1532,10 @@ const styles = StyleSheet.create({
     shadowRadius: 5,
     shadowOffset: { width: 0, height: 2 },
     elevation: 1.5,
+  },
+  menuCardTablet: {
+    flex: 1,
+    marginBottom: 0,
   },
   menuCardTop: {
     flexDirection: 'row',

@@ -8,9 +8,6 @@
     "icon": "./assets/logo.png",
     "scheme": "krifooadmin",
     "userInterfaceStyle": "dark",
-    "androidNavigationBar": {
-      "enforceContrast": false
-    },
     "newArchEnabled": true,
     "splash": {
       "image": "./assets/logo.png",

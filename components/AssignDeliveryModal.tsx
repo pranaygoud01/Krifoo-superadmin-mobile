@@ -7,6 +7,7 @@ import {
   FlatList,
   TouchableOpacity,
   ActivityIndicator,
+  useWindowDimensions,
 } from 'react-native';
 import { Order, UserAccount } from '../types';
 import { Colors } from '../constants/colors';
@@ -26,6 +27,9 @@ export const AssignDeliveryModal: React.FC<AssignDeliveryModalProps> = ({
   onClose,
   onConfirmAssign,
 }) => {
+  const { width: windowWidth } = useWindowDimensions();
+  const isTablet = windowWidth >= 768;
+
   const [partners, setPartners] = useState<UserAccount[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedPartnerId, setSelectedPartnerId] = useState<string | null>(null);
@@ -67,9 +71,9 @@ export const AssignDeliveryModal: React.FC<AssignDeliveryModalProps> = ({
   if (!order) return null;
 
   return (
-    <Modal visible={visible} animationType="slide" transparent={true} onRequestClose={onClose}>
-      <View style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
+    <Modal visible={visible} animationType={isTablet ? 'fade' : 'slide'} transparent={true} onRequestClose={onClose}>
+      <View style={[styles.modalOverlay, isTablet && styles.modalOverlayTablet]}>
+        <View style={[styles.modalContent, isTablet && styles.modalContentTablet]}>
           <View style={styles.header}>
             <View style={styles.titleRow}>
               <Bike size={20} color={Colors.primary} />
@@ -162,12 +166,28 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(17, 24, 28, 0.45)',
     justifyContent: 'flex-end',
   },
+  modalOverlayTablet: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
   modalContent: {
     backgroundColor: Colors.background,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     maxHeight: '80%',
     paddingBottom: 20,
+  },
+  modalContentTablet: {
+    width: '100%',
+    maxWidth: 600,
+    borderRadius: 20,
+    maxHeight: '85%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.18,
+    shadowRadius: 24,
+    elevation: 12,
   },
   header: {
     flexDirection: 'row',

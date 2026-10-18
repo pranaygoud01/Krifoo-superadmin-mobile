@@ -77,6 +77,12 @@ module.exports = function withDeviceCompatibility(config) {
 
     androidManifest.queries[0] = queriesObj;
 
+    // Ensure tools namespace exists
+    if (!androidManifest.$) {
+      androidManifest.$ = {};
+    }
+    androidManifest.$['xmlns:tools'] = 'http://schemas.android.com/tools';
+
     // C. Android 16+ Large Screen Support:
     // Remove orientation locks and ensure resizeableActivity is true across application and activities
     const application = androidManifest.application && androidManifest.application[0];
@@ -84,7 +90,11 @@ module.exports = function withDeviceCompatibility(config) {
       application.$ = application.$ || {};
       application.$['android:resizeableActivity'] = 'true';
 
-      if (application.activity && Array.isArray(application.activity)) {
+      if (!application.activity) {
+        application.activity = [];
+      }
+
+      if (Array.isArray(application.activity)) {
         application.activity.forEach((act) => {
           if (act.$) {
             act.$['android:resizeableActivity'] = 'true';
@@ -92,6 +102,30 @@ module.exports = function withDeviceCompatibility(config) {
             delete act.$['android:screenOrientation'];
           }
         });
+      }
+
+      // Explicitly override Google ML Kit internal code scanner activity
+      // to remove android:screenOrientation="PORTRAIT" restriction flagged on Android 16+ large screens
+      const gmsBarcodeActivityName =
+        'com.google.mlkit.vision.codescanner.internal.GmsBarcodeScanningDelegateActivity';
+      const existingGmsActivity = application.activity.find(
+        (act) => act.$ && act.$['android:name'] === gmsBarcodeActivityName
+      );
+
+      if (!existingGmsActivity) {
+        application.activity.push({
+          $: {
+            'android:name': gmsBarcodeActivityName,
+            'tools:remove': 'android:screenOrientation',
+            'tools:replace': 'android:resizeableActivity',
+            'android:resizeableActivity': 'true'
+          }
+        });
+      } else {
+        existingGmsActivity.$['tools:remove'] = 'android:screenOrientation';
+        existingGmsActivity.$['tools:replace'] = 'android:resizeableActivity';
+        existingGmsActivity.$['android:resizeableActivity'] = 'true';
+        delete existingGmsActivity.$['android:screenOrientation'];
       }
     }
 
@@ -104,7 +138,7 @@ module.exports = function withDeviceCompatibility(config) {
     const { style = [] } = config.modResults.resources;
     const mainTheme = style.find((s) => s.$ && s.$.name === 'AppTheme');
     if (mainTheme && mainTheme.item) {
-      // Filter out deprecated parameters
+      // Filter out deprecated parameters completely (Android 15+ handles edge-to-edge transparent system bars natively)
       mainTheme.item = mainTheme.item.filter(
         (item) =>
           item.$ &&
@@ -112,16 +146,6 @@ module.exports = function withDeviceCompatibility(config) {
           item.$.name !== 'android:statusBarColor' &&
           item.$.name !== 'android:navigationBarColor'
       );
-
-      // Add transparent system bars for standard edge-to-edge
-      mainTheme.item.push({
-        $: { name: 'android:statusBarColor' },
-        _: '@android:color/transparent'
-      });
-      mainTheme.item.push({
-        $: { name: 'android:navigationBarColor' },
-        _: '@android:color/transparent'
-      });
     }
     return config;
   });

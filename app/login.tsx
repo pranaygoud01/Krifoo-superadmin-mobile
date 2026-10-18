@@ -8,10 +8,11 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
-  StatusBar,
   Image,
   ScrollView,
+  useWindowDimensions,
 } from 'react-native';
+import { StatusBar } from 'expo-status-bar';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
@@ -26,6 +27,9 @@ interface LoginErrorDetails {
 }
 
 export default function LoginScreen() {
+  const { width: windowWidth } = useWindowDimensions();
+  const isTablet = windowWidth >= 768;
+
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -84,7 +88,7 @@ export default function LoginScreen() {
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
-      <StatusBar barStyle="light-content" />
+      <StatusBar style="light" />
 
       {/* Background Watermark Logo */}
       <Image
@@ -94,11 +98,11 @@ export default function LoginScreen() {
       />
 
       <ScrollView
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[styles.scrollContent, isTablet && styles.scrollContentTablet]}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
-        <View style={styles.card}>
+        <View style={[styles.card, isTablet && styles.cardTablet]}>
           {/* Cover Header Image */}
           <View style={styles.coverContainer}>
             <Image
@@ -284,10 +288,34 @@ const styles = StyleSheet.create({
   scrollContent: {
     flexGrow: 1,
   },
+  scrollContentTablet: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 32,
+    backgroundColor: '#F8FAFC',
+  },
   card: {
     flex: 1,
     backgroundColor: '#FFFFFF',
     width: '100%',
+  },
+  cardTablet: {
+    flexGrow: 0,
+    flexShrink: 0,
+    flexBasis: 'auto',
+    maxWidth: 520,
+    width: '100%',
+    alignSelf: 'center',
+    borderRadius: 24,
+    overflow: 'hidden',
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 16 },
+    shadowOpacity: 0.12,
+    shadowRadius: 28,
+    elevation: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginVertical: 32,
   },
   coverContainer: {
     height: 330,

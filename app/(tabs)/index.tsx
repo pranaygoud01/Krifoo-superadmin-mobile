@@ -553,7 +553,7 @@ export default function DashboardScreen() {
       ) : (
         <ScrollView
           style={styles.scrollBody}
-          contentContainerStyle={{ paddingBottom: 110 }}
+          contentContainerStyle={[{ paddingBottom: 110 }, isTablet && styles.scrollBodyTablet]}
           showsVerticalScrollIndicator={false}
           refreshControl={
             <RefreshControl
@@ -1051,10 +1051,10 @@ export default function DashboardScreen() {
           /* ================= RESTAURANT OWNER DASHBOARD ================= */
           <>
             {/* Business Control Center Grid */}
-            <View style={styles.controlCenterSection}>
+            <View style={[styles.controlCenterSection, isTablet && styles.controlCenterSectionTablet]}>
                 {/* <Text style={styles.sectionHeader}>Manage Store</Text> */}
 
-                <View style={[styles.gridContainer, isSmallScreen && { gap: 8 }]}>
+                <View style={[styles.gridContainer, isSmallScreen && { gap: 8 }, isTablet && styles.gridContainerTablet]}>
                   <TouchableOpacity
                     style={[styles.gridCard, isSmallScreen && { padding: 11, minHeight: 80 }]}
                     onPress={() => router.push('/bookings')}
@@ -1096,7 +1096,7 @@ export default function DashboardScreen() {
                   </TouchableOpacity>
                 </View>
 
-                <View style={[styles.gridContainer, isSmallScreen && { gap: 8 }]}>
+                <View style={[styles.gridContainer, isSmallScreen && { gap: 8 }, isTablet && styles.gridContainerTablet]}>
                   <TouchableOpacity
                     style={[styles.gridCard, isSmallScreen && { padding: 11, minHeight: 80 }]}
                     onPress={() => router.push('/fleet')}
@@ -1174,7 +1174,7 @@ export default function DashboardScreen() {
                 <Text style={styles.emptyRecentText}>No recent orders available</Text>
               </View>
             ) : (
-              <View style={styles.recentOrdersList}>
+              <View style={[styles.recentOrdersList, isTablet && styles.recentOrdersListTablet]}>
                   {orders.slice(0, 5).map((order) => {
                     const restName =
                       typeof order.restaurantId === 'object'
@@ -1200,7 +1200,7 @@ export default function DashboardScreen() {
                     return (
                       <TouchableOpacity
                         key={order._id}
-                        style={styles.recentOrderCard}
+                        style={[styles.recentOrderCard, isTablet && styles.recentOrderCardTablet]}
                         activeOpacity={0.7}
                         onPress={() =>
                           router.push({
@@ -1402,6 +1402,28 @@ const styles = StyleSheet.create({
   },
   scrollBody: {
     padding: 16,
+  },
+  scrollBodyTablet: {
+    maxWidth: 1240,
+    width: '100%',
+    alignSelf: 'center',
+    paddingHorizontal: 24,
+  },
+  controlCenterSectionTablet: {
+    flexDirection: 'row',
+    gap: 14,
+  },
+  gridContainerTablet: {
+    flex: 1,
+    marginBottom: 0,
+  },
+  recentOrdersListTablet: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  recentOrderCardTablet: {
+    width: '49%',
   },
   welcomeSection: {
     marginBottom: 20,
