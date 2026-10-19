@@ -29,7 +29,42 @@ export class SppTransport implements PrinterTransport {
     const dataBytes =
       typeof payload === 'string' ? new TextEncoder().encode(payload) : payload;
 
-    // Check if react-native-bluetooth-classic is available
+    // 1. Check if react-native-thermal-pos-printer (PosPrinter) native driver is available
+    let PosPrinter: any = null;
+    try {
+      const { NativeModules } = require('react-native');
+      PosPrinter = NativeModules?.PosPrinter;
+    } catch {
+      PosPrinter = null;
+    }
+
+    if (PosPrinter && typeof PosPrinter.connectPrinter === 'function') {
+      try {
+        console.log(`[SppTransport] Connecting via PosPrinter native driver to: ${target}...`);
+        await PosPrinter.connectPrinter(target, 'bluetooth');
+        // sendRawCommand expects an array of byte integers
+        const byteArray = Array.from(dataBytes);
+        if (typeof PosPrinter.sendRawCommand === 'function') {
+          await PosPrinter.sendRawCommand(byteArray);
+        } else if (typeof PosPrinter.printText === 'function') {
+          const text = new TextDecoder().decode(dataBytes);
+          await PosPrinter.printText(text);
+        }
+        try {
+          await PosPrinter.disconnectPrinter();
+        } catch {}
+        return { ok: true, rawResponse: 'pos_printer_spp_write_ack' };
+      } catch (err: any) {
+        console.warn('[SppTransport] PosPrinter native write error:', err);
+        return {
+          ok: false,
+          kind: 'protocol_error',
+          detail: `Bluetooth printer connection error: ${err.message || err}`,
+        };
+      }
+    }
+
+    // 2. Check if react-native-bluetooth-classic is available
     let RNBluetoothClassic: any;
     try {
       RNBluetoothClassic = require('react-native-bluetooth-classic').default || require('react-native-bluetooth-classic');
@@ -59,7 +94,7 @@ export class SppTransport implements PrinterTransport {
       }
     }
 
-    // Try native Epson module bridge if available in app
+    // 3. Try native Epson module bridge if available in app
     try {
       const { EpsonEposModule } = require('../../../src/modules/epson-epos');
       if (EpsonEposModule && typeof EpsonEposModule.printRawEscPos === 'function') {
@@ -73,7 +108,7 @@ export class SppTransport implements PrinterTransport {
     return {
       ok: false,
       kind: 'unreachable',
-      detail: 'Bluetooth Classic library is not linked in this build. A custom native build is required.',
+      detail: 'Bluetooth POS printer driver is not linked in this build. Please rebuild the native app (npx expo run:android or EAS build).',
     };
   }
 }

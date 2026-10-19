@@ -14,6 +14,7 @@ import {
   useWindowDimensions,
   StatusBar,
   Platform,
+  Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Colors } from '../constants/colors';
@@ -132,7 +133,13 @@ export const BluetoothPrinterModal: React.FC<BluetoothPrinterModalProps> = ({
           d.name?.toLowerCase().includes('m30') ||
           d.name?.toLowerCase().includes('star') ||
           d.name?.toLowerCase().includes('tsp') ||
-          d.name?.toLowerCase().includes('sunmi'),
+          d.name?.toLowerCase().includes('sunmi') ||
+          d.name?.toLowerCase().includes('pos') ||
+          d.name?.toLowerCase().includes('rp') ||
+          d.name?.toLowerCase().includes('printer') ||
+          d.name?.toLowerCase().includes('xprinter') ||
+          d.name?.toLowerCase().includes('rongta') ||
+          d.name?.toLowerCase().includes('munbyn'),
       }));
 
       setDevices(mapped);
@@ -147,6 +154,20 @@ export const BluetoothPrinterModal: React.FC<BluetoothPrinterModalProps> = ({
       setSelectedDeviceId(null);
     } finally {
       setIsScanning(false);
+    }
+  };
+
+  const openBluetoothSettings = async () => {
+    if (Platform.OS === 'android') {
+      try {
+        await Linking.sendIntent('android.settings.BLUETOOTH_SETTINGS');
+        return;
+      } catch {}
+    }
+    try {
+      await Linking.openSettings();
+    } catch (e) {
+      console.warn('Could not open system settings:', e);
     }
   };
 
@@ -206,6 +227,12 @@ export const BluetoothPrinterModal: React.FC<BluetoothPrinterModalProps> = ({
     }
     if (n.includes('sunmi') || n.includes('v2') || n.includes('t2')) {
       return { label: 'SUNMI POS', bg: '#FFF7ED', text: '#C2410C' };
+    }
+    if (n.includes('xprinter') || n.includes('munbyn') || n.includes('rongta')) {
+      return { label: 'POS THERMAL', bg: '#F0FDF4', text: '#15803D' };
+    }
+    if (n.includes('pos-80') || n.includes('pos-58') || n.includes('rp80') || n.includes('printer')) {
+      return { label: 'DESKTOP POS', bg: '#F8FAFC', text: '#0F172A' };
     }
     return { label: 'ESC/POS', bg: '#F3F4F6', text: '#4B5563' };
   };
@@ -288,57 +315,57 @@ export const BluetoothPrinterModal: React.FC<BluetoothPrinterModalProps> = ({
             {/* ============================================================= */}
             {activeTab === 'discovered' ? (
               <View style={{ flex: 1 }}>
-                {/* Status Banner with Live Radar Indicator */}
-                <View style={styles.statusBanner}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }}>
-                    <View style={styles.radarContainer}>
-                      {isScanning ? (
-                        <>
-                          <Animated.View
-                            style={[
-                              styles.radarWave,
-                              {
-                                transform: [{ scale: radarScale }],
-                                opacity: radarOpacity,
-                              },
-                            ]}
-                          />
-                          <View style={styles.radarCenterPulse} />
-                        </>
-                      ) : (
-                        <View style={styles.greenDot} />
-                      )}
+                {/* Status Banner with Live Radar Indicator (Shown when scanning or when devices found) */}
+                {(isScanning || devices.length > 0) && (
+                  <View style={styles.statusBanner}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }}>
+                      <View style={styles.radarContainer}>
+                        {isScanning ? (
+                          <>
+                            <Animated.View
+                              style={[
+                                styles.radarWave,
+                                {
+                                  transform: [{ scale: radarScale }],
+                                  opacity: radarOpacity,
+                                },
+                              ]}
+                            />
+                            <View style={styles.radarCenterPulse} />
+                          </>
+                        ) : (
+                          <View style={styles.greenDot} />
+                        )}
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.statusBannerTitle}>
+                          {isScanning
+                            ? 'Scanning for Bluetooth & Wi-Fi printers...'
+                            : `Found ${devices.length} nearby printer(s)`}
+                        </Text>
+                        <Text style={styles.statusBannerSub}>
+                          {isScanning
+                            ? 'Checking paired SPP, BLE, and ePOS ports'
+                            : 'Tap Connect on your printer below to route receipts'}
+                        </Text>
+                      </View>
                     </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.statusBannerTitle}>
-                        {isScanning
-                          ? 'Scanning for Bluetooth & Wi-Fi printers...'
-                          : devices.length > 0
-                          ? `Found ${devices.length} nearby printer(s)`
-                          : 'No printers detected nearby'}
-                      </Text>
-                      <Text style={styles.statusBannerSub}>
-                        {isScanning
-                          ? 'Checking BLE, SPP, and ePOS ports'
-                          : 'Tap Connect on any printer below to route receipts'}
-                      </Text>
-                    </View>
-                  </View>
 
-                  <TouchableOpacity
-                    onPress={startScan}
-                    disabled={isScanning}
-                    style={styles.rescanBtn}
-                    activeOpacity={0.7}
-                  >
-                    {isScanning ? (
-                      <ActivityIndicator size="small" color="#000000" />
-                    ) : (
-                      <RefreshCw size={13} color="#000000" />
-                    )}
-                    <Text style={styles.rescanBtnText}>{isScanning ? 'Searching' : 'Search again'}</Text>
-                  </TouchableOpacity>
-                </View>
+                    <TouchableOpacity
+                      onPress={startScan}
+                      disabled={isScanning}
+                      style={styles.rescanBtn}
+                      activeOpacity={0.7}
+                    >
+                      {isScanning ? (
+                        <ActivityIndicator size="small" color="#000000" />
+                      ) : (
+                        <RefreshCw size={13} color="#000000" />
+                      )}
+                      <Text style={styles.rescanBtnText}>{isScanning ? 'Searching' : 'Search again'}</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
 
                 {/* Search Filter Bar (if devices present) */}
                 {devices.length > 1 ? (
@@ -474,23 +501,63 @@ export const BluetoothPrinterModal: React.FC<BluetoothPrinterModalProps> = ({
                     !isScanning ? (
                       <View style={styles.emptyBox}>
                         <View style={styles.emptyIconCircle}>
-                          <Printer size={34} color="#9CA3AF" />
+                          <Printer size={32} color="#4B5563" />
                         </View>
                         <Text style={styles.emptyTitle}>No printers found nearby</Text>
                         <Text style={styles.emptySub}>
                           {searchQuery
                             ? `No devices matching "${searchQuery}". Clear your search or tap Search again.`
-                            : 'Make sure your printer is powered on, has receipt paper loaded, and is within Bluetooth or Wi-Fi range.'}
+                            : 'Follow these 3 quick steps to connect your Bluetooth or wireless thermal printer:'}
                         </Text>
 
-                        <TouchableOpacity
-                          onPress={startScan}
-                          style={styles.emptyRescanBtn}
-                          activeOpacity={0.8}
-                        >
-                          <RefreshCw size={15} color="#FFFFFF" />
-                          <Text style={styles.emptyRescanBtnText}>Search again</Text>
-                        </TouchableOpacity>
+                        {!searchQuery && (
+                          <View style={styles.quickStepsBox}>
+                            <View style={styles.quickStepItem}>
+                              <View style={styles.quickStepNumber}>
+                                <Text style={styles.quickStepNumberText}>1</Text>
+                              </View>
+                              <Text style={styles.quickStepText}>
+                                Power <Text style={{ fontWeight: '700', color: '#111827' }}>ON</Text> printer & ensure paper roll is loaded
+                              </Text>
+                            </View>
+                            <View style={styles.quickStepItem}>
+                              <View style={styles.quickStepNumber}>
+                                <Text style={styles.quickStepNumberText}>2</Text>
+                              </View>
+                              <Text style={styles.quickStepText}>
+                                Pair device in <Text style={{ fontWeight: '700', color: '#111827' }}>Tablet Bluetooth Settings</Text> (PIN 0000 or 1234)
+                              </Text>
+                            </View>
+                            <View style={styles.quickStepItem}>
+                              <View style={styles.quickStepNumber}>
+                                <Text style={styles.quickStepNumberText}>3</Text>
+                              </View>
+                              <Text style={styles.quickStepText}>
+                                Return here and tap <Text style={{ fontWeight: '700', color: '#111827' }}>Search again</Text> to route receipts
+                              </Text>
+                            </View>
+                          </View>
+                        )}
+
+                        <View style={styles.emptyActionRow}>
+                          <TouchableOpacity
+                            onPress={openBluetoothSettings}
+                            style={styles.emptyPairSettingsBtn}
+                            activeOpacity={0.8}
+                          >
+                            <Bluetooth size={14} color="#1D4ED8" />
+                            <Text style={styles.emptyPairSettingsBtnText}>Open Bluetooth Settings</Text>
+                          </TouchableOpacity>
+
+                          <TouchableOpacity
+                            onPress={startScan}
+                            style={styles.emptyRescanBtn}
+                            activeOpacity={0.8}
+                          >
+                            <RefreshCw size={14} color="#FFFFFF" />
+                            <Text style={styles.emptyRescanBtnText}>Search again</Text>
+                          </TouchableOpacity>
+                        </View>
                       </View>
                     ) : null
                   }
@@ -560,7 +627,7 @@ export const BluetoothPrinterModal: React.FC<BluetoothPrinterModalProps> = ({
               /* ============================================================= */
               <ScrollView
                 style={{ flex: 1 }}
-                contentContainerStyle={{ paddingBottom: 32 }}
+                contentContainerStyle={{ paddingBottom: 180 }}
                 showsVerticalScrollIndicator={false}
                 keyboardShouldPersistTaps="handled"
               >
@@ -838,6 +905,83 @@ const styles = StyleSheet.create({
     color: '#000000',
   },
 
+  /* 2-Step Pairing Guide Banner */
+  pairingGuideBanner: {
+    backgroundColor: '#EFF6FF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    padding: 14,
+    marginBottom: 12,
+  },
+  pairingGuideHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    marginBottom: 10,
+  },
+  pairingGuideIconCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#DBEAFE',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 2,
+  },
+  pairingGuideTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1E40AF',
+  },
+  pairingGuideSub: {
+    fontSize: 11.5,
+    color: '#3B82F6',
+    marginTop: 3,
+    lineHeight: 16,
+  },
+  openSettingsBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#FFFFFF',
+    paddingVertical: 9,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#93C5FD',
+  },
+  openSettingsBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#1D4ED8',
+  },
+  emptyActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 6,
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+  },
+  emptyPairSettingsBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 9,
+  },
+  emptyPairSettingsBtnText: {
+    color: '#1D4ED8',
+    fontSize: 12.5,
+    fontWeight: '700',
+  },
+
   /* Search Bar */
   searchBarBox: {
     flexDirection: 'row',
@@ -996,6 +1140,41 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     lineHeight: 18,
     maxWidth: 380,
+  },
+  quickStepsBox: {
+    width: '100%',
+    maxWidth: 380,
+    backgroundColor: '#F9FAFB',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    padding: 12,
+    marginBottom: 18,
+    gap: 10,
+  },
+  quickStepItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  quickStepNumber: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#E5E7EB',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  quickStepNumberText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#374151',
+  },
+  quickStepText: {
+    flex: 1,
+    fontSize: 12,
+    color: '#4B5563',
+    lineHeight: 16,
   },
   emptyRescanBtn: {
     flexDirection: 'row',

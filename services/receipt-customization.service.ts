@@ -141,8 +141,8 @@ export const DEFAULT_RECEIPT_TEMPLATE: ReceiptTemplate = {
 
 export const COMPACT_TAKEAWAY_TEMPLATE: ReceiptTemplate = {
   id: 'compact_takeaway',
-  name: 'Compact Takeaway / 58mm',
-  description: 'Fast, compact layout optimized for 58mm thermal rolls and takeaway counters',
+  name: 'Compact Takeaway',
+  description: 'Fast, compact layout optimized for takeaway counters',
   isDefault: false,
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),

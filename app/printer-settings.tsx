@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -9,8 +9,9 @@ import {
   ActivityIndicator,
   Switch,
   Platform,
+  Linking,
 } from 'react-native';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { Header } from '../components/Header';
 import { Colors } from '../constants/colors';
 import { useToast } from '../context/ToastContext';
@@ -39,6 +40,9 @@ import {
   HelpCircle,
   ExternalLink,
   XCircle,
+  Scissors,
+  FileCheck,
+  Wrench,
 } from 'lucide-react-native';
 import {
   printSampleThermalReceipt,
@@ -48,6 +52,7 @@ import {
   savePosPrinterConfig,
   POS_BRANDS,
   testEpsonPrinter,
+  testPrinterAlignmentSlip,
   openCashDrawer,
   isSunmiAvailable,
 } from '../services/thermal-print.service';
@@ -62,9 +67,11 @@ import {
   PrinterProfile,
 } from '../services/pos-config.service';
 import { BluetoothPrinterModal, DiscoveredPrinterDevice } from '../components/BluetoothPrinterModal';
+import { PrinterSetupWizardModal } from '../components/PrinterSetupWizardModal';
 import {
   getActiveReceiptTemplate,
   saveReceiptTemplate,
+  ReceiptTemplate,
 } from '../services/receipt-customization.service';
 
 export default function PrinterSettingsScreen() {
@@ -73,7 +80,7 @@ export default function PrinterSettingsScreen() {
   const params = useLocalSearchParams<{ restaurantId?: string }>();
   const restaurantId = params.restaurantId;
 
-  // Master switch (Uber Eats mechanism: Receipt printing enabled)
+  // Master switch: Receipt printing enabled
   const [receiptPrintingEnabled, setReceiptPrintingEnabled] = useState(true);
 
   // Configuration state
@@ -90,9 +97,32 @@ export default function PrinterSettingsScreen() {
   // Status & action indicators
   const [isSaving, setIsSaving] = useState(false);
   const [isTestingPrint, setIsTestingPrint] = useState(false);
+  const [isTestingCalibration, setIsTestingCalibration] = useState(false);
   const [isTestingDrawer, setIsTestingDrawer] = useState(false);
   const [showBtModal, setShowBtModal] = useState(false);
+  const [showSetupWizard, setShowSetupWizard] = useState(false);
   const [isSunmiHardware, setIsSunmiHardware] = useState<boolean | null>(null);
+  const [testResult, setTestResult] = useState<{ status: 'success' | 'error'; message: string } | null>(null);
+  const [activeTemplate, setActiveTemplate] = useState<ReceiptTemplate | null>(null);
+
+  // Load and cache active template for UI display
+  const loadActiveTemplate = useCallback(async () => {
+    try {
+      const tpl = await getActiveReceiptTemplate(restaurantId);
+      if (tpl) {
+        setActiveTemplate(tpl);
+      }
+    } catch (e) {
+      console.warn('[PrinterSettings] Error loading active template:', e);
+    }
+  }, [restaurantId]);
+
+  // Synchronize active template when screen gains focus (e.g. returning from /receipt-customization)
+  useFocusEffect(
+    useCallback(() => {
+      loadActiveTemplate();
+    }, [loadActiveTemplate])
+  );
 
   // Fetch initial config and check hardware
   useEffect(() => {
@@ -100,8 +130,11 @@ export default function PrinterSettingsScreen() {
       // Synchronize with active receipt template if present
       try {
         const activeTpl = await getActiveReceiptTemplate(restaurantId);
-        if (activeTpl && activeTpl.layout?.paperWidth && activeTpl.layout.paperWidth !== cfg.paperWidth) {
-          cfg = await savePosPrinterConfig({ paperWidth: activeTpl.layout.paperWidth }, restaurantId);
+        if (activeTpl) {
+          setActiveTemplate(activeTpl);
+          if (activeTpl.layout?.paperWidth && activeTpl.layout.paperWidth !== cfg.paperWidth) {
+            cfg = await savePosPrinterConfig({ paperWidth: activeTpl.layout.paperWidth }, restaurantId);
+          }
         }
       } catch (e) {
         console.warn('[PrinterSettings] Error checking template paper width sync:', e);
@@ -135,7 +168,7 @@ export default function PrinterSettingsScreen() {
     });
   };
 
-  // Select Connection Mode (Uber Eats connection mechanism)
+  // Select Connection Mode
   const handleSelectConnectionType = async (connType: PosConnectionType) => {
     let targetBrand = posConfig.brand;
     let targetPort = posConfig.port;
@@ -165,6 +198,18 @@ export default function PrinterSettingsScreen() {
       setShowBtModal(true);
     } else if (connType === 'network') {
       setShowIpSetup(true);
+    } else if (connType === 'builtin') {
+      showToast({
+        title: 'Built-in Sunmi Terminal Selected',
+        message: 'Printer routed to internal hardware AIDL service.',
+        type: 'success',
+      });
+    } else if (connType === 'system') {
+      showToast({
+        title: 'System Spooler Selected',
+        message: 'Using native iOS AirPrint / Android print spooler.',
+        type: 'info',
+      });
     }
   };
 
@@ -265,9 +310,10 @@ export default function PrinterSettingsScreen() {
     setPosConfig(updated);
     setPrinterIpInput('');
     setManualBtInput('');
+    setTestResult(null);
     showToast({
       title: 'Printer Disconnected',
-      message: 'The printer has been removed from this station.',
+      message: 'The printer has been unlinked from this station.',
       type: 'info',
     });
   };
@@ -307,11 +353,11 @@ export default function PrinterSettingsScreen() {
     const updated = await savePosPrinterConfig({ paperWidth: width }, restaurantId);
     setPosConfig(updated);
 
-    // 2. Synchronize active receipt template so receipt layout matches printer roll
+    // 2. Synchronize active receipt template
     try {
       const activeTpl = await getActiveReceiptTemplate(restaurantId);
       if (activeTpl && activeTpl.layout.paperWidth !== width) {
-        await saveReceiptTemplate(
+        const saved = await saveReceiptTemplate(
           {
             ...activeTpl,
             layout: {
@@ -322,12 +368,15 @@ export default function PrinterSettingsScreen() {
           restaurantId,
           true
         );
+        setActiveTemplate(saved);
+      } else if (activeTpl) {
+        setActiveTemplate(activeTpl);
       }
     } catch (e) {
       console.warn('[PrinterSettings] Failed to sync template paper width:', e);
     }
 
-    showToast({ title: 'Paper Roll Updated', message: `Synchronized format to ${width}`, type: 'info' });
+    showToast({ title: 'Paper Roll Updated', message: `Station set to ${width} roll`, type: 'info' });
   };
 
   const handleSetCopies = async (copies: number) => {
@@ -351,32 +400,99 @@ export default function PrinterSettingsScreen() {
     setPosConfig(updated);
   };
 
-  // Test actions
+  // 1-Tap Quick Setup Presets
+  const handleApplyPreset = async (preset: 'counter' | 'kitchen' | 'mobile') => {
+    let newSettings: Partial<PosPrinterConfig> = {};
+    let presetLabel = '';
+
+    if (preset === 'counter') {
+      newSettings = {
+        paperWidth: '80mm',
+        copies: 1,
+        autoCut: true,
+        autoPrint: true,
+        openCashDrawer: true,
+      };
+      presetLabel = 'Counter POS';
+    } else if (preset === 'kitchen') {
+      newSettings = {
+        paperWidth: '80mm',
+        copies: 2,
+        autoCut: true,
+        autoPrint: true,
+        openCashDrawer: false,
+      };
+      presetLabel = 'Kitchen Station';
+    } else if (preset === 'mobile') {
+      newSettings = {
+        paperWidth: '58mm',
+        copies: 1,
+        autoCut: false,
+        autoPrint: true,
+        openCashDrawer: false,
+      };
+      presetLabel = 'Mobile Handheld';
+    }
+
+    const updated = await savePosPrinterConfig(newSettings, restaurantId);
+    setPosConfig(updated);
+
+    if (newSettings.paperWidth) {
+      try {
+        const activeTpl = await getActiveReceiptTemplate(restaurantId);
+        if (activeTpl && activeTpl.layout.paperWidth !== newSettings.paperWidth) {
+          await saveReceiptTemplate(
+            {
+              ...activeTpl,
+              layout: { ...activeTpl.layout, paperWidth: newSettings.paperWidth },
+            },
+            restaurantId,
+            true
+          );
+        }
+      } catch (err) {
+        console.warn('[PrinterSettings] Preset template sync error:', err);
+      }
+    }
+
+    showToast({
+      title: `${presetLabel} Applied`,
+      message: 'Printing preferences updated.',
+      type: 'success',
+    });
+  };
+
+  // Live Test Print
   const handleTestPrint = async () => {
     if (!isConfigured) {
       showToast({
         title: 'No Printer Connected',
-        message: 'Please search for or connect a printer before running a test.',
+        message: 'Please connect a printer before running a test print.',
         type: 'error',
       });
       return;
     }
 
     setIsTestingPrint(true);
+    setTestResult(null);
     showToast({ title: 'Testing Printer', message: 'Sending test receipt...', type: 'info' });
     try {
-      const result = await testEpsonPrinter(posConfig);
+      const result = await testEpsonPrinter(posConfig, restaurantId);
       if (result.success) {
-        showToast({ title: 'Test Print Success', message: result.message, type: 'success' });
+        setTestResult({ status: 'success', message: result.message || 'Test receipt printed successfully! Printer hardware is operational.' });
+        showToast({ title: 'Print Verified', message: result.message, type: 'success' });
       } else {
-        const fallback = await printSampleThermalReceipt();
+        const fallback = await printSampleThermalReceipt(restaurantId, posConfig);
         if (fallback) {
-          showToast({ title: 'Test Receipt Sent', message: 'Printed sample receipt successfully', type: 'success' });
+          setTestResult({ status: 'success', message: 'Sample receipt printed successfully!' });
+          showToast({ title: 'Receipt Printed', message: 'Printed sample receipt successfully', type: 'success' });
         } else {
-          showToast({ title: 'Print Error', message: result.message, type: 'error' });
+          setTestResult({ status: 'error', message: result.message || 'Printer did not respond. Check power, paper roll, and connection.' });
+          showToast({ title: 'Print Error', message: result.message || 'Printer communication failed', type: 'error' });
         }
       }
     } catch (e: any) {
+      setTestResult({ status: 'error', message: e.message || 'Failed to send test receipt to printer.' });
       showToast({ title: 'Print Error', message: 'Failed to send test receipt', type: 'error' });
     } finally {
       setIsTestingPrint(false);
@@ -389,547 +505,766 @@ export default function PrinterSettingsScreen() {
     try {
       const success = await openCashDrawer(restaurantId);
       if (success) {
-        showToast({ title: 'Cash Drawer Kicked', message: 'Drawer kick signal acknowledged', type: 'success' });
+        showToast({ title: 'Cash Drawer Kicked', message: 'Drawer kick pulse acknowledged', type: 'success' });
       } else {
-        showToast({ title: 'Drawer Notice', message: 'Could not pulse cash drawer. Check printer connection.', type: 'info' });
+        showToast({ title: 'Drawer Notice', message: 'Could not pulse cash drawer. Check printer RJ11 cable.', type: 'info' });
       }
     } finally {
       setIsTestingDrawer(false);
     }
   };
 
+  const openBluetoothSettings = async () => {
+    if (Platform.OS === 'android') {
+      try {
+        await Linking.sendIntent('android.settings.BLUETOOTH_SETTINGS');
+        return;
+      } catch { }
+    }
+    try {
+      await Linking.openSettings();
+    } catch (e) {
+      console.warn('Could not open system settings:', e);
+    }
+  };
+
+  const handleTestCalibration = async () => {
+    if (!isConfigured) {
+      showToast({
+        title: 'No Printer Connected',
+        message: 'Please connect a printer before running calibration.',
+        type: 'error',
+      });
+      return;
+    }
+
+    setIsTestingCalibration(true);
+    showToast({ title: 'Printing Alignment Slip', message: 'Testing ruler, columns & margins...', type: 'info' });
+    try {
+      const result = await testPrinterAlignmentSlip(posConfig);
+      if (result.success) {
+        showToast({ title: 'Calibration Printed', message: result.message, type: 'success' });
+      } else {
+        showToast({ title: 'Calibration Notice', message: result.message, type: 'error' });
+      }
+    } catch (e: any) {
+      showToast({ title: 'Print Error', message: 'Failed to send calibration slip', type: 'error' });
+    } finally {
+      setIsTestingCalibration(false);
+    }
+  };
+
   const arch = getArchitectureDetails(posConfig, activeProfile);
+
+  // Active preset determination
+  const isCounterActive =
+    posConfig.paperWidth === '80mm' &&
+    posConfig.copies === 1 &&
+    posConfig.autoCut === true &&
+    posConfig.openCashDrawer === true;
+
+  const isKitchenActive =
+    posConfig.paperWidth === '80mm' &&
+    posConfig.copies === 2 &&
+    posConfig.autoCut === true &&
+    posConfig.openCashDrawer === false;
+
+  const isMobileActive =
+    posConfig.paperWidth === '58mm' &&
+    posConfig.copies === 1 &&
+    posConfig.autoCut === false;
 
   return (
     <View style={styles.container}>
-      <Header title="Receipt printing" showBackButton={true} />
+      <Header title="Receipt Printing" showBackButton={true} />
 
       <ScrollView contentContainerStyle={styles.scrollBody} showsVerticalScrollIndicator={false}>
         {/* ========================================================================= */}
-        {/* UBER EATS MASTER TOGGLE: Receipt printing enabled                         */}
+        {/* STATION MASTER SWITCH                                                     */}
         {/* ========================================================================= */}
-        <View style={styles.uberCard}>
+        <View style={styles.masterCard}>
           <View style={styles.masterRow}>
-            <View style={styles.masterIconCircle}>
-              <Printer size={22} color={receiptPrintingEnabled ? Colors.primary : Colors.textMuted} />
+            <View style={[styles.masterIconTile, receiptPrintingEnabled && styles.masterIconTileActive]}>
+              <Printer size={22} color={receiptPrintingEnabled ? '#059669' : '#64748B'} />
             </View>
-            <View style={{ flex: 1, marginRight: 12 }}>
-              <Text style={styles.masterTitle}>Receipt printing</Text>
+            <View style={styles.masterContent}>
+              <Text style={styles.masterTitle}>Receipt Printing Station</Text>
               <Text style={styles.masterSubtitle}>
-                {receiptPrintingEnabled ? 'Receipt printing is enabled for this station' : 'Receipt printing is turned off'}
+                {receiptPrintingEnabled ? 'Printing enabled for this POS station' : 'Printing is turned off for this station'}
               </Text>
             </View>
             <Switch
               value={receiptPrintingEnabled}
               onValueChange={handleToggleMasterPrinting}
-              trackColor={{ false: Colors.cardBorder, true: '#10B981' }}
+              trackColor={{ false: '#E2E8F0', true: '#059669' }}
               thumbColor="#FFFFFF"
             />
           </View>
         </View>
 
-        {/* Receipt Customization Banner */}
-        <TouchableOpacity
-          style={styles.customizationBannerCard}
-          onPress={() =>
-            router.push({
-              pathname: '/receipt-customization',
-              params: restaurantId ? { restaurantId } : {},
-            })
-          }
-          activeOpacity={0.85}
-        >
-          <View style={styles.customizationIconContainer}>
-            <Sparkles size={20} color="#FF5C39" />
-          </View>
-          <View style={{ flex: 1, paddingRight: 8 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <Text style={styles.customizationTitle}>Receipt Templates</Text>
-              <View style={styles.customizationNewBadge}>
-                <Text style={styles.customizationNewBadgeText}>CUSTOMIZE</Text>
-              </View>
-            </View>
-            {/* <Text style={styles.customizationSubtitle}>
-              Personalize layout, fonts, logo, alignments, QR code & custom messages
-            </Text> */}
-          </View>
-          <ChevronRight size={18} color="#94A3B8" />
-        </TouchableOpacity>
-
         {receiptPrintingEnabled && (
           <>
-            {/* ========================================================================= */}
-            {/* UBER EATS CONNECTED PRINTER SECTION                                      */}
-            {/* ========================================================================= */}
-            <View style={styles.sectionBlock}>
-              <Text style={styles.uberSectionHeader}>CONNECTED PRINTER</Text>
+            {/* ===================================================================== */}
+            {/* 1. CONNECTED PRINTER HERO (Primary Focal Point)                       */}
+            {/* ===================================================================== */}
+            <View style={[styles.connectedHeroCard, isConfigured ? styles.connectedHeroCardActive : styles.connectedHeroCardInactive]}>
+              {/* Status Header Bar */}
+              <View style={styles.heroStatusRow}>
+                <View style={styles.heroStatusBadge}>
+                  <View
+                    style={[
+                      styles.heroStatusDot,
+                      isConfigured
+                        ? isTestingPrint
+                          ? styles.statusDotAmber
+                          : styles.statusDotGreen
+                        : styles.statusDotMuted,
+                    ]}
+                  />
+                  <Text style={[styles.heroStatusText, !isConfigured && styles.heroStatusTextMuted]}>
+                    {isConfigured
+                      ? isTestingPrint
+                        ? 'SENDING TEST PRINT...'
+                        : 'CONNECTED & READY'
+                      : 'NO PRINTER CONNECTED'}
+                  </Text>
+                </View>
+                {isConfigured && (
+                  <Text style={styles.heroStationLabel}>PRIMARY POS PRINTER</Text>
+                )}
+              </View>
 
-              {isConfigured ? (
-                /* Connected State Card */
-                <View style={styles.connectedPrinterCard}>
-                  <View style={styles.connectedTopRow}>
-                    <View style={styles.connectedIconBox}>
-                      <Printer size={24} color="#10B981" />
-                    </View>
-                    <View style={{ flex: 1, marginRight: 8 }}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                        <View style={styles.greenPulseDot} />
-                        <Text style={styles.connectedStatusText}>Connected</Text>
-                      </View>
-                      <Text style={styles.connectedPrinterName} numberOfLines={1}>
-                        {arch.title}
-                      </Text>
-                      <Text style={styles.connectedDetailsText} numberOfLines={1}>
-                        {arch.transportBadge} • {arch.targetSummary}
-                      </Text>
-                    </View>
+              {/* Printer Details */}
+              <View style={styles.heroDetailsRow}>
+                <View style={[styles.heroPrinterIconTile, isConfigured && styles.heroPrinterIconTileActive]}>
+                  {posConfig.connectionType === 'builtin' ? (
+                    <Smartphone size={24} color="#059669" />
+                  ) : posConfig.connectionType === 'network' ? (
+                    <Wifi size={24} color="#059669" />
+                  ) : posConfig.connectionType === 'system' ? (
+                    <FileText size={24} color="#059669" />
+                  ) : (
+                    <Printer size={24} color={isConfigured ? '#059669' : '#94A3B8'} />
+                  )}
+                </View>
+                <View style={styles.heroTextContainer}>
+                  <Text style={styles.heroPrinterTitle} numberOfLines={1}>
+                    {arch.title}
+                  </Text>
+                  <Text style={styles.heroPrinterSubtitle} numberOfLines={1}>
+                    {arch.targetSummary}
+                  </Text>
+                </View>
+              </View>
+
+              {/* Hardware Spec Badges */}
+              {isConfigured && (
+                <View style={styles.heroSpecsRow}>
+                  <View style={styles.heroSpecChip}>
+                    <Text style={styles.heroSpecChipText}>{arch.transportBadge}</Text>
                   </View>
+                  <View style={styles.heroSpecChip}>
+                    <Text style={styles.heroSpecChipText}>
+                      {posConfig.paperWidth === '80mm' ? '80mm Roll (48 Cols)' : '58mm Roll (32 Cols)'}
+                    </Text>
+                  </View>
+                  <View style={styles.heroSpecChip}>
+                    <Text style={styles.heroSpecChipText}>
+                      {posConfig.autoCut ? 'Auto-Cut ON' : 'Tear Bar'}
+                    </Text>
+                  </View>
+                  <View style={styles.heroSpecChip}>
+                    <Text style={styles.heroSpecChipText}>
+                      {posConfig.copies || 1} {posConfig.copies === 2 ? 'Copies' : 'Copy'}
+                    </Text>
+                  </View>
+                </View>
+              )}
 
-                  {/* Uber Eats Action Row on Connected Card */}
-                  <View style={styles.connectedActionRow}>
+              {/* Inline Live Test Alert */}
+              {testResult && (
+                <View
+                  style={[
+                    styles.inlineAlertBox,
+                    testResult.status === 'success' ? styles.inlineAlertSuccess : styles.inlineAlertError,
+                  ]}
+                >
+                  {testResult.status === 'success' ? (
+                    <CheckCircle2 size={16} color="#059669" style={{ marginTop: 1 }} />
+                  ) : (
+                    <AlertCircle size={16} color="#DC2626" style={{ marginTop: 1 }} />
+                  )}
+                  <Text
+                    style={[
+                      styles.inlineAlertText,
+                      testResult.status === 'success' ? styles.inlineAlertTextSuccess : styles.inlineAlertTextError,
+                    ]}
+                  >
+                    {testResult.message}
+                  </Text>
+                </View>
+              )}
+
+              {/* Actions Divider */}
+              <View style={styles.heroDivider} />
+
+              {/* Primary & Secondary Action Buttons */}
+              {isConfigured ? (
+                <View style={styles.heroActionsContainer}>
+                  {/* Primary 48px Action: Test Print */}
+                  <TouchableOpacity
+                    style={[styles.primaryTestBtn, isTestingPrint && styles.btnDisabled]}
+                    onPress={handleTestPrint}
+                    disabled={isTestingPrint}
+                    activeOpacity={0.8}
+                  >
+                    {isTestingPrint ? (
+                      <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 8 }} />
+                    ) : (
+                      <Printer size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
+                    )}
+                    <Text style={styles.primaryTestBtnText}>
+                      {isTestingPrint ? 'Printing Test Receipt...' : 'Print Test Receipt'}
+                    </Text>
+                  </TouchableOpacity>
+
+                  {/* Secondary Actions Row */}
+                  <View style={styles.heroSecondaryActionsRow}>
                     <TouchableOpacity
-                      style={styles.uberTestBtn}
-                      onPress={handleTestPrint}
-                      disabled={isTestingPrint}
-                      activeOpacity={0.8}
+                      style={styles.secondarySetupBtn}
+                      onPress={() => setShowSetupWizard(true)}
+                      activeOpacity={0.7}
                     >
-                      {isTestingPrint ? (
-                        <ActivityIndicator size="small" color={Colors.text} />
-                      ) : (
-                        <>
-                          <Printer size={15} color={Colors.text} />
-                          <Text style={styles.uberTestBtnText}>Test print receipt</Text>
-                        </>
-                      )}
+                      <Wrench size={16} color="#065F46" style={{ marginRight: 6 }} />
+                      <Text style={styles.secondarySetupBtnText}>Setup Wizard</Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity
-                      style={styles.uberDisconnectBtn}
+                      style={styles.secondaryDisconnectBtn}
                       onPress={handleDisconnectPrinter}
                       activeOpacity={0.7}
                     >
-                      <Text style={styles.uberDisconnectBtnText}>Disconnect</Text>
+                      <XCircle size={16} color="#DC2626" style={{ marginRight: 6 }} />
+                      <Text style={styles.secondaryDisconnectBtnText}>Disconnect</Text>
                     </TouchableOpacity>
                   </View>
                 </View>
               ) : (
-                /* Not Connected Card with "Search for printer" */
-                <View style={styles.notConnectedCard}>
-                  <View style={styles.notConnectedTopRow}>
-                    <View style={styles.notConnectedIconBox}>
-                      <Printer size={24} color={Colors.textMuted} />
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                        <View style={styles.grayDot} />
-                        <Text style={styles.notConnectedStatusText}>No printer connected</Text>
-                      </View>
-                      <Text style={styles.notConnectedSub}>
-                        Connect your Bluetooth or local network receipt printer.
-                      </Text>
-                    </View>
+                  /* Empty state prompt */
+                  <View style={styles.emptyConnectContainer}>
+                    <Text style={styles.emptyConnectSubtitle}>
+                      Connect your POS receipt printer via Bluetooth, local Network IP, or built-in hardware.
+                    </Text>
+                    <TouchableOpacity
+                      style={styles.heroLaunchWizardBtn}
+                      onPress={() => setShowSetupWizard(true)}
+                      activeOpacity={0.85}
+                    >
+                      <Sparkles size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
+                      <Text style={styles.heroLaunchWizardBtnText}>Setup Printer</Text>
+                    </TouchableOpacity>
                   </View>
+              )}
+            </View>
 
+            {/* ===================================================================== */}
+            {/* 2. RECEIPT TEMPLATE (Active Template Showcase)                        */}
+            {/* ===================================================================== */}
+            <View style={[styles.sectionHeaderRow, styles.sectionHeaderRowBetween]}>
+              <Text style={styles.sectionTitle}>RECEIPT TEMPLATE</Text>
+              <TouchableOpacity
+                onPress={() =>
+                  router.push({
+                    pathname: '/receipt-customization',
+                    params: restaurantId ? { restaurantId } : {},
+                  })
+                }
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.sectionHeaderAction}>Customize</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Active Template Showcase Card */}
+            <TouchableOpacity
+              style={styles.templateHeroCard}
+              onPress={() =>
+                router.push({
+                  pathname: '/receipt-customization',
+                  params: restaurantId ? { restaurantId } : {},
+                })
+              }
+              activeOpacity={0.75}
+            >
+              {/* Card Top Row: Branded Icon Tile, Name & Active Tag, Edit Pill */}
+              <View style={styles.templateCardTopRow}>
+                <View style={styles.templateIconTileEnhanced}>
+                  <Sparkles size={20} color="#EA580C" />
+                </View>
+
+                <View style={styles.templateHeaderContent}>
+                  <View style={styles.templateLiveTagRow}>
+                    <View style={styles.liveIndicatorDot} />
+                    <Text style={styles.templateLiveTagText}>CURRENT TEMPLATE</Text>
+                  </View>
+                  <Text style={styles.templateHeroTitle} numberOfLines={1}>
+                    {activeTemplate?.name || 'Standard POS Receipt'}
+                  </Text>
+                </View>
+
+              </View>
+
+
+              {/* Active Layout Spec Chips */}
+              <View style={styles.templateChipsRow}>
+                <View style={styles.templateChipHighlight}>
+                  <Text style={styles.templateChipHighlightText}>
+                    {(activeTemplate?.layout?.paperWidth || posConfig.paperWidth) === '80mm'
+                      ? '80mm Wide (48 col)'
+                      : '58mm Roll (32 col)'}
+                  </Text>
+                </View>
+
+                <View style={styles.templateChipNeutral}>
+                  <Text style={styles.templateChipNeutralText}>
+                    {activeTemplate?.layout?.fontSize
+                      ? activeTemplate.layout.fontSize.charAt(0).toUpperCase() +
+                      activeTemplate.layout.fontSize.slice(1)
+                      : 'Medium'}{' '}
+                    Font
+                  </Text>
+                </View>
+
+                {activeTemplate?.content?.showTaxId ? (
+                  <View style={styles.templateChipNeutral}>
+                    <Text style={styles.templateChipNeutralText}>Tax / VAT</Text>
+                  </View>
+                ) : null}
+
+                {activeTemplate?.content?.showQrCode ? (
+                  <View style={styles.templateChipNeutral}>
+                    <Text style={styles.templateChipNeutralText}>QR Code</Text>
+                  </View>
+                ) : null}
+
+                {activeTemplate?.content?.showLogo ? (
+                  <View style={styles.templateChipNeutral}>
+                    <Text style={styles.templateChipNeutralText}>Store Logo</Text>
+                  </View>
+                ) : null}
+
+                {activeTemplate?.content?.showItemNotes ? (
+                  <View style={styles.templateChipNeutral}>
+                    <Text style={styles.templateChipNeutralText}>Notes</Text>
+                  </View>
+                ) : null}
+              </View>
+
+              {/* Footer Helper */}
+              <View style={styles.templateCardFooter}>
+                <Text style={styles.templateCardFooterText}>
+                  Tap to edit header, store details, fonts & footer notes
+                </Text>
+                <ChevronRight size={14} color="#94A3B8" />
+              </View>
+            </TouchableOpacity>
+
+            {/* ===================================================================== */}
+            {/* 4. PAPER & LAYOUT (Paper Configuration)                              */}
+            {/* ===================================================================== */}
+            <View style={styles.sectionHeaderRow}>
+              <Text style={styles.sectionTitle}>PAPER & LAYOUT</Text>
+              {/* <Text style={styles.sectionSubtitle}>Roll size, column grid, and receipt template</Text> */}
+            </View>
+
+            {/* Selectable Paper Size Cards */}
+            <View style={styles.paperSizesContainer}>
+              {/* 80mm Card */}
+              <TouchableOpacity
+                style={[
+                  styles.paperSizeCard,
+                  posConfig.paperWidth === '80mm' && styles.paperSizeCardSelected,
+                ]}
+                onPress={() => handleSetPaperWidth('80mm')}
+                activeOpacity={0.8}
+              >
+                <View style={styles.paperSizeCardHeader}>
+                  <View style={{ flex: 1 }}>
+                    <View style={styles.paperSizeTitleRow}>
+                      <Text style={styles.paperSizeTitle}>80mm Standard Roll (3-Inch)</Text>
+
+                    </View>
+
+                  </View>
+                  <View
+                    style={[
+                      styles.radioCircle,
+                      posConfig.paperWidth === '80mm' && styles.radioCircleSelected,
+                    ]}
+                  >
+                    {posConfig.paperWidth === '80mm' && <Check size={14} color="#FFFFFF" />}
+                  </View>
+                </View>
+
+                <View style={styles.paperSpecsRow}>
+                  <View style={styles.paperSpecTag}>
+                    <Text style={styles.paperSpecTagText}>48 Columns Wide</Text>
+                  </View>
+                  <View style={styles.paperSpecTag}>
+                    <Text style={styles.paperSpecTagText}>Standard Desktop POS</Text>
+                  </View>
+                </View>
+              </TouchableOpacity>
+
+              {/* 58mm Card */}
+              <TouchableOpacity
+                style={[
+                  styles.paperSizeCard,
+                  posConfig.paperWidth === '58mm' && styles.paperSizeCardSelected,
+                ]}
+                onPress={() => handleSetPaperWidth('58mm')}
+                activeOpacity={0.8}
+              >
+                <View style={styles.paperSizeCardHeader}>
+                  <View style={{ flex: 1 }}>
+                    <View style={styles.paperSizeTitleRow}>
+                      <Text style={styles.paperSizeTitle}>58mm Compact Roll (2-Inch)</Text>
+
+                    </View>
+
+                  </View>
+                  <View
+                    style={[
+                      styles.radioCircle,
+                      posConfig.paperWidth === '58mm' && styles.radioCircleSelected,
+                    ]}
+                  >
+                    {posConfig.paperWidth === '58mm' && <Check size={14} color="#FFFFFF" />}
+                  </View>
+                </View>
+
+                <View style={styles.paperSpecsRow}>
+                  <View style={styles.paperSpecTag}>
+                    <Text style={styles.paperSpecTagText}>32 Columns Wide</Text>
+                  </View>
+                  <View style={styles.paperSpecTag}>
+                    <Text style={styles.paperSpecTagText}>Mobile Wireless</Text>
+                  </View>
+                </View>
+              </TouchableOpacity>
+            </View>
+
+            {/* ===================================================================== */}
+            {/* 3. RECEIPT BEHAVIOR (Printing Preferences)                            */}
+            {/* ===================================================================== */}
+            <View style={styles.sectionHeaderRow}>
+              <Text style={styles.sectionTitle}>RECEIPT BEHAVIOR</Text>
+              {/* <Text style={styles.sectionSubtitle}>Station profile & printing automations</Text> */}
+            </View>
+
+            {/* Receipt Behavior Settings Card */}
+            <View style={styles.groupedSettingsCard}>
+
+
+              {/* Number of copies (Segmented Control) */}
+              <View style={styles.settingRowColumn}>
+                <View style={styles.settingTextContainer}>
+                  <Text style={styles.settingTitle}>Number of copies</Text>
+                  <Text style={styles.settingSubtitle}>1 copy (Customer) or 2 copies (Kitchen + Customer)</Text>
+                </View>
+
+                {/* 44px Segmented Control */}
+                <View style={styles.segmentedControlWrap}>
                   <TouchableOpacity
-                    style={styles.uberPrimaryBtn}
-                    onPress={() => setShowBtModal(true)}
+                    style={[
+                      styles.segmentBtn,
+                      (posConfig.copies || 1) === 1 && styles.segmentBtnActive,
+                    ]}
+                    onPress={() => handleSetCopies(1)}
                     activeOpacity={0.8}
                   >
-                    <Search size={16} color="#FFFFFF" />
-                    <Text style={styles.uberPrimaryBtnText}>Search for Printer</Text>
+                    <Text
+                      style={[
+                        styles.segmentBtnText,
+                        (posConfig.copies || 1) === 1 && styles.segmentBtnTextActive,
+                      ]}
+                    >
+                      1 copy
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.segmentBtn,
+                      posConfig.copies === 2 && styles.segmentBtnActive,
+                    ]}
+                    onPress={() => handleSetCopies(2)}
+                    activeOpacity={0.8}
+                  >
+                    <Text
+                      style={[
+                        styles.segmentBtnText,
+                        posConfig.copies === 2 && styles.segmentBtnTextActive,
+                      ]}
+                    >
+                      2 copies
+                    </Text>
                   </TouchableOpacity>
                 </View>
-              )}
-            </View>
-
-            {/* ========================================================================= */}
-            {/* UBER EATS CONNECTION METHODS (Select or Change Connection)                */}
-            {/* ========================================================================= */}
-            <View style={styles.sectionBlock}>
-              <Text style={styles.uberSectionHeader}>CONNECT A PRINTER</Text>
-
-              <View style={styles.uberCardGroup}>
-                {/* 1. Bluetooth Wireless (Recommended for TM-m30 / Star TSP143) */}
-                <TouchableOpacity
-                  style={styles.uberListRow}
-                  onPress={() => handleSelectConnectionType('bluetooth')}
-                  activeOpacity={0.7}
-                >
-                  <View style={[styles.methodIconBox, { backgroundColor: 'rgba(59, 130, 246, 0.1)' }]}>
-                    <Bluetooth size={18} color="#2563EB" />
-                  </View>
-                  <View style={{ flex: 1, marginRight: 8 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                      <Text style={styles.methodTitle}>Bluetooth Printer</Text>
-                      <View style={styles.recBadgePill}>
-                        <Text style={styles.recBadgePillText}>RECOMMENDED</Text>
-                      </View>
-                    </View>
-                    <Text style={styles.methodSubtitle}>
-                      {posConfig.connectionType === 'bluetooth' && (posConfig.target || posConfig.macAddress)
-                        ? `Connected: ${posConfig.target || posConfig.macAddress}`
-                        : 'Epson TM-m30, Star Micronics TSP143 & portable wireless'}
-                    </Text>
-                  </View>
-                  <ChevronRight size={18} color={Colors.textMuted} />
-                </TouchableOpacity>
-
-                {/* 2. Network (LAN / Wi-Fi IP) */}
-                <TouchableOpacity
-                  style={styles.uberListRow}
-                  onPress={() => {
-                    handleSelectConnectionType('network');
-                    setShowIpSetup(true);
-                  }}
-                  activeOpacity={0.7}
-                >
-                  <View style={[styles.methodIconBox, { backgroundColor: 'rgba(16, 185, 129, 0.1)' }]}>
-                    <Wifi size={18} color="#059669" />
-                  </View>
-                  <View style={{ flex: 1, marginRight: 8 }}>
-                    <Text style={styles.methodTitle}>Network IP (Ethernet / Wi-Fi)</Text>
-                    <Text style={styles.methodSubtitle}>
-                      {posConfig.connectionType === 'network' && posConfig.ipAddress
-                        ? `Connected IP: ${posConfig.ipAddress}:${posConfig.port}`
-                        : 'Epson ePOS (Port 8008) or Universal ESC/POS (Port 9100)'}
-                    </Text>
-                  </View>
-                  <ChevronRight size={18} color={Colors.textMuted} />
-                </TouchableOpacity>
-
-                {/* 3. Sunmi Built-in POS Terminal */}
-                <TouchableOpacity
-                  style={styles.uberListRow}
-                  onPress={() => handleSelectConnectionType('builtin')}
-                  activeOpacity={0.7}
-                >
-                  <View style={[styles.methodIconBox, { backgroundColor: 'rgba(255, 92, 57, 0.1)' }]}>
-                    <Smartphone size={18} color={Colors.primary} />
-                  </View>
-                  <View style={{ flex: 1, marginRight: 8 }}>
-                    <Text style={styles.methodTitle}>Built-in Terminal</Text>
-                    <Text style={styles.methodSubtitle}>
-                      {isSunmiHardware ? 'Sunmi POS internal high-speed printer ready' : 'Sunmi Android POS devices (V2, T2, V3 MIX)'}
-                    </Text>
-                  </View>
-                  <ChevronRight size={18} color={Colors.textMuted} />
-                </TouchableOpacity>
-
-                {/* 4. AirPrint / System Spooler */}
-                <TouchableOpacity
-                  style={[styles.uberListRow, { borderBottomWidth: 0 }]}
-                  onPress={() => handleSelectConnectionType('system')}
-                  activeOpacity={0.7}
-                >
-                  <View style={[styles.methodIconBox, { backgroundColor: 'rgba(100, 116, 139, 0.1)' }]}>
-                    <FileText size={18} color="#475569" />
-                  </View>
-                  <View style={{ flex: 1, marginRight: 8 }}>
-                    <Text style={styles.methodTitle}>System Spooler (AirPrint / PDF)</Text>
-                    <Text style={styles.methodSubtitle}>Standard iOS AirPrint & Android print sheet</Text>
-                  </View>
-                  <ChevronRight size={18} color={Colors.textMuted} />
-                </TouchableOpacity>
               </View>
 
-              {/* Collapsible Network IP Setup Form */}
-              {showIpSetup && (
-                <View style={styles.ipSetupBox}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-                    <Text style={styles.ipSetupTitle}>Configure Network Printer IP</Text>
-                    <TouchableOpacity onPress={() => setShowIpSetup(false)}>
-                      <Text style={styles.cancelLinkText}>Close</Text>
-                    </TouchableOpacity>
-                  </View>
+              <View style={styles.settingSeparator} />
 
-                  <View style={{ flexDirection: 'row', gap: 10 }}>
-                    <View style={{ flex: 3 }}>
-                      <Text style={styles.inputMiniLabel}>Printer IP Address</Text>
-                      <TextInput
-                        style={styles.uberTextInput}
-                        value={printerIpInput}
-                        onChangeText={setPrinterIpInput}
-                        placeholder="e.g. 192.168.1.100"
-                        placeholderTextColor={Colors.textSubtle}
-                        keyboardType="decimal-pad"
-                        autoCapitalize="none"
-                      />
-                    </View>
-                    <View style={{ flex: 1.3 }}>
-                      <Text style={styles.inputMiniLabel}>Port</Text>
-                      <TextInput
-                        style={styles.uberTextInput}
-                        value={printerPortInput}
-                        onChangeText={setPrinterPortInput}
-                        placeholder="9100 / 8008"
-                        placeholderTextColor={Colors.textSubtle}
-                        keyboardType="numeric"
-                      />
-                    </View>
-                  </View>
+              {/* Auto-print orders */}
+              <View style={styles.settingRow}>
+                <View style={styles.settingTextContainer}>
+                  <Text style={styles.settingTitle}>Auto-print orders</Text>
+                  <Text style={styles.settingSubtitle}>Print receipt automatically when an order arrives</Text>
+                </View>
+                <Switch
+                  value={posConfig.autoPrint !== false}
+                  onValueChange={handleToggleAutoPrint}
+                  trackColor={{ false: '#E2E8F0', true: '#059669' }}
+                  thumbColor="#FFFFFF"
+                />
+              </View>
 
-                  <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+              <View style={styles.settingSeparator} />
+
+              {/* Cut receipt */}
+              <View style={styles.settingRow}>
+                <View style={styles.settingTextContainer}>
+                  <Text style={styles.settingTitle}>Cut receipt</Text>
+                  <Text style={styles.settingSubtitle}>Automatically cut paper after each receipt is printed</Text>
+                </View>
+                <Switch
+                  value={posConfig.autoCut ?? true}
+                  onValueChange={handleToggleAutoCut}
+                  trackColor={{ false: '#E2E8F0', true: '#059669' }}
+                  thumbColor="#FFFFFF"
+                />
+              </View>
+
+              <View style={styles.settingSeparator} />
+
+              {/* Cash Drawer */}
+              <View style={styles.settingRow}>
+                <View style={styles.settingTextContainer}>
+                  <Text style={styles.settingTitle}>Open cash drawer</Text>
+                  <Text style={styles.settingSubtitle}>Kick drawer open when order payment is cash</Text>
+                </View>
+                <Switch
+                  value={posConfig.openCashDrawer ?? true}
+                  onValueChange={handleToggleCashDrawer}
+                  trackColor={{ false: '#E2E8F0', true: '#059669' }}
+                  thumbColor="#FFFFFF"
+                />
+              </View>
+            </View>
+
+
+            {/* ===================================================================== */}
+            {/* 5. TESTING & TROUBLESHOOTING                                          */}
+            {/* ===================================================================== */}
+            <View style={styles.sectionHeaderRow}>
+              <Text style={styles.sectionTitle}>TESTING & TROUBLESHOOTING</Text>
+              {/* <Text style={styles.sectionSubtitle}>Hardware diagnostics and issue resolution</Text> */}
+            </View>
+
+            {/* Hardware Diagnostics Card */}
+            <View style={styles.groupedListCard}>
+              {/* Test 1: Test Print Receipt */}
+              <TouchableOpacity
+                style={styles.listRowTouchable}
+                onPress={handleTestPrint}
+                disabled={isTestingPrint}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.listRowIconTile, { backgroundColor: '#F0FDF4' }]}>
+                  {isTestingPrint ? (
+                    <ActivityIndicator size="small" color="#059669" />
+                  ) : (
+                      <Printer size={20} color="#059669" />
+                  )}
+                </View>
+                <View style={styles.listRowTextContainer}>
+                  <Text style={styles.listRowTitle}>Test print receipt</Text>
+                  <Text style={styles.listRowSubtitle}>Send a sample customer order to verify live printing</Text>
+                </View>
+                <ChevronRight size={18} color="#94A3B8" />
+              </TouchableOpacity>
+
+              <View style={styles.listRowSeparator} />
+
+
+
+              {/* Test 3: Test Cash Drawer */}
+              <TouchableOpacity
+                style={styles.listRowTouchable}
+                onPress={handleOpenCashDrawerTest}
+                disabled={isTestingDrawer}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.listRowIconTile, { backgroundColor: '#F8FAFC' }]}>
+                  {isTestingDrawer ? (
+                    <ActivityIndicator size="small" color="#475569" />
+                  ) : (
+                      <DollarSign size={20} color="#475569" />
+                  )}
+                </View>
+                <View style={styles.listRowTextContainer}>
+                  <Text style={styles.listRowTitle}>Test cash drawer</Text>
+                  <Text style={styles.listRowSubtitle}>Send drawer pulse without printing paper</Text>
+                </View>
+                <ChevronRight size={18} color="#94A3B8" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Troubleshooting Accordions (Progressive Disclosure) */}
+            <View style={styles.faqCard}>
+              <View style={styles.faqHeader}>
+                <HelpCircle size={18} color="#64748B" />
+                <Text style={styles.faqHeaderTitle}>Hardware Troubleshooting Guide</Text>
+              </View>
+
+              {/* Accordion 1: Blank Paper */}
+              <TouchableOpacity
+                style={styles.faqItem}
+                onPress={() => setExpandedFaq(expandedFaq === 'blank' ? null : 'blank')}
+                activeOpacity={0.7}
+              >
+                <View style={styles.faqQuestionRow}>
+                  <Text style={styles.faqQuestionText}>Blank paper is feeding through?</Text>
+                  {expandedFaq === 'blank' ? (
+                    <ChevronUp size={16} color="#64748B" />
+                  ) : (
+                    <ChevronDown size={16} color="#94A3B8" />
+                  )}
+                </View>
+                {expandedFaq === 'blank' && (
+                  <View style={styles.faqAnswerBox}>
+                    <Text style={styles.faqAnswerText}>
+                      Thermal paper only prints on one side. If paper feeds but has no ink, open the roll lid and turn the paper roll over so the coated side faces the thermal printhead.
+                    </Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+
+              <View style={styles.faqItemSeparator} />
+
+              {/* Accordion 2: Prices cut off */}
+              <TouchableOpacity
+                style={styles.faqItem}
+                onPress={() => setExpandedFaq(expandedFaq === 'cutoff' ? null : 'cutoff')}
+                activeOpacity={0.7}
+              >
+                <View style={styles.faqQuestionRow}>
+                  <Text style={styles.faqQuestionText}>Prices or item names are cut off?</Text>
+                  {expandedFaq === 'cutoff' ? (
+                    <ChevronUp size={16} color="#64748B" />
+                  ) : (
+                    <ChevronDown size={16} color="#94A3B8" />
+                  )}
+                </View>
+                {expandedFaq === 'cutoff' && (
+                  <View style={styles.faqAnswerBox}>
+                    <Text style={styles.faqAnswerText}>
+                      Ensure the selected paper size matches your hardware. If using a 58mm roll, select "58mm Compact Roll (2-Inch)" above to format the 32-column grid and prevent price truncation.
+                    </Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+
+              <View style={styles.faqItemSeparator} />
+
+              {/* Accordion 3: Bluetooth won't connect */}
+              <TouchableOpacity
+                style={styles.faqItem}
+                onPress={() => setExpandedFaq(expandedFaq === 'bluetooth' ? null : 'bluetooth')}
+                activeOpacity={0.7}
+              >
+                <View style={styles.faqQuestionRow}>
+                  <Text style={styles.faqQuestionText}>Bluetooth printer won't connect or pair?</Text>
+                  {expandedFaq === 'bluetooth' ? (
+                    <ChevronUp size={16} color="#64748B" />
+                  ) : (
+                    <ChevronDown size={16} color="#94A3B8" />
+                  )}
+                </View>
+                {expandedFaq === 'bluetooth' && (
+                  <View style={styles.faqAnswerBox}>
+                    <Text style={styles.faqAnswerText}>
+                      1. Check Android system Bluetooth settings and pair with your printer (PIN is typically 0000 or 1234).{'\n'}
+                      2. Ensure Location & Nearby Devices permissions are granted.{'\n'}
+                      3. Make sure the printer is not currently paired to another tablet.
+                    </Text>
                     <TouchableOpacity
-                      style={styles.scanSecondaryBtn}
-                      onPress={() => setShowBtModal(true)}
+                      style={styles.faqSystemBtn}
+                      onPress={openBluetoothSettings}
                       activeOpacity={0.7}
                     >
-                      <Search size={14} color={Colors.text} />
-                      <Text style={styles.scanSecondaryBtnText}>Auto-Discover</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      style={styles.savePrimaryBtn}
-                      onPress={handleSaveNetworkSettings}
-                      disabled={isSaving}
-                      activeOpacity={0.8}
-                    >
-                      {isSaving ? (
-                        <ActivityIndicator size="small" color="#FFFFFF" />
-                      ) : (
-                        <Text style={styles.savePrimaryBtnText}>Save & Connect</Text>
-                      )}
+                      <ExternalLink size={14} color="#059669" style={{ marginRight: 6 }} />
+                      <Text style={styles.faqSystemBtnText}>Open System Bluetooth Settings</Text>
                     </TouchableOpacity>
                   </View>
-                </View>
-              )}
-            </View>
+                )}
+              </TouchableOpacity>
 
-            {/* ========================================================================= */}
-            {/* UBER EATS PRINTING PREFERENCES                                           */}
-            {/* ========================================================================= */}
-            <View style={styles.sectionBlock}>
-              <Text style={styles.uberSectionHeader}>ORDER PRINTING PREFERENCES</Text>
+              <View style={styles.faqItemSeparator} />
 
-              <View style={styles.uberCardGroup}>
-                {/* Auto-print orders toggle */}
-                <View style={styles.preferenceRow}>
-                  <View style={{ flex: 1, marginRight: 10 }}>
-                    <Text style={styles.prefTitle}>Auto-print orders</Text>
-                    <Text style={styles.prefSubtitle}>Print receipt automatically when an order arrives</Text>
-                  </View>
-                  <Switch
-                    value={posConfig.autoPrint}
-                    onValueChange={handleToggleAutoPrint}
-                    trackColor={{ false: Colors.cardBorder, true: '#10B981' }}
-                    thumbColor="#FFFFFF"
-                  />
-                </View>
-
-                {/* Copies per order */}
-                <View style={styles.preferenceRow}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.prefTitle}>Number of copies</Text>
-                    <Text style={styles.prefSubtitle}>1 copy (Kitchen) or 2 copies (Kitchen + Customer)</Text>
-                  </View>
-                  <View style={styles.segmentGroup}>
-                    <TouchableOpacity
-                      style={[styles.segmentBtn, posConfig.copies === 1 && styles.segmentBtnActive]}
-                      onPress={() => handleSetCopies(1)}
-                      activeOpacity={0.8}
-                    >
-                      <Text style={[styles.segmentText, posConfig.copies === 1 && styles.segmentTextActive]}>1 copy</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.segmentBtn, posConfig.copies === 2 && styles.segmentBtnActive]}
-                      onPress={() => handleSetCopies(2)}
-                      activeOpacity={0.8}
-                    >
-                      <Text style={[styles.segmentText, posConfig.copies === 2 && styles.segmentTextActive]}>2 copies</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-
-                {/* Paper Roll Width */}
-                <View style={styles.preferenceRow}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.prefTitle}>Paper roll width</Text>
-                    <Text style={styles.prefSubtitle}>Synchronized with Receipt Customization (80mm or 58mm)</Text>
-                  </View>
-                  <View style={styles.segmentGroup}>
-                    <TouchableOpacity
-                      style={[styles.segmentBtn, posConfig.paperWidth === '80mm' && styles.segmentBtnActive]}
-                      onPress={() => handleSetPaperWidth('80mm')}
-                      activeOpacity={0.8}
-                    >
-                      <Text style={[styles.segmentText, posConfig.paperWidth === '80mm' && styles.segmentTextActive]}>80mm</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.segmentBtn, posConfig.paperWidth === '58mm' && styles.segmentBtnActive]}
-                      onPress={() => handleSetPaperWidth('58mm')}
-                      activeOpacity={0.8}
-                    >
-                      <Text style={[styles.segmentText, posConfig.paperWidth === '58mm' && styles.segmentTextActive]}>58mm</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-
-                {/* Auto-cut receipt */}
-                <View style={styles.preferenceRow}>
-                  <View style={{ flex: 1, marginRight: 10 }}>
-                    <Text style={styles.prefTitle}>Cut receipt</Text>
-                    <Text style={styles.prefSubtitle}>Automatically cut paper after each receipt is printed</Text>
-                  </View>
-                  <Switch
-                    value={posConfig.autoCut}
-                    onValueChange={handleToggleAutoCut}
-                    trackColor={{ false: Colors.cardBorder, true: '#10B981' }}
-                    thumbColor="#FFFFFF"
-                  />
-                </View>
-
-                {/* Open cash drawer */}
-                <View style={[styles.preferenceRow, { borderBottomWidth: 0 }]}>
-                  <View style={{ flex: 1, marginRight: 10 }}>
-                    <Text style={styles.prefTitle}>Open cash drawer</Text>
-                    <Text style={styles.prefSubtitle}>Kick drawer open when order payment is cash</Text>
-                  </View>
-                  <Switch
-                    value={posConfig.openCashDrawer}
-                    onValueChange={handleToggleCashDrawer}
-                    trackColor={{ false: Colors.cardBorder, true: '#10B981' }}
-                    thumbColor="#FFFFFF"
-                  />
-                </View>
-              </View>
-            </View>
-
-            {/* ========================================================================= */}
-            {/* TESTING & CASH DRAWER CONTROLS                                           */}
-            {/* ========================================================================= */}
-            <View style={styles.sectionBlock}>
-              <Text style={styles.uberSectionHeader}>TESTING & HARDWARE TOOLS</Text>
-
-              <View style={styles.uberCardGroup}>
-                <TouchableOpacity
-                  style={styles.uberActionRow}
-                  onPress={handleTestPrint}
-                  disabled={isTestingPrint}
-                  activeOpacity={0.7}
-                >
-                  <View style={styles.actionIconBox}>
-                    <Printer size={18} color={Colors.text} />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.actionRowTitle}>Test print receipt</Text>
-                    <Text style={styles.actionRowSubtitle}>Send a sample order ticket to verify printer output</Text>
-                  </View>
-                  {isTestingPrint ? (
-                    <ActivityIndicator size="small" color={Colors.primary} />
+              {/* Accordion 4: Cash Drawer */}
+              <TouchableOpacity
+                style={styles.faqItem}
+                onPress={() => setExpandedFaq(expandedFaq === 'drawer' ? null : 'drawer')}
+                activeOpacity={0.7}
+              >
+                <View style={styles.faqQuestionRow}>
+                  <Text style={styles.faqQuestionText}>Cash drawer does not kick open?</Text>
+                  {expandedFaq === 'drawer' ? (
+                    <ChevronUp size={16} color="#64748B" />
                   ) : (
-                    <ChevronRight size={18} color={Colors.textMuted} />
+                    <ChevronDown size={16} color="#94A3B8" />
                   )}
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[styles.uberActionRow, { borderBottomWidth: 0 }]}
-                  onPress={handleOpenCashDrawerTest}
-                  disabled={isTestingDrawer}
-                  activeOpacity={0.7}
-                >
-                  <View style={styles.actionIconBox}>
-                    <DollarSign size={18} color={Colors.text} />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.actionRowTitle}>Test cash drawer</Text>
-                    <Text style={styles.actionRowSubtitle}>Send drawer pulse without printing paper</Text>
-                  </View>
-                  {isTestingDrawer ? (
-                    <ActivityIndicator size="small" color={Colors.primary} />
-                  ) : (
-                    <ChevronRight size={18} color={Colors.textMuted} />
-                  )}
-                </TouchableOpacity>
-              </View>
-            </View>
-
-            {/* ========================================================================= */}
-            {/* UBER EATS TROUBLESHOOTING & HELP ACCORDION                                */}
-            {/* ========================================================================= */}
-            <View style={styles.sectionBlock}>
-              <Text style={styles.uberSectionHeader}>TROUBLESHOOTING & HELP</Text>
-
-              <View style={styles.uberCardGroup}>
-                {/* 1. Star Micronics Pairing */}
-                <TouchableOpacity
-                  style={styles.faqRow}
-                  onPress={() => setExpandedFaq(expandedFaq === 'star' ? null : 'star')}
-                  activeOpacity={0.7}
-                >
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.faqQuestion}>How to pair Star Micronics printers</Text>
-                  </View>
-                  {expandedFaq === 'star' ? <ChevronUp size={18} color={Colors.textMuted} /> : <ChevronDown size={18} color={Colors.textMuted} />}
-                </TouchableOpacity>
-                {expandedFaq === 'star' && (
+                </View>
+                {expandedFaq === 'drawer' && (
                   <View style={styles.faqAnswerBox}>
                     <Text style={styles.faqAnswerText}>
-                      1. Turn ON your Star printer.{'\n'}
-                      2. Locate the red PAIR button on the back of the device.{'\n'}
-                      3. Press and hold the PAIR button for 5 seconds until the green LED flashes.{'\n'}
-                      4. Open tablet Bluetooth settings and pair with your printer, then tap "Search for Printer" above.
+                      The cash drawer connects to the printer via an RJ11/RJ12 cable (phone-style connector) on the back of the thermal printer. Verify the cable is securely plugged into the DK (Drawer Kick) port.
                     </Text>
                   </View>
                 )}
-
-                {/* 2. Epson TM-m30 Pairing */}
-                <TouchableOpacity
-                  style={styles.faqRow}
-                  onPress={() => setExpandedFaq(expandedFaq === 'epson' ? null : 'epson')}
-                  activeOpacity={0.7}
-                >
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.faqQuestion}>How to connect Epson TM-m30 printers</Text>
-                  </View>
-                  {expandedFaq === 'epson' ? <ChevronUp size={18} color={Colors.textMuted} /> : <ChevronDown size={18} color={Colors.textMuted} />}
-                </TouchableOpacity>
-                {expandedFaq === 'epson' && (
-                  <View style={styles.faqAnswerBox}>
-                    <Text style={styles.faqAnswerText}>
-                      • Bluetooth: Make sure Bluetooth is turned ON in your tablet settings. Tap "Search for Printer" above and select your TM-m30.{'\n'}
-                      • Wi-Fi / Ethernet: Ensure your printer and tablet are on the same Wi-Fi network. Tap "Network IP", enter your printer's IP, and tap Save & Connect.
-                    </Text>
-                  </View>
-                )}
-
-                {/* 3. Paper Roll Direction */}
-                <TouchableOpacity
-                  style={[styles.faqRow, { borderBottomWidth: 0 }]}
-                  onPress={() => setExpandedFaq(expandedFaq === 'paper' ? null : 'paper')}
-                  activeOpacity={0.7}
-                >
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.faqQuestion}>How to load thermal paper roll</Text>
-                  </View>
-                  {expandedFaq === 'paper' ? <ChevronUp size={18} color={Colors.textMuted} /> : <ChevronDown size={18} color={Colors.textMuted} />}
-                </TouchableOpacity>
-                {expandedFaq === 'paper' && (
-                  <View style={styles.faqAnswerBox}>
-                    <Text style={styles.faqAnswerText}>
-                      Thermal paper must feed from the BOTTOM of the roll (facing upward). If the paper is loaded backwards, receipts will feed blank without any printed text.
-                    </Text>
-                  </View>
-                )}
-              </View>
+              </TouchableOpacity>
             </View>
 
-            {/* Architecture Pipeline Summary Badge (Subtle footer) */}
-            <View style={styles.architectureFooter}>
-              <Layers size={13} color={Colors.textMuted} />
-              <Text style={styles.architectureFooterText}>
-                5-Layer Pipeline: {arch.encoderName} → {arch.transportName}
-              </Text>
-            </View>
+
           </>
         )}
       </ScrollView>
 
-      {/* Bluetooth / Network Discovery Modal */}
+      {/* Bluetooth Discovery Modal */}
       <BluetoothPrinterModal
         visible={showBtModal}
         activeTarget={posConfig.target || posConfig.macAddress || posConfig.ipAddress}
         onClose={() => setShowBtModal(false)}
         onSelectPrinter={handlePairDevice}
+      />
+
+      {/* 3-Step Guided Printer Setup Wizard */}
+      <PrinterSetupWizardModal
+        visible={showSetupWizard}
+        onClose={() => setShowSetupWizard(false)}
+        restaurantId={restaurantId}
+        currentConfig={posConfig}
+        onComplete={(newCfg) => {
+          setPosConfig(newCfg);
+          loadActiveTemplate();
+          showToast({
+            title: 'Printer Ready',
+            message: 'Your printer has been successfully configured and tested.',
+            type: 'success',
+          });
+        }}
       />
     </View>
   );
@@ -940,7 +1275,7 @@ function getArchitectureDetails(config: PosPrinterConfig, profile: PrinterProfil
   if (!profile) {
     return {
       title: 'No Printer Connected',
-      transportBadge: 'Not connected',
+      transportBadge: 'Not Connected',
       targetSummary: 'Search for a printer to connect',
       encoderName: 'EscPosEncoder',
       transportName: 'Awaiting Printer Connection',
@@ -952,7 +1287,7 @@ function getArchitectureDetails(config: PosPrinterConfig, profile: PrinterProfil
     case 'network_epos':
       return {
         title: config.brand === 'epson' ? 'Epson TM-m30 / TM-T88 Network' : 'Network ePOS Printer',
-        transportBadge: 'Local Network (Wi-Fi/LAN)',
+        transportBadge: 'Wi-Fi / LAN (Port 8008)',
         targetSummary: `IP: ${profile.ipAddress}:${profile.port || 8008}`,
         encoderName: 'EposXmlEncoder',
         transportName: 'HttpEposTransport (Cached)',
@@ -961,8 +1296,8 @@ function getArchitectureDetails(config: PosPrinterConfig, profile: PrinterProfil
     case 'network_raw':
       return {
         title: 'Universal ESC/POS Network Printer',
-        transportBadge: 'Local Network (Port 9100)',
-        targetSummary: `IP: ${profile.ipAddress}:${profile.port}`,
+        transportBadge: 'Wi-Fi / LAN (Port 9100)',
+        targetSummary: `IP: ${profile.ipAddress}:${profile.port || 9100}`,
         encoderName: 'EscPosEncoder',
         transportName: 'TcpSocketTransport',
         classifierName: 'classifyRawByteResult',
@@ -970,7 +1305,7 @@ function getArchitectureDetails(config: PosPrinterConfig, profile: PrinterProfil
     case 'ble':
       return {
         title: 'Epson TM-m30 / TM-m10 Bluetooth',
-        transportBadge: 'Bluetooth Wireless (BLE)',
+        transportBadge: 'Bluetooth Low Energy (BLE)',
         targetSummary: `MAC: ${profile.macAddress}`,
         encoderName: 'EscPosEncoder',
         transportName: 'BleTransport',
@@ -988,8 +1323,8 @@ function getArchitectureDetails(config: PosPrinterConfig, profile: PrinterProfil
     case 'builtin':
       return {
         title: 'Sunmi POS Integrated Printer',
-        transportBadge: 'Internal Hardware',
-        targetSummary: 'Sunmi AIDL Native Service',
+        transportBadge: 'Sunmi Hardware AIDL',
+        targetSummary: 'Sunmi Internal Printer Service',
         encoderName: 'Direct Sunmi Native',
         transportName: 'SunmiTransport',
         classifierName: 'classifyRawByteResult',
@@ -1009,464 +1344,799 @@ function getArchitectureDetails(config: PosPrinterConfig, profile: PrinterProfil
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F6F6F6', // Uber Eats signature soft merchant gray background
+    backgroundColor: '#F8FAFC', // Slate 50
   },
   scrollBody: {
-    padding: 16,
+    paddingHorizontal: 16,
+    paddingTop: 16,
     paddingBottom: 48,
   },
 
-  /* Master Switch Card */
-  uberCard: {
+  /* Master Station Card */
+  masterCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 14,
+    borderRadius: 16,
     padding: 16,
-    marginBottom: 20,
+    marginBottom: 16,
     borderWidth: 1,
-    borderColor: '#E8E8E8',
-    shadowColor: '#000',
+    borderColor: '#E2E8F0',
+    shadowColor: '#0F172A',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.04,
-    shadowRadius: 4,
-    elevation: 2,
+    shadowRadius: 3,
+    elevation: 1,
   },
   masterRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    minHeight: 44,
   },
-  masterIconCircle: {
+  masterIconTile: {
     width: 44,
     height: 44,
-    borderRadius: 22,
-    backgroundColor: '#F3F4F6',
+    borderRadius: 12,
+    backgroundColor: '#F1F5F9',
     justifyContent: 'center',
     alignItems: 'center',
+    marginRight: 12,
+  },
+  masterIconTileActive: {
+    backgroundColor: '#ECFDF5',
+  },
+  masterContent: {
+    flex: 1,
     marginRight: 12,
   },
   masterTitle: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#000000',
+    color: '#0F172A',
   },
   masterSubtitle: {
-    fontSize: 12.5,
-    color: '#6B7280',
+    fontSize: 13,
+    color: '#64748B',
     marginTop: 2,
   },
 
-  /* Section Headers (Uber Eats Uppercase tracking) */
-  sectionBlock: {
-    marginBottom: 20,
-  },
-  uberSectionHeader: {
-    fontSize: 11.5,
-    fontWeight: '700',
-    color: '#6B7280',
-    letterSpacing: 0.8,
+  /* Section Headers */
+  sectionHeaderRow: {
+    marginTop: 20,
     marginBottom: 8,
-    marginLeft: 4,
   },
-  uberCardGroup: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#E8E8E8',
-    overflow: 'hidden',
+  sectionHeaderRowBetween: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  sectionHeaderAction: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#EA580C',
+  },
+  sectionTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+    color: '#475569',
+  },
+  sectionSubtitle: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
   },
 
-  /* Connected Printer Card (Uber Eats style) */
-  connectedPrinterCard: {
+  /* 1. Connected Printer Hero */
+  connectedHeroCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 14,
+    borderRadius: 16,
     padding: 16,
-    borderWidth: 1,
-    borderColor: '#E8E8E8',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
+    borderWidth: 1.5,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
     shadowRadius: 6,
     elevation: 2,
   },
-  connectedTopRow: {
+  connectedHeroCardActive: {
+    borderColor: '#059669',
+  },
+  connectedHeroCardInactive: {
+    borderColor: '#E2E8F0',
+  },
+  heroStatusRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-  },
-  connectedIconBox: {
-    width: 46,
-    height: 46,
-    borderRadius: 12,
-    backgroundColor: '#ECFDF5',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  greenPulseDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-    backgroundColor: '#10B981',
-  },
-  connectedStatusText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#10B981',
-  },
-  connectedPrinterName: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#000000',
-    marginTop: 1,
-  },
-  connectedDetailsText: {
-    fontSize: 12,
-    color: '#6B7280',
-    marginTop: 2,
-  },
-  connectedActionRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginTop: 14,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#F3F4F6',
-  },
-  uberTestBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    backgroundColor: '#F3F4F6',
-    paddingVertical: 10,
-    borderRadius: 8,
-  },
-  uberTestBtnText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#000000',
-  },
-  uberDisconnectBtn: {
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 8,
-    backgroundColor: '#FEE2E2',
-  },
-  uberDisconnectBtnText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#EF4444',
-  },
-
-  /* Not Connected Card */
-  notConnectedCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: '#E8E8E8',
-  },
-  notConnectedTopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
+    justifyContent: 'space-between',
     marginBottom: 14,
   },
-  notConnectedIconBox: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: '#F3F4F6',
-    justifyContent: 'center',
+  heroStatusBadge: {
+    flexDirection: 'row',
     alignItems: 'center',
+    gap: 6,
   },
-  grayDot: {
-    width: 7,
-    height: 7,
+  heroStatusDot: {
+    width: 8,
+    height: 8,
     borderRadius: 4,
-    backgroundColor: '#9CA3AF',
   },
-  notConnectedStatusText: {
+  statusDotGreen: {
+    backgroundColor: '#10B981',
+  },
+  statusDotAmber: {
+    backgroundColor: '#F59E0B',
+  },
+  statusDotMuted: {
+    backgroundColor: '#94A3B8',
+  },
+  heroStatusText: {
     fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.6,
+    color: '#059669',
+  },
+  heroStatusTextMuted: {
+    color: '#64748B',
+  },
+  heroStationLabel: {
+    fontSize: 10,
     fontWeight: '700',
-    color: '#6B7280',
+    color: '#94A3B8',
+    letterSpacing: 0.5,
   },
-  notConnectedSub: {
-    fontSize: 12.5,
-    color: '#4B5563',
-    marginTop: 2,
-  },
-  uberPrimaryBtn: {
+  heroDetailsRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: '#000000', // Uber signature black button
-    paddingVertical: 12,
-    borderRadius: 8,
+    marginBottom: 12,
   },
-  uberPrimaryBtnText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#FFFFFF',
-  },
-
-  /* Connection Method List Rows (Uber Eats style) */
-  uberListRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
-  },
-  methodIconBox: {
-    width: 36,
-    height: 36,
-    borderRadius: 8,
+  heroPrinterIconTile: {
+    width: 48,
+    height: 48,
+    borderRadius: 12,
+    backgroundColor: '#F1F5F9',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
   },
-  methodTitle: {
-    fontSize: 14,
+  heroPrinterIconTileActive: {
+    backgroundColor: '#ECFDF5',
+  },
+  heroTextContainer: {
+    flex: 1,
+  },
+  heroPrinterTitle: {
+    fontSize: 17,
     fontWeight: '700',
-    color: '#000000',
+    color: '#0F172A',
   },
-  recBadgePill: {
-    backgroundColor: '#EEF2FF',
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-    borderRadius: 4,
-  },
-  recBadgePillText: {
-    fontSize: 9,
-    fontWeight: '800',
-    color: '#4F46E5',
-  },
-  methodSubtitle: {
-    fontSize: 11.5,
-    color: '#6B7280',
+  heroPrinterSubtitle: {
+    fontSize: 13,
+    color: '#64748B',
     marginTop: 2,
   },
-
-  /* IP Setup Expandable Box */
-  ipSetupBox: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 14,
-    marginTop: 8,
+  heroSpecsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: 12,
+  },
+  heroSpecChip: {
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  heroSpecChipText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#334155',
+  },
+  inlineAlertBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    padding: 10,
+    borderRadius: 8,
+    marginBottom: 12,
+  },
+  inlineAlertSuccess: {
+    backgroundColor: '#F0FDF4',
     borderWidth: 1,
-    borderColor: '#E8E8E8',
+    borderColor: '#BBF7D0',
   },
-  ipSetupTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#000000',
+  inlineAlertError: {
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
   },
-  cancelLinkText: {
+  inlineAlertText: {
+    flex: 1,
     fontSize: 12,
-    fontWeight: '600',
-    color: '#6B7280',
+    lineHeight: 17,
   },
-  inputMiniLabel: {
-    fontSize: 11.5,
-    fontWeight: '600',
-    color: '#374151',
-    marginBottom: 4,
+  inlineAlertTextSuccess: {
+    color: '#166534',
   },
-  uberTextInput: {
-    backgroundColor: '#F9FAFB',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    fontSize: 13,
-    color: '#000000',
+  inlineAlertTextError: {
+    color: '#991B1B',
   },
-  scanSecondaryBtn: {
-    flex: 1,
+  heroDivider: {
+    height: 1,
+    backgroundColor: '#F1F5F9',
+    marginVertical: 12,
+  },
+  heroActionsContainer: {
+    gap: 8,
+  },
+  primaryTestBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
-    backgroundColor: '#F3F4F6',
-    paddingVertical: 10,
-    borderRadius: 8,
+    height: 48,
+    backgroundColor: '#0F172A',
+    borderRadius: 12,
   },
-  scanSecondaryBtnText: {
-    fontSize: 12.5,
+  primaryTestBtnText: {
+    fontSize: 15,
     fontWeight: '700',
-    color: '#000000',
+    color: '#FFFFFF',
   },
-  savePrimaryBtn: {
+  heroSecondaryActionsRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  secondarySetupBtn: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
-    backgroundColor: '#000000',
-    paddingVertical: 10,
-    borderRadius: 8,
+    height: 44,
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+    borderRadius: 10,
   },
-  savePrimaryBtnText: {
-    fontSize: 12.5,
+  secondarySetupBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#065F46',
+  },
+  secondaryDisconnectBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+    height: 44,
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    borderRadius: 10,
+  },
+  secondaryDisconnectBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#DC2626',
+  },
+  emptyConnectContainer: {
+    paddingVertical: 6,
+  },
+  emptyConnectSubtitle: {
+    fontSize: 13,
+    color: '#64748B',
+    lineHeight: 18,
+    marginBottom: 12,
+  },
+  heroLaunchWizardBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 48,
+    backgroundColor: '#059669',
+    borderRadius: 12,
+  },
+  heroLaunchWizardBtnText: {
+    fontSize: 15,
     fontWeight: '700',
     color: '#FFFFFF',
   },
 
-  /* Preferences Rows */
-  preferenceRow: {
+  /* 2. Grouped List Card (Printer Setup & Testing) */
+  groupedListCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    overflow: 'hidden',
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.03,
+    shadowRadius: 3,
+    elevation: 1,
+  },
+  listRowTouchable: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+    minHeight: 56,
+  },
+  listRowIconTile: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  listRowTextContainer: {
+    flex: 1,
+    marginRight: 8,
+  },
+  listRowTitleWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  listRowTitle: {
+    fontSize: 14.5,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  listRowSubtitle: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  listRowSeparator: {
+    height: 1,
+    backgroundColor: '#F1F5F9',
+    marginLeft: 68,
+  },
+  recommendedBadge: {
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  recommendedBadgeText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#2563EB',
+    letterSpacing: 0.3,
+  },
+  sunmiDetectedBadge: {
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  sunmiDetectedBadgeText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#059669',
+    letterSpacing: 0.3,
+  },
+  networkFormContainer: {
+    backgroundColor: '#F8FAFC',
+    padding: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+  },
+  formFieldLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#475569',
+    marginBottom: 6,
+  },
+  formTextInput: {
+    height: 44,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    fontSize: 14,
+    color: '#0F172A',
+  },
+  formSaveBtn: {
+    height: 44,
+    backgroundColor: '#059669',
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  formSaveBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  manualBtToggleBtn: {
+    marginTop: 12,
+    alignSelf: 'flex-start',
+  },
+  manualBtToggleText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#059669',
+  },
+
+  /* 3. Receipt Behavior (Presets & Settings) */
+  presetsContainer: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 12,
+  },
+  presetCard: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    padding: 12,
+    alignItems: 'center',
+  },
+  presetCardActive: {
+    borderColor: '#059669',
+    backgroundColor: '#F0FDF4',
+  },
+  presetCardTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0F172A',
+    marginBottom: 2,
+    textAlign: 'center',
+  },
+  presetCardTitleActive: {
+    color: '#059669',
+  },
+  presetCardDesc: {
+    fontSize: 10.5,
+    color: '#64748B',
+    textAlign: 'center',
+  },
+  groupedSettingsCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 16,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.03,
+    shadowRadius: 3,
+    elevation: 1,
+  },
+  settingRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 13,
-    paddingHorizontal: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
+    minHeight: 44,
   },
-  prefTitle: {
-    fontSize: 13.5,
+  settingRowColumn: {
+    paddingVertical: 2,
+  },
+  settingTextContainer: {
+    flex: 1,
+    marginRight: 12,
+  },
+  settingTitle: {
+    fontSize: 14.5,
     fontWeight: '700',
-    color: '#000000',
+    color: '#0F172A',
   },
-  prefSubtitle: {
-    fontSize: 11.5,
-    color: '#6B7280',
+  settingSubtitle: {
+    fontSize: 12,
+    color: '#64748B',
     marginTop: 2,
   },
-  segmentGroup: {
+  settingSeparator: {
+    height: 1,
+    backgroundColor: '#F1F5F9',
+    marginVertical: 14,
+  },
+  segmentedControlWrap: {
     flexDirection: 'row',
-    backgroundColor: '#F3F4F6',
-    borderRadius: 8,
-    padding: 3,
+    backgroundColor: '#F1F5F9',
+    borderRadius: 10,
+    padding: 4,
+    marginTop: 10,
+    gap: 4,
   },
   segmentBtn: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 6,
+    flex: 1,
+    height: 40,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   segmentBtnActive: {
-    backgroundColor: '#000000',
+    backgroundColor: '#0F172A',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 1,
   },
-  segmentText: {
-    fontSize: 11.5,
+  segmentBtnText: {
+    fontSize: 13,
     fontWeight: '600',
-    color: '#6B7280',
+    color: '#64748B',
   },
-  segmentTextActive: {
+  segmentBtnTextActive: {
     color: '#FFFFFF',
     fontWeight: '700',
   },
 
-  /* Action Rows */
-  uberActionRow: {
+  /* 4. Paper & Layout */
+  paperSizesContainer: {
+    gap: 10,
+    marginBottom: 12,
+  },
+  paperSizeCard: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    borderRadius: 14,
+    padding: 14,
+  },
+  paperSizeCardSelected: {
+    borderColor: '#059669',
+    backgroundColor: '#FCFDFD',
+  },
+  paperSizeCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+  },
+  paperSizeTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
-    gap: 12,
+    gap: 6,
+    marginBottom: 4,
   },
-  actionIconBox: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    backgroundColor: '#F3F4F6',
+  paperSizeTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  paperSizeDesc: {
+    fontSize: 12,
+    color: '#64748B',
+    lineHeight: 16,
+    marginBottom: 10,
+    paddingRight: 8,
+  },
+  radioCircle: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 2,
+    borderColor: '#CBD5E1',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  actionRowTitle: {
-    fontSize: 13.5,
-    fontWeight: '700',
-    color: '#000000',
+  radioCircleSelected: {
+    borderColor: '#059669',
+    backgroundColor: '#059669',
   },
-  actionRowSubtitle: {
-    fontSize: 11.5,
-    color: '#6B7280',
-    marginTop: 2,
+  paperSpecsRow: {
+    flexDirection: 'row',
+    gap: 6,
   },
-
-  /* Troubleshooting FAQ */
-  faqRow: {
+  paperSpecTag: {
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  paperSpecTagText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  /* 2. Active Template Showcase Card */
+  templateHeroCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 16,
+    marginBottom: 8,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  templateCardTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
   },
-  faqQuestion: {
+  templateIconTileEnhanced: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: '#FFF7ED',
+    borderWidth: 1,
+    borderColor: '#FFEDD5',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  templateHeaderContent: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  templateLiveTagRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 3,
+  },
+  liveIndicatorDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    backgroundColor: '#10B981',
+  },
+  templateLiveTagText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#059669',
+    letterSpacing: 0.6,
+  },
+  templateHeroTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#0F172A',
+    marginBottom: 5,
+  },
+  templateCustomizePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: '#FFF7ED',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#FFEDD5',
+  },
+  templateCustomizePillText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#EA580C',
+  },
+  templateHeroDescription: {
+    fontSize: 13,
+    color: '#64748B',
+    lineHeight: 18,
+    marginTop: 10,
+    marginBottom: 12,
+  },
+  templateChipsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: 12,
+  },
+  templateChipHighlight: {
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  templateChipHighlightText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#065F46',
+  },
+  templateChipNeutral: {
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  templateChipNeutralText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  templateCardFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  },
+  templateCardFooterText: {
+    fontSize: 11.5,
+    color: '#64748B',
+    flex: 1,
+    marginRight: 8,
+  },
+
+  /* 5. Testing & Troubleshooting */
+  faqCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 16,
+    marginTop: 16,
+  },
+  faqHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 14,
+  },
+  faqHeaderTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#334155',
+  },
+  faqItem: {
+    paddingVertical: 8,
+  },
+  faqQuestionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    minHeight: 36,
+  },
+  faqQuestionText: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#111827',
+    color: '#0F172A',
+    flex: 1,
+    marginRight: 8,
   },
   faqAnswerBox: {
-    backgroundColor: '#F9FAFB',
-    padding: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
+    backgroundColor: '#F8FAFC',
+    padding: 10,
+    borderRadius: 8,
+    marginTop: 8,
   },
   faqAnswerText: {
     fontSize: 12,
-    color: '#4B5563',
+    color: '#475569',
     lineHeight: 18,
   },
+  faqSystemBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 10,
+    alignSelf: 'flex-start',
+  },
+  faqSystemBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#059669',
+  },
+  faqItemSeparator: {
+    height: 1,
+    backgroundColor: '#F1F5F9',
+    marginVertical: 4,
+  },
 
-  /* Architecture Footer */
+  /* Architecture pipeline footer */
   architectureFooter: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    marginTop: 18,
+    marginTop: 20,
   },
   architectureFooterText: {
     fontSize: 11,
-    color: '#9CA3AF',
+    color: '#94A3B8',
   },
 
-  /* Customization Banner */
-  customizationBannerCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: '#cfcfcf',
-    marginBottom: 16,
-  },
-  customizationIconContainer: {
-    width: 42,
-    height: 42,
-    borderRadius: 10,
-    backgroundColor: '#FFF1EE',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 14,
-  },
-  customizationTitle: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#0F172A',
-  },
-  customizationNewBadge: {
-    backgroundColor: '#FFF1EE',
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-    borderRadius: 6,
-  },
-  customizationNewBadgeText: {
-    fontSize: 9.5,
-    fontWeight: '800',
-    color: '#FF5C39',
-  },
-  customizationSubtitle: {
-    fontSize: 12,
-    color: '#64748B',
-    marginTop: 2,
+  btnDisabled: {
+    opacity: 0.6,
   },
 });

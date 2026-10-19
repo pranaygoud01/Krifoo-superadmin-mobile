@@ -139,16 +139,41 @@ export async function printSunmiOrderReceipt(
     const template = customTemplate || (await getActiveReceiptTemplate(restId ? String(restId) : undefined));
     const posConfig = await getPosPrinterConfig(restId ? String(restId) : undefined).catch(() => null);
 
-    // If either the hardware printer setting or template specifies 58mm, constrain to 58mm (32 columns)
-    const is58mm = (posConfig?.paperWidth === '58mm') || (template?.layout?.paperWidth === '58mm');
+    // Query physical printer hardware paper specification if supported by Sunmi AIDL
+    let hardwarePaper: '58mm' | '80mm' | null = null;
+    try {
+      if (typeof sunmi.getPrinterPaper === 'function') {
+        const rawPaper = await sunmi.getPrinterPaper();
+        if (typeof rawPaper === 'string') {
+          if (rawPaper.includes('58')) hardwarePaper = '58mm';
+          else if (rawPaper.includes('80')) hardwarePaper = '80mm';
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    // Determine target paper roll width:
+    // 1. If physical hardware is fixed to 58mm (handheld V2, etc.), force 58mm to prevent clipping
+    // 2. If user specifically configured POS printer hardware setting, respect posConfig.paperWidth
+    // 3. Otherwise use the active receipt template layout paper width
+    const targetPaperWidth: '58mm' | '80mm' = hardwarePaper === '58mm'
+      ? '58mm'
+      : posConfig?.paperWidth
+      ? posConfig.paperWidth
+      : template?.layout?.paperWidth || '58mm';
+
+    const is58mm = targetPaperWidth === '58mm';
     const dividerLine = is58mm ? '--------------------------------\n' : '------------------------------------------------\n';
     const doubleLine = is58mm ? '================================\n' : '================================================\n';
-    const itemCols: [number, number, number] = is58mm ? [4, 19, 9] : [6, 32, 10];
-    const summaryCols: [number, number] = is58mm ? [20, 12] : [32, 16];
-    const totalCols: [number, number] = is58mm ? [18, 14] : [24, 24];
+
+    // Total columns: 58mm = 32 chars, 80mm = 48 chars
+    const itemCols: [number, number, number] = is58mm ? [4, 20, 8] : [5, 33, 10];
+    const summaryCols: [number, number] = is58mm ? [22, 10] : [34, 14];
+    const totalCols: [number, number] = is58mm ? [18, 14] : [26, 22];
     const baseFontSize = is58mm
-      ? (template.layout.fontSize === 'small' ? 16 : template.layout.fontSize === 'large' ? 22 : 19)
-      : (template.layout.fontSize === 'small' ? 18 : template.layout.fontSize === 'large' ? 24 : 20);
+      ? (template.layout.fontSize === 'small' ? 18 : template.layout.fontSize === 'large' ? 22 : 20)
+      : (template.layout.fontSize === 'small' ? 20 : template.layout.fontSize === 'large' ? 26 : 22);
 
     const getAlignValue = (align: 'left' | 'center' | 'right'): AlignValue => {
       if (align === 'center') return AlignValue.CENTER;
@@ -405,11 +430,10 @@ export async function printSunmiOrderReceipt(
     // 4. ORDER ITEMS TABLE (Template Width Adapted)
     // ==========================================
     sunmi.setAlignment(getAlignValue(template.layout.alignment.items));
-    sunmi.setFontSize(baseFontSize + 2);
+    sunmi.setFontSize(baseFontSize);
     sunmi.setFontWeight(true);
     sunmi.printColumnsString(['QTY', 'ITEM', 'PRICE'], itemCols, [AlignValue.LEFT, AlignValue.LEFT, AlignValue.RIGHT]);
     sunmi.setFontWeight(false);
-    sunmi.setFontSize(baseFontSize);
     sunmi.printerText(dividerLine);
 
     const itemsList =
@@ -418,6 +442,9 @@ export async function printSunmiOrderReceipt(
         : (Array.isArray(order.items) && order.items.length > 0)
           ? order.items
           : [];
+
+    const maxItemNameLen = itemCols[1];
+    const qtyColWidth = itemCols[0];
 
     itemsList.forEach((item: any) => {
       const qtyNum = Number(item.quantity || item.qty || 1);
@@ -447,9 +474,21 @@ export async function printSunmiOrderReceipt(
       }
       const priceStr = formatMoney(itemPrice);
 
-      sunmi.setFontSize(is58mm ? baseFontSize + 1 : baseFontSize + 4);
+      sunmi.setFontSize(baseFontSize);
       sunmi.setFontWeight(template.layout.boldElements.itemNames);
-      sunmi.printColumnsString([qtyStr, name, priceStr], itemCols, [AlignValue.LEFT, AlignValue.LEFT, AlignValue.RIGHT]);
+
+      if (name.length <= maxItemNameLen) {
+        sunmi.printColumnsString([qtyStr, name, priceStr], itemCols, [AlignValue.LEFT, AlignValue.LEFT, AlignValue.RIGHT]);
+      } else {
+        // Line 1: QTY + first portion of Name + Price (Guaranteed right-aligned on Line 1)
+        const line1Name = name.substring(0, maxItemNameLen);
+        sunmi.printColumnsString([qtyStr, line1Name, priceStr], itemCols, [AlignValue.LEFT, AlignValue.LEFT, AlignValue.RIGHT]);
+        // Line 2: Remainder of Name indented under item column
+        const remainingName = name.substring(maxItemNameLen).trim();
+        if (remainingName) {
+          sunmi.printerText(`${' '.repeat(qtyColWidth)}${remainingName}\n`);
+        }
+      }
       sunmi.setFontWeight(false);
 
       const optionsList: string[] = [];
@@ -573,8 +612,8 @@ export async function printSunmiOrderReceipt(
 
     // TOTAL AMOUNT
     const grandTotal = order.pricing?.total !== undefined ? order.pricing.total : (order.pricing?.totalAmount !== undefined ? order.pricing.totalAmount : (order.totalAmount || order.total || subtotal));
-    sunmi.setFontSize(is58mm ? baseFontSize + 2 : baseFontSize + 8);
-    sunmi.setFontWeight(template.layout.boldElements.totalAmount);
+    sunmi.setFontSize(is58mm ? baseFontSize : baseFontSize + 2);
+    sunmi.setFontWeight(true);
     sunmi.printColumnsString(['TOTAL:', formatMoney(grandTotal)], totalCols, [AlignValue.LEFT, AlignValue.RIGHT]);
     sunmi.setFontWeight(false);
 

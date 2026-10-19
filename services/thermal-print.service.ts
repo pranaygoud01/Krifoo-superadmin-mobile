@@ -4,7 +4,7 @@ import { Order } from '../types';
 import { isSunmiAvailable, printSunmiOrderReceipt } from './sunmi-printer.service';
 import { getPosPrinterConfig, savePosPrinterConfig, PosPrinterConfig, POS_BRANDS, getBrandOption, getBrandName, profileFromConfig } from './pos-config.service';
 import { printNetworkOrderReceipt, testNetworkPrinter } from './printer/network-printer.service';
-import { printEpsonOrderReceipt, testEpsonPrinter, discoverEpsonPrinters } from './printer/epson-printer.service';
+import { printEpsonOrderReceipt, testEpsonPrinter, testPrinterAlignmentSlip, discoverEpsonPrinters } from './printer/epson-printer.service';
 import { buildReceiptDocument, buildDrawerKickDocument, buildCustomizedReceiptDocument, getOrderScheduleInfo, formatScheduleDisplay, getOrderFulfillmentLabel, getSanitizedOrderNotes } from './printer/receipt-document';
 import { resolvePrinter } from './printer/printer-registry';
 import { PrintQueueService } from './printer/print-queue.service';
@@ -21,6 +21,7 @@ export {
   testNetworkPrinter,
   printEpsonOrderReceipt,
   testEpsonPrinter,
+  testPrinterAlignmentSlip,
   discoverEpsonPrinters,
   buildReceiptDocument,
   buildCustomizedReceiptDocument,
@@ -1014,7 +1015,8 @@ export function getLastPrintJobReport(): PrintJobReport | null {
 export async function printThermalReceipt(
   order: Partial<Order> & any,
   isManual: boolean = false,
-  customTemplate?: ReceiptTemplate
+  customTemplate?: ReceiptTemplate,
+  configOverride?: Partial<PosPrinterConfig>
 ): Promise<boolean> {
   const startTime = Date.now();
   const orderNum = String(order.orderNumber || (order._id ? `#${order._id.slice(-5).toUpperCase()}` : '#00000'));
@@ -1034,7 +1036,8 @@ export async function printThermalReceipt(
 
   try {
     const restId = typeof order.restaurantId === 'object' ? order.restaurantId?._id : (order.restaurantId || order.restaurant);
-    const config = await getPosPrinterConfig(restId ? String(restId) : undefined);
+    const baseConfig = await getPosPrinterConfig(restId ? String(restId) : undefined);
+    const config = configOverride ? { ...baseConfig, ...configOverride } : baseConfig;
     const template = customTemplate || (await getActiveReceiptTemplate(restId ? String(restId) : undefined));
 
     // Ensure order has live store details populated
@@ -1322,8 +1325,12 @@ export const SAMPLE_THERMAL_ORDER = {
 /**
  * Print a sample test receipt matching the user's POS receipt
  */
-export async function printSampleThermalReceipt(): Promise<boolean> {
-  return printThermalReceipt(SAMPLE_THERMAL_ORDER, true);
+export async function printSampleThermalReceipt(
+  restaurantId?: string,
+  configOverride?: Partial<PosPrinterConfig>
+): Promise<boolean> {
+  const template = await getActiveReceiptTemplate(restaurantId);
+  return printTestReceiptTemplate(template, restaurantId, undefined, configOverride);
 }
 
 /**
@@ -1365,7 +1372,8 @@ export async function openCashDrawer(restaurantId?: string): Promise<boolean> {
 export async function printTestReceiptTemplate(
   template: ReceiptTemplate,
   restaurantId?: string,
-  storeNameOverride?: string
+  storeNameOverride?: string,
+  configOverride?: Partial<PosPrinterConfig>
 ): Promise<boolean> {
   let resolvedStoreName = storeNameOverride || getCachedStoreProfile()?.restaurantName;
   let resolvedPhone = getCachedStoreProfile()?.phoneNumber;
@@ -1421,7 +1429,7 @@ export async function printTestReceiptTemplate(
     sampleOrder.restaurantAddress = formattedAddr;
   }
 
-  return printThermalReceipt(sampleOrder, true, template);
+  return printThermalReceipt(sampleOrder, true, template, configOverride);
 }
 
 

@@ -26,6 +26,7 @@ export interface ResolvePrinterOptions {
   orderContext?: any;
   configContext?: any;
   templateContext?: ReceiptTemplate;
+  htmlContent?: string;
 }
 
 /**
@@ -89,7 +90,7 @@ export function resolvePrinter(
         model: 'System Print Spooler (AirPrint / Android)',
         profile,
         encoder: EposXmlEncoder,
-        transport: new SystemTransport(),
+        transport: new SystemTransport(options?.htmlContent, options?.paperWidth || '80mm'),
       };
   }
 }
