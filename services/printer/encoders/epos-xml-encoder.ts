@@ -15,7 +15,7 @@ export const EposXmlEncoder: CommandEncoder<string> = {
   contentType: 'text/xml; charset=utf-8',
 
   encode(doc: ReceiptCommand[], config?: Partial<PosPrinterConfig>): string {
-    const is58mm = config?.paperWidth === '58mm';
+    const is58mm = config?.paperWidth !== '80mm';
     const cols = is58mm ? 32 : 48;
 
     let bodyXml = '';

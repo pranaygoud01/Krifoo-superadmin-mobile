@@ -154,11 +154,13 @@ export async function testEpsonPrinter(
 
   // 1. Fetch current active receipt template and apply selected paper roll width preference
   const baseTemplate = customTemplate || (await getActiveReceiptTemplate(restaurantId));
+  const effectiveWidth = config.paperWidth || baseTemplate.layout?.paperWidth || '58mm';
+  config.paperWidth = effectiveWidth;
   const template: ReceiptTemplate = {
     ...baseTemplate,
     layout: {
       ...baseTemplate.layout,
-      paperWidth: config.paperWidth || baseTemplate.layout?.paperWidth || '80mm',
+      paperWidth: effectiveWidth,
     },
   };
 
@@ -361,3 +363,62 @@ export async function testPrinterAlignmentSlip(
       : result.detail || 'Failed transmitting calibration slip to printer.',
   };
 }
+
+/**
+ * Test & verify active hardware connection with printer (Bluetooth, Network, or Builtin)
+ * without wasting physical receipt paper.
+ * Sends universal ESC/POS handshake pulse (ESC @) to confirm bidirectional link.
+ */
+export async function verifyPrinterConnection(
+  config: PosPrinterConfig
+): Promise<{ success: boolean; message: string }> {
+  const profile = profileFromConfig(config);
+  if (!profile) {
+    return {
+      success: false,
+      message: 'Missing connection target (IP or Bluetooth MAC address).',
+    };
+  }
+
+  if (profile.connectionType === 'builtin') {
+    return { success: true, message: 'Built-in Sunmi printer is ready.' };
+  }
+
+  if (profile.connectionType === 'system') {
+    return { success: true, message: 'System print spooler is ready.' };
+  }
+
+  try {
+    const printer = resolvePrinter(profile, {
+      brand: config.brand,
+      paperWidth: config.paperWidth || '58mm',
+    });
+
+    // Send zero-length document so the encoder emits only the initialization handshake (ESC @)
+    const result = await PrintQueueService.enqueuePrintJob(
+      printer,
+      [],
+      config,
+      'Connection_Verification_Ping'
+    );
+
+    if (result.success) {
+      return {
+        success: true,
+        message: `Successfully connected to ${printer.model} via ${config.connectionType.toUpperCase()}!`,
+      };
+    } else {
+      const failDetail = (result as any).detail || (result as any).reason || 'Printer did not respond';
+      return {
+        success: false,
+        message: `${failDetail}. Please ensure the printer is turned on and paired.`,
+      };
+    }
+  } catch (err: any) {
+    return {
+      success: false,
+      message: err?.message || 'Failed to communicate with printer over Bluetooth.',
+    };
+  }
+}
+

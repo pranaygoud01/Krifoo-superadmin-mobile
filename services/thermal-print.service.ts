@@ -4,7 +4,7 @@ import { Order } from '../types';
 import { isSunmiAvailable, printSunmiOrderReceipt } from './sunmi-printer.service';
 import { getPosPrinterConfig, savePosPrinterConfig, PosPrinterConfig, POS_BRANDS, getBrandOption, getBrandName, profileFromConfig } from './pos-config.service';
 import { printNetworkOrderReceipt, testNetworkPrinter } from './printer/network-printer.service';
-import { printEpsonOrderReceipt, testEpsonPrinter, testPrinterAlignmentSlip, discoverEpsonPrinters } from './printer/epson-printer.service';
+import { printEpsonOrderReceipt, testEpsonPrinter, testPrinterAlignmentSlip, discoverEpsonPrinters, verifyPrinterConnection } from './printer/epson-printer.service';
 import { buildReceiptDocument, buildDrawerKickDocument, buildCustomizedReceiptDocument, getOrderScheduleInfo, formatScheduleDisplay, getOrderFulfillmentLabel, getSanitizedOrderNotes } from './printer/receipt-document';
 import { resolvePrinter } from './printer/printer-registry';
 import { PrintQueueService } from './printer/print-queue.service';
@@ -23,6 +23,7 @@ export {
   testEpsonPrinter,
   testPrinterAlignmentSlip,
   discoverEpsonPrinters,
+  verifyPrinterConnection,
   buildReceiptDocument,
   buildCustomizedReceiptDocument,
   buildDrawerKickDocument,
@@ -1074,6 +1075,13 @@ export async function printThermalReceipt(
     const config = configOverride ? { ...baseConfig, ...configOverride } : baseConfig;
     let template = customTemplate || (await getActiveReceiptTemplate(restId ? String(restId) : undefined));
 
+    // Strictly synchronize paperWidth between template and hardware config (defaults to 58mm)
+    const effectiveWidth = template?.layout?.paperWidth || config.paperWidth || '58mm';
+    config.paperWidth = effectiveWidth;
+    if (template?.layout) {
+      template.layout.paperWidth = effectiveWidth;
+    }
+
     // Ensure logo is resolved to inline base64 data URI so WebView print spooler renders it instantly without security sandbox restrictions
     if (template?.content?.showLogo && template?.content?.logoUrl && !template.content.logoUrl.startsWith('data:image/')) {
       try {
@@ -1481,7 +1489,13 @@ export async function printTestReceiptTemplate(
     sampleOrder.restaurantAddress = formattedAddr;
   }
 
-  return printThermalReceipt(sampleOrder, true, template, configOverride);
+  const effectiveWidth = template.layout?.paperWidth || '58mm';
+  const mergedOverride: Partial<PosPrinterConfig> = {
+    ...configOverride,
+    paperWidth: effectiveWidth,
+  };
+
+  return printThermalReceipt(sampleOrder, true, template, mergedOverride);
 }
 
 

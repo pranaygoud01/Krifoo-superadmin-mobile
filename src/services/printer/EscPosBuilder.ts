@@ -111,7 +111,7 @@ export class EscPosBuilder {
  * Generate binary ESC/POS receipt for Bluetooth/LAN receipt printers
  */
 export function buildOrderEscPosBytes(order: Partial<Order> & any, config: PosPrinterConfig): Uint8Array {
-  const is58mm = config.paperWidth === '58mm';
+  const is58mm = config?.paperWidth !== '80mm';
   const width = is58mm ? 32 : 48;
   const builder = new EscPosBuilder();
 

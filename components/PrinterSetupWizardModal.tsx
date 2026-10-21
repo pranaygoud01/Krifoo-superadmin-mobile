@@ -41,12 +41,14 @@ import {
   ChevronUp,
   ShieldAlert,
   ShieldCheck,
+  AlertCircle,
 } from 'lucide-react-native';
 import {
   discoverEpsonPrinters,
   testEpsonPrinter,
   isSunmiAvailable,
   savePosPrinterConfig,
+  verifyPrinterConnection,
 } from '../services/thermal-print.service';
 import { PosPrinterConfig, PosBrand, PosConnectionType } from '../services/pos-config.service';
 import {
@@ -95,8 +97,8 @@ export function PrinterSetupWizardModal({
   const [manualBtInput, setManualBtInput] = useState(currentConfig.target || '');
   const [showManualBtToggle, setShowManualBtToggle] = useState(false);
 
-  // Step 3 Preferences
-  const [paperWidth, setPaperWidth] = useState<'80mm' | '58mm'>(currentConfig.paperWidth || '80mm');
+  // Step 3 Preferences (Default to 58mm paper roll size)
+  const [paperWidth, setPaperWidth] = useState<'80mm' | '58mm'>(currentConfig.paperWidth || '58mm');
   const [copies, setCopies] = useState<number>(currentConfig.copies || 1);
   const [autoCut, setAutoCut] = useState<boolean>(currentConfig.autoCut ?? true);
   const [autoPrint, setAutoPrint] = useState<boolean>(currentConfig.autoPrint ?? true);
@@ -106,6 +108,14 @@ export function PrinterSetupWizardModal({
   const [templates, setTemplates] = useState<ReceiptTemplate[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState<ReceiptTemplate | null>(null);
   const [isTemplateDropdownOpen, setIsTemplateDropdownOpen] = useState(false);
+
+  // Live Bluetooth Connection Verification State
+  const [isVerifyingConnection, setIsVerifyingConnection] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<{
+    checked: boolean;
+    success: boolean;
+    message: string;
+  } | null>(null);
 
   // Testing status
   const [isTesting, setIsTesting] = useState(false);
@@ -257,7 +267,7 @@ export function PrinterSetupWizardModal({
     if (visible) {
       setStep(1);
       setSelectedType(currentConfig.connectionType || 'bluetooth');
-      setPaperWidth(currentConfig.paperWidth || '80mm');
+      setPaperWidth(currentConfig.paperWidth || '58mm');
       setCopies(currentConfig.copies || 1);
       setAutoCut(currentConfig.autoCut ?? true);
       setAutoPrint(currentConfig.autoPrint ?? true);
@@ -473,23 +483,90 @@ export function PrinterSetupWizardModal({
     }
   };
 
-  // Step 2: Select Discovered Device & Advance
-  const handleSelectDiscoveredDevice = (dev: { id: string; name: string; target?: string; ipAddress?: string; macAddress?: string }) => {
+  // Step 2: Select Discovered Device & Verify Connection
+  const handleSelectDiscoveredDevice = async (dev: { id: string; name: string; target?: string; ipAddress?: string; macAddress?: string }) => {
     setSelectedDevice(dev);
-    setStep(3);
+    if (selectedType === 'bluetooth') {
+      setIsVerifyingConnection(true);
+      setConnectionStatus(null);
+      try {
+        const targetVal = dev.target || dev.macAddress || dev.id;
+        const macVal = dev.macAddress || (targetVal.startsWith('BT:') ? '' : targetVal);
+        const verifyConfig: PosPrinterConfig = {
+          ...currentConfig,
+          brand: dev.name.toLowerCase().includes('star') ? 'star' : 'epson',
+          connectionType: 'bluetooth',
+          target: targetVal,
+          macAddress: macVal,
+          paperWidth,
+          autoPrint,
+          copies,
+          autoCut,
+          openCashDrawer,
+        };
+        const check = await verifyPrinterConnection(verifyConfig);
+        setConnectionStatus({
+          checked: true,
+          success: check.success,
+          message: check.message,
+        });
+      } catch (err: any) {
+        setConnectionStatus({
+          checked: true,
+          success: false,
+          message: err?.message || 'Bluetooth connection check failed',
+        });
+      } finally {
+        setIsVerifyingConnection(false);
+        setStep(3);
+      }
+    } else {
+      setStep(3);
+    }
   };
 
-  // Step 2: Save Manual Bluetooth Device
-  const handleSaveManualBt = () => {
+  // Step 2: Save Manual Bluetooth Device & Verify
+  const handleSaveManualBt = async () => {
     const target = manualBtInput.trim();
     if (!target) return;
-    setSelectedDevice({
+    const dev = {
       id: `manual_${Date.now()}`,
       name: `Bluetooth Printer (${target})`,
       target,
       macAddress: target.startsWith('BT:') ? undefined : target,
-    });
-    setStep(3);
+    };
+    setSelectedDevice(dev);
+    setIsVerifyingConnection(true);
+    setConnectionStatus(null);
+    try {
+      const verifyConfig: PosPrinterConfig = {
+        ...currentConfig,
+        brand: 'epson',
+        connectionType: 'bluetooth',
+        target,
+        macAddress: dev.macAddress || '',
+        paperWidth,
+        autoPrint,
+        copies,
+        autoCut,
+        openCashDrawer,
+      };
+      const check = await verifyPrinterConnection(verifyConfig);
+      setConnectionStatus({
+        checked: true,
+        success: check.success,
+        message: check.message,
+      });
+    } catch (err: any) {
+      setConnectionStatus({
+        checked: true,
+        success: false,
+        message: err?.message || 'Bluetooth connection check failed',
+      });
+    } finally {
+      setIsVerifyingConnection(false);
+      setStep(3);
+    }
   };
 
   // Step 2: Save Manual Network IP
@@ -511,6 +588,57 @@ export function PrinterSetupWizardModal({
     setIsTemplateDropdownOpen(false);
     if (tpl.layout?.paperWidth) {
       setPaperWidth(tpl.layout.paperWidth);
+    }
+  };
+
+  // Step 3: Switch Paper Width and Keep in Sync with Template
+  const handleSelectPaperWidth = (width: '80mm' | '58mm') => {
+    setPaperWidth(width);
+    if (selectedTemplate) {
+      setSelectedTemplate({
+        ...selectedTemplate,
+        layout: {
+          ...selectedTemplate.layout,
+          paperWidth: width,
+        },
+      });
+    }
+  };
+
+  // Step 3: Re-verify Connection on Demand
+  const handleVerifyCurrentConnection = async () => {
+    setIsVerifyingConnection(true);
+    try {
+      const targetVal = selectedDevice?.target || manualBtInput.trim();
+      const macVal = selectedDevice?.macAddress || (targetVal.startsWith('BT:') ? '' : targetVal);
+      const verifyConfig: PosPrinterConfig = {
+        ...currentConfig,
+        brand: selectedDevice?.name?.toLowerCase().includes('star') ? 'star' : 'epson',
+        connectionType: selectedType,
+        target: targetVal,
+        macAddress: macVal,
+        ipAddress: selectedDevice?.ipAddress || ipInput.trim(),
+        port: parseInt(portInput, 10) || 9100,
+        paperWidth,
+        autoPrint,
+        copies,
+        autoCut,
+        openCashDrawer,
+      };
+      const check = await verifyPrinterConnection(verifyConfig);
+      setConnectionStatus({
+        checked: true,
+        success: check.success,
+        message: check.message,
+      });
+    } catch (err: any) {
+      setConnectionStatus({
+        checked: true,
+        success: false,
+        message: err?.message || 'Verification check failed',
+      });
+    } finally {
+      setIsVerifyingConnection(false);
     }
   };
 
@@ -560,6 +688,11 @@ export function PrinterSetupWizardModal({
     try {
       const res = await testEpsonPrinter(testConfig, restaurantId, tplWithPaperWidth);
       if (res.success) {
+        setConnectionStatus({
+          checked: true,
+          success: true,
+          message: 'Printer connected & test print verified ✅',
+        });
         setTestResult({
           success: true,
           message: res.message || `Test receipt printed successfully on ${paperWidth} roll!`,
@@ -580,35 +713,75 @@ export function PrinterSetupWizardModal({
     }
   };
 
-  // Step 3: Complete Wizard and Save
+  // Step 3: Complete Wizard and Save with Connection Confirmation
   const handleFinishWizard = async () => {
+    const targetVal = selectedDevice?.target || manualBtInput.trim();
+    const ipVal = selectedDevice?.ipAddress || ipInput.trim();
+    const portVal = parseInt(portInput, 10) || 9100;
+    const brandVal: PosBrand = selectedDevice?.name?.toLowerCase().includes('star')
+      ? 'star'
+      : selectedType === 'builtin'
+        ? 'sunmi'
+        : selectedType === 'system'
+          ? 'system'
+          : 'epson';
+
+    const finalConfig: Partial<PosPrinterConfig> = {
+      connectionType: selectedType,
+      brand: brandVal,
+      target: selectedType === 'bluetooth' ? targetVal : '',
+      macAddress: selectedType === 'bluetooth' ? (selectedDevice?.macAddress || (targetVal.startsWith('BT:') ? '' : targetVal)) : '',
+      ipAddress: selectedType === 'network' ? ipVal : '',
+      port: selectedType === 'network' ? portVal : undefined,
+      paperWidth,
+      copies,
+      autoCut,
+      autoPrint,
+      openCashDrawer,
+    };
+
+    // If bluetooth and connection not yet confirmed, verify or prompt
+    if (selectedType === 'bluetooth' && connectionStatus?.success !== true) {
+      setIsVerifyingConnection(true);
+      try {
+        const check = await verifyPrinterConnection(finalConfig as PosPrinterConfig);
+        setIsVerifyingConnection(false);
+        if (check.success) {
+          setConnectionStatus({ checked: true, success: true, message: check.message });
+        } else {
+          setConnectionStatus({ checked: true, success: false, message: check.message });
+          Alert.alert(
+            'Bluetooth Printer Not Responding',
+            `Could not confirm communication with "${selectedDevice?.name || targetVal}".\n\nReason: ${check.message}\n\nPlease verify that the printer is powered ON and paired in your phone Bluetooth settings.`,
+            [
+              { text: 'Retry Connection', onPress: () => handleVerifyCurrentConnection() },
+              { text: 'Save Anyway', style: 'destructive', onPress: () => executeSave(finalConfig) },
+              { text: 'Cancel', style: 'cancel' },
+            ]
+          );
+          return;
+        }
+      } catch (err: any) {
+        setIsVerifyingConnection(false);
+        Alert.alert(
+          'Bluetooth Verification',
+          `Could not confirm printer communication: ${err?.message || 'Check power and pairing.'}`,
+          [
+            { text: 'Retry Connection', onPress: () => handleVerifyCurrentConnection() },
+            { text: 'Save Anyway', style: 'destructive', onPress: () => executeSave(finalConfig) },
+            { text: 'Cancel', style: 'cancel' },
+          ]
+        );
+        return;
+      }
+    }
+
+    await executeSave(finalConfig);
+  };
+
+  const executeSave = async (finalConfig: Partial<PosPrinterConfig>) => {
     setIsSaving(true);
     try {
-      const targetVal = selectedDevice?.target || manualBtInput.trim();
-      const ipVal = selectedDevice?.ipAddress || ipInput.trim();
-      const portVal = parseInt(portInput, 10) || 9100;
-      const brandVal: PosBrand = selectedDevice?.name?.toLowerCase().includes('star')
-        ? 'star'
-        : selectedType === 'builtin'
-          ? 'sunmi'
-          : selectedType === 'system'
-            ? 'system'
-            : 'epson';
-
-      const finalConfig: Partial<PosPrinterConfig> = {
-        connectionType: selectedType,
-        brand: brandVal,
-        target: selectedType === 'bluetooth' ? targetVal : '',
-        macAddress: selectedType === 'bluetooth' ? (selectedDevice?.macAddress || (targetVal.startsWith('BT:') ? '' : targetVal)) : '',
-        ipAddress: selectedType === 'network' ? ipVal : '',
-        port: selectedType === 'network' ? portVal : undefined,
-        paperWidth,
-        copies,
-        autoCut,
-        autoPrint,
-        openCashDrawer,
-      };
-
       const saved = await savePosPrinterConfig(finalConfig, restaurantId);
 
       // Synchronize with active receipt template
@@ -1190,17 +1363,85 @@ export function PrinterSetupWizardModal({
           {step === 3 && (
             <View>
               {/* Connected Banner */}
-              <View style={styles.connectedDeviceHero}>
+              <View
+                style={[
+                  styles.connectedDeviceHero,
+                  selectedType === 'bluetooth' && connectionStatus?.checked && !connectionStatus.success && styles.connectedDeviceHeroOffline,
+                  selectedType === 'bluetooth' && isVerifyingConnection && styles.connectedDeviceHeroChecking,
+                ]}
+              >
                 <View style={styles.connectedDeviceHeroTop}>
-                  <CheckCircle2 size={24} color="#059669" />
+                  {selectedType === 'bluetooth' ? (
+                    isVerifyingConnection ? (
+                      <ActivityIndicator size="small" color="#2563EB" />
+                    ) : connectionStatus?.checked && connectionStatus.success ? (
+                      <CheckCircle2 size={24} color="#059669" />
+                    ) : connectionStatus?.checked && !connectionStatus.success ? (
+                      <AlertCircle size={24} color="#DC2626" />
+                    ) : (
+                      <Bluetooth size={24} color="#2563EB" />
+                    )
+                  ) : (
+                    <CheckCircle2 size={24} color="#059669" />
+                  )}
                   <View style={{ flex: 1, marginLeft: 10 }}>
-                    <Text style={styles.heroDeviceTitle}>
+                    <Text
+                      style={[
+                        styles.heroDeviceTitle,
+                        selectedType === 'bluetooth' && connectionStatus?.checked && !connectionStatus.success && { color: '#991B1B' },
+                      ]}
+                    >
                       {selectedDevice?.name || 'Thermal POS Printer'}
                     </Text>
-                    <Text style={styles.heroDeviceSubtitle}>
-                      {selectedType.toUpperCase()} • Ready for setup & test print
+                    <Text
+                      style={[
+                        styles.heroDeviceSubtitle,
+                        selectedType === 'bluetooth' && connectionStatus?.checked && !connectionStatus.success && { color: '#B91C1C' },
+                      ]}
+                    >
+                      {selectedType === 'bluetooth'
+                        ? isVerifyingConnection
+                          ? 'Checking Bluetooth connection handshake...'
+                          : connectionStatus?.checked && connectionStatus.success
+                            ? 'Bluetooth Link Confirmed • Ready to Print'
+                            : connectionStatus?.checked && !connectionStatus.success
+                              ? `Connection Failed: ${connectionStatus.message || 'Printer not responding'}`
+                              : 'Bluetooth Device Selected • Ready for setup & test print'
+                        : `${selectedType.toUpperCase()} • Ready for setup & test print`}
                     </Text>
                   </View>
+
+                  {/* Re-verify Button for Bluetooth */}
+                  {selectedType === 'bluetooth' && (
+                    <TouchableOpacity
+                      style={[
+                        styles.recheckBtn,
+                        connectionStatus?.checked && !connectionStatus.success && styles.recheckBtnOffline,
+                      ]}
+                      onPress={handleVerifyCurrentConnection}
+                      disabled={isVerifyingConnection}
+                      activeOpacity={0.7}
+                    >
+                      {isVerifyingConnection ? (
+                        <ActivityIndicator size="small" color="#2563EB" />
+                      ) : (
+                        <>
+                          <RefreshCw
+                            size={12}
+                            color={connectionStatus?.checked && !connectionStatus.success ? '#DC2626' : '#059669'}
+                          />
+                          <Text
+                            style={[
+                              styles.recheckBtnText,
+                              connectionStatus?.checked && !connectionStatus.success && { color: '#DC2626' },
+                            ]}
+                          >
+                            {connectionStatus?.checked && !connectionStatus.success ? 'Retry Link' : 'Re-check'}
+                          </Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+                  )}
                 </View>
               </View>
 
@@ -1312,23 +1553,23 @@ export function PrinterSetupWizardModal({
                 <View style={styles.prefOptionRow}>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.prefOptionTitle}>Paper Roll Width</Text>
-                    <Text style={styles.prefOptionSubtitle}>80mm standard wide or 58mm compact roll</Text>
+                    <Text style={styles.prefOptionSubtitle}>58mm compact roll (Standard) or 80mm wide</Text>
                   </View>
                   <View style={styles.segmentedCtrl}>
                     <TouchableOpacity
-                      style={[styles.segmentCtrlBtn, paperWidth === '80mm' && styles.segmentCtrlBtnActive]}
-                      onPress={() => setPaperWidth('80mm')}
-                    >
-                      <Text style={[styles.segmentCtrlText, paperWidth === '80mm' && styles.segmentCtrlTextActive]}>
-                        80mm (3")
-                      </Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
                       style={[styles.segmentCtrlBtn, paperWidth === '58mm' && styles.segmentCtrlBtnActive]}
-                      onPress={() => setPaperWidth('58mm')}
+                      onPress={() => handleSelectPaperWidth('58mm')}
                     >
                       <Text style={[styles.segmentCtrlText, paperWidth === '58mm' && styles.segmentCtrlTextActive]}>
                         58mm (2")
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.segmentCtrlBtn, paperWidth === '80mm' && styles.segmentCtrlBtnActive]}
+                      onPress={() => handleSelectPaperWidth('80mm')}
+                    >
+                      <Text style={[styles.segmentCtrlText, paperWidth === '80mm' && styles.segmentCtrlTextActive]}>
+                        80mm (3")
                       </Text>
                     </TouchableOpacity>
                   </View>
@@ -1926,6 +2167,34 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#047857',
     marginTop: 1,
+  },
+  connectedDeviceHeroOffline: {
+    backgroundColor: '#FEF2F2',
+    borderColor: '#FECACA',
+  },
+  connectedDeviceHeroChecking: {
+    backgroundColor: '#EFF6FF',
+    borderColor: '#BFDBFE',
+  },
+  recheckBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 8,
+  },
+  recheckBtnOffline: {
+    borderColor: '#FECACA',
+    backgroundColor: '#FFFFFF',
+  },
+  recheckBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#059669',
   },
 
   /* Template Dropdown Section */

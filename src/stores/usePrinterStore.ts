@@ -19,7 +19,7 @@ const DEFAULT_CONFIG: PosPrinterConfig = {
   ipAddress: '192.168.1.100',
   port: 9100,
   macAddress: '',
-  paperWidth: '80mm',
+  paperWidth: '58mm',
   autoPrintNewOrders: true,
   openCashDrawerOnCashPayment: true,
   autoCutReceipt: true,

@@ -7,7 +7,7 @@ export const EscPosEncoder: CommandEncoder<Uint8Array> = {
 
   encode(doc: ReceiptCommand[], config?: Partial<PosPrinterConfig>): Uint8Array {
     const buffer: number[] = [];
-    const is58mm = config?.paperWidth === '58mm';
+    const is58mm = config?.paperWidth !== '80mm';
     const cols = is58mm ? 32 : 48;
 
     // 1. Initialize printer & select Character Code Table CP858 (Supports UK Pound £)

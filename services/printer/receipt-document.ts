@@ -301,7 +301,7 @@ function getOrderItems(order: any): any[] {
  */
 export function buildReceiptDocument(order: Partial<Order> & any, config?: Partial<PosPrinterConfig>): ReceiptCommand[] {
   const commands: ReceiptCommand[] = [];
-  const is58mm = config?.paperWidth === '58mm';
+  const is58mm = config?.paperWidth !== '80mm';
   const cols = is58mm ? 32 : 48;
 
   const orderNum = order.orderNumber || (order._id ? `#${order._id.slice(-5).toUpperCase()}` : '#00000');
@@ -550,7 +550,7 @@ export function buildCustomizedReceiptDocument(
   const layout = template.layout;
   const content = template.content;
 
-  const is58mm = layout.paperWidth === '58mm' || config?.paperWidth === '58mm';
+  const is58mm = layout.paperWidth === '58mm' || config?.paperWidth === '58mm' || (!layout.paperWidth && config?.paperWidth !== '80mm');
   const cols = is58mm ? 32 : 48;
   const font = layout.fontFamily;
   const headerAlign = layout.alignment.header;
