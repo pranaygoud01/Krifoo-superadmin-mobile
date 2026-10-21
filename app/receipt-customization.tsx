@@ -85,6 +85,8 @@ import {
   Calendar,
   Clock,
   Lock,
+  Circle,
+  Square,
 } from 'lucide-react-native';
 
 export type CanvaElementId =
@@ -354,7 +356,7 @@ export default function ReceiptCustomizationScreen() {
   };
 
   // Pick Logo Image
-  const handlePickLogo = async () => {
+  const handlePickLogo = async (cropShape: 'oval' | 'rectangle' = 'rectangle') => {
     try {
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!perm.granted) {
@@ -365,6 +367,7 @@ export default function ReceiptCustomizationScreen() {
         mediaTypes: ['images'],
         allowsEditing: true,
         aspect: [1, 1],
+        shape: cropShape,
         quality: 0.8,
         base64: true,
       });
@@ -376,9 +379,18 @@ export default function ReceiptCustomizationScreen() {
           const mime = asset.mimeType || 'image/png';
           uri = `data:${mime};base64,${asset.base64}`;
         }
-        updateContent((prev) => ({ ...prev, logoUrl: uri, showLogo: true }));
+        updateContent((prev) => ({
+          ...prev,
+          logoUrl: uri,
+          showLogo: true,
+          logoShape: cropShape === 'oval' ? 'circle' : (prev.logoShape || 'square'),
+        }));
         setShowLogoModal(false);
-        showToast({ title: 'Logo Selected ✅', message: 'Logo embedded for clean printing', type: 'success' });
+        showToast({
+          title: cropShape === 'oval' ? 'Circular Logo Selected ✅' : 'Logo Selected ✅',
+          message: 'Logo embedded for clean printing',
+          type: 'success',
+        });
       }
     } catch (err: any) {
       console.error('[ReceiptCustomization] Image picker error:', err);
@@ -1662,7 +1674,15 @@ export default function ReceiptCustomizationScreen() {
                       }}
                       activeOpacity={0.8}
                     >
-                      <Image source={{ uri: content.logoUrl }} style={styles.paperLogo} resizeMode="contain" />
+                      <Image
+                        source={{ uri: content.logoUrl }}
+                        style={[
+                          styles.paperLogo,
+                          content.logoShape === 'circle' && { width: 56, height: 56, borderRadius: 28, overflow: 'hidden' },
+                          content.logoShape === 'rounded' && { borderRadius: 8, overflow: 'hidden' },
+                        ]}
+                        resizeMode={content.logoShape === 'circle' ? 'cover' : 'contain'}
+                      />
                     </TouchableOpacity>
                   ) : (
                     <TouchableOpacity
@@ -2807,15 +2827,93 @@ export default function ReceiptCustomizationScreen() {
                 Choose a logo image to print at the top of your thermal receipts.
               </Text>
 
-              {/* Action 1: Upload from Device */}
-              <TouchableOpacity
-                style={[styles.modalConfirmBtn, { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 14 }]}
-                onPress={handlePickLogo}
-                activeOpacity={0.8}
-              >
-                <Upload size={15} color="#FFFFFF" />
-                <Text style={styles.modalConfirmBtnText}>Choose from Gallery / Photos</Text>
-              </TouchableOpacity>
+              {/* Current Logo Preview */}
+              {currentTemplate.content.logoUrl ? (
+                <View style={{ alignItems: 'center', marginVertical: 10, padding: 10, backgroundColor: '#F8FAFC', borderRadius: 10, borderWidth: 1, borderColor: '#E2E8F0' }}>
+                  <Image
+                    source={{ uri: currentTemplate.content.logoUrl }}
+                    style={[
+                      { width: 72, height: 72 },
+                      currentTemplate.content.logoShape === 'circle' && { borderRadius: 36, overflow: 'hidden' },
+                      currentTemplate.content.logoShape === 'rounded' && { borderRadius: 10, overflow: 'hidden' },
+                    ]}
+                    resizeMode={currentTemplate.content.logoShape === 'circle' ? 'cover' : 'contain'}
+                  />
+                  <Text style={{ fontSize: 11, color: '#64748B', marginTop: 6, fontWeight: '600' }}>
+                    Preview: {currentTemplate.content.logoShape === 'circle' ? 'Circular Crop' : currentTemplate.content.logoShape === 'rounded' ? 'Rounded' : 'Standard'}
+                  </Text>
+                </View>
+              ) : null}
+
+              {/* Action 1: Upload with Circular Crop or Standard */}
+              <View style={{ gap: 8, marginTop: 10 }}>
+                <TouchableOpacity
+                  style={[styles.modalConfirmBtn, { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#2563EB' }]}
+                  onPress={() => handlePickLogo('oval')}
+                  activeOpacity={0.8}
+                >
+                  <Circle size={15} color="#FFFFFF" />
+                  <Text style={styles.modalConfirmBtnText}>Choose & Crop Circular (Round)</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.modalConfirmBtn, { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#0F172A' }]}
+                  onPress={() => handlePickLogo('rectangle')}
+                  activeOpacity={0.8}
+                >
+                  <Square size={15} color="#FFFFFF" />
+                  <Text style={styles.modalConfirmBtnText}>Choose & Crop Square / Standard</Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Logo Display Shape Selector */}
+              <View style={{ marginTop: 14 }}>
+                <Text style={{ fontSize: 11.5, fontWeight: '700', color: '#334155', marginBottom: 6 }}>
+                  Receipt Display Shape
+                </Text>
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  <TouchableOpacity
+                    style={[
+                      styles.alignBtn,
+                      currentTemplate.content.logoShape === 'circle' && styles.alignBtnActive,
+                    ]}
+                    onPress={() => updateContent((prev) => ({ ...prev, logoShape: 'circle' }))}
+                    activeOpacity={0.7}
+                  >
+                    <Circle size={13} color={currentTemplate.content.logoShape === 'circle' ? '#FFFFFF' : '#475569'} />
+                    <Text style={[styles.alignBtnText, currentTemplate.content.logoShape === 'circle' && styles.alignBtnTextActive]}>
+                      Circular
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.alignBtn,
+                      currentTemplate.content.logoShape === 'rounded' && styles.alignBtnActive,
+                    ]}
+                    onPress={() => updateContent((prev) => ({ ...prev, logoShape: 'rounded' }))}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.alignBtnText, currentTemplate.content.logoShape === 'rounded' && styles.alignBtnTextActive]}>
+                      Rounded
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.alignBtn,
+                      (!currentTemplate.content.logoShape || currentTemplate.content.logoShape === 'square') && styles.alignBtnActive,
+                    ]}
+                    onPress={() => updateContent((prev) => ({ ...prev, logoShape: 'square' }))}
+                    activeOpacity={0.7}
+                  >
+                    <Square size={13} color={(!currentTemplate.content.logoShape || currentTemplate.content.logoShape === 'square') ? '#FFFFFF' : '#475569'} />
+                    <Text style={[styles.alignBtnText, (!currentTemplate.content.logoShape || currentTemplate.content.logoShape === 'square') && styles.alignBtnTextActive]}>
+                      Standard
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
 
               {/* Divider */}
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginVertical: 14 }}>

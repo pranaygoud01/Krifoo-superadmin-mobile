@@ -35,6 +35,7 @@ export interface ReceiptLayoutConfig {
 export interface ReceiptContentConfig {
   showLogo: boolean;
   logoUrl?: string;
+  logoShape?: 'square' | 'circle' | 'rounded';
   showRestaurantName: boolean;
   customHeaderTitle?: string;
   showAddress: boolean;
