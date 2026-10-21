@@ -28,6 +28,7 @@ export async function discoverEpsonPrinters(): Promise<
   Array<{ id: string; name: string; connectionType: 'bluetooth' | 'network'; target?: string; ipAddress?: string; macAddress?: string }>
 > {
   const discovered: Array<any> = [];
+  let isBtDisabled = false;
 
   // 1. Discover via PosPrinter (react-native-thermal-pos-printer) native driver
   try {
@@ -47,8 +48,11 @@ export async function discoverEpsonPrinters(): Promise<
         }
       }
     }
-  } catch (e) {
+  } catch (e: any) {
     console.warn('[PosPrinter] Bluetooth scan error:', e);
+    if (e?.message?.toLowerCase().includes('bluetooth is disabled') || e?.code === 'BLUETOOTH_DISABLED') {
+      isBtDisabled = true;
+    }
   }
 
   // 2. Discover via react-native-bluetooth-classic if available
@@ -71,7 +75,11 @@ export async function discoverEpsonPrinters(): Promise<
         }
       }
     }
-  } catch {}
+  } catch (e: any) {
+    if (e?.message?.toLowerCase().includes('bluetooth is disabled')) {
+      isBtDisabled = true;
+    }
+  }
 
   // 3. Fallback to EpsonEposModule discovery
   try {
@@ -85,6 +93,12 @@ export async function discoverEpsonPrinters(): Promise<
     discovered.push(...lanDevices);
   } catch (e) {
     console.warn('[Epson SDK] Network scan error:', e);
+  }
+
+  if (discovered.length === 0 && isBtDisabled) {
+    const err: any = new Error('Bluetooth is disabled');
+    err.code = 'BLUETOOTH_DISABLED';
+    throw err;
   }
 
   return discovered;

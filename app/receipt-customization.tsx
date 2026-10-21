@@ -150,6 +150,8 @@ export default function ReceiptCustomizationScreen() {
   const [newTemplateName, setNewTemplateName] = useState('');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [showLogoModal, setShowLogoModal] = useState(false);
+  const [logoUrlInput, setLogoUrlInput] = useState('');
   const [backendRestaurantName, setBackendRestaurantName] = useState<string>('');
   const [backendRestaurantAddress, setBackendRestaurantAddress] = useState<string>('');
   const [backendRestaurantPhone, setBackendRestaurantPhone] = useState<string>('');
@@ -369,12 +371,25 @@ export default function ReceiptCustomizationScreen() {
       if (!res.canceled && res.assets && res.assets[0]?.uri) {
         const uri = res.assets[0].uri;
         updateContent((prev) => ({ ...prev, logoUrl: uri, showLogo: true }));
+        setShowLogoModal(false);
         showToast({ title: 'Logo Selected', message: 'Logo will be rendered on the receipt', type: 'success' });
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('[ReceiptCustomization] Image picker error:', err);
-      showToast({ title: 'Error', message: 'Failed to select image', type: 'error' });
+      showToast({ title: 'Error', message: err?.message || 'Failed to select image', type: 'error' });
     }
+  };
+
+  const handleSaveLogoUrl = () => {
+    const trimmed = logoUrlInput.trim();
+    if (!trimmed) {
+      updateContent((prev) => ({ ...prev, logoUrl: '', showLogo: false }));
+      showToast({ title: 'Logo Removed', message: 'Logo will not appear on receipts', type: 'info' });
+    } else {
+      updateContent((prev) => ({ ...prev, logoUrl: trimmed, showLogo: true }));
+      showToast({ title: 'Logo Updated ✅', message: 'Logo set successfully', type: 'success' });
+    }
+    setShowLogoModal(false);
   };
 
   // Save changes
@@ -1047,6 +1062,23 @@ export default function ReceiptCustomizationScreen() {
             </TouchableOpacity>
           )}
 
+          {/* Logo Action Button */}
+          {selectedCanvaId === 'logo' && (
+            <TouchableOpacity
+              style={[styles.canvaToolBtn, { backgroundColor: '#3B82F6' }]}
+              onPress={() => {
+                setLogoUrlInput(currentTemplate.content.logoUrl || '');
+                setShowLogoModal(true);
+              }}
+              activeOpacity={0.7}
+            >
+              <Upload size={13} color="#FFFFFF" />
+              <Text style={[styles.canvaToolBtnText, { color: '#FFFFFF' }]}>
+                {currentTemplate.content.logoUrl ? 'Change' : 'Set Logo'}
+              </Text>
+            </TouchableOpacity>
+          )}
+
           {/* Alignment Selector */}
           {hasAlignment && (
             <View style={styles.canvaToolSegment}>
@@ -1581,9 +1613,24 @@ export default function ReceiptCustomizationScreen() {
                   'logo',
                   'Logo Image',
                   content.logoUrl ? (
-                    <Image source={{ uri: content.logoUrl }} style={styles.paperLogo} resizeMode="contain" />
+                    <TouchableOpacity
+                      onPress={() => {
+                        setLogoUrlInput(content.logoUrl || '');
+                        setShowLogoModal(true);
+                      }}
+                      activeOpacity={0.8}
+                    >
+                      <Image source={{ uri: content.logoUrl }} style={styles.paperLogo} resizeMode="contain" />
+                    </TouchableOpacity>
                   ) : (
-                    <TouchableOpacity onPress={handlePickLogo} style={styles.paperLogoPlaceholder}>
+                    <TouchableOpacity
+                      onPress={() => {
+                        setLogoUrlInput('');
+                        setShowLogoModal(true);
+                      }}
+                      style={styles.paperLogoPlaceholder}
+                      activeOpacity={0.8}
+                    >
                       <Upload size={14} color="#64748B" />
                       <Text style={styles.paperLogoPlaceholderText}>+ Upload Logo</Text>
                     </TouchableOpacity>
@@ -2698,6 +2745,77 @@ export default function ReceiptCustomizationScreen() {
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.modalConfirmBtn} onPress={handleCreateNewTemplate}>
                   <Text style={styles.modalConfirmBtnText}>Create & Apply</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        )}
+
+        {/* Logo Configuration Modal */}
+        {showLogoModal && (
+          <View style={styles.simpleModalBackdrop}>
+            <View style={styles.simpleModalContent}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                <Text style={styles.simpleModalTitle}>Receipt Logo</Text>
+                <TouchableOpacity onPress={() => setShowLogoModal(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                  <X size={18} color="#64748B" />
+                </TouchableOpacity>
+              </View>
+              <Text style={styles.simpleModalSubtitle}>
+                Choose a logo image to print at the top of your thermal receipts.
+              </Text>
+
+              {/* Action 1: Upload from Device */}
+              <TouchableOpacity
+                style={[styles.modalConfirmBtn, { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 14 }]}
+                onPress={handlePickLogo}
+                activeOpacity={0.8}
+              >
+                <Upload size={15} color="#FFFFFF" />
+                <Text style={styles.modalConfirmBtnText}>Choose from Gallery / Photos</Text>
+              </TouchableOpacity>
+
+              {/* Divider */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginVertical: 14 }}>
+                <View style={{ flex: 1, height: 1, backgroundColor: '#E2E8F0' }} />
+                <Text style={{ fontSize: 11, fontWeight: '700', color: '#94A3B8' }}>OR ENTER IMAGE URL</Text>
+                <View style={{ flex: 1, height: 1, backgroundColor: '#E2E8F0' }} />
+              </View>
+
+              {/* Action 2: Enter URL */}
+              <TextInput
+                style={[styles.textInput, { fontSize: 13 }]}
+                placeholder="https://example.com/logo.png"
+                value={logoUrlInput}
+                onChangeText={setLogoUrlInput}
+                autoCapitalize="none"
+                autoCorrect={false}
+                placeholderTextColor="#94A3B8"
+              />
+
+              <View style={[styles.simpleModalBtnRow, { marginTop: 14 }]}>
+                {currentTemplate.content.logoUrl ? (
+                  <TouchableOpacity
+                    style={[styles.modalCancelBtn, { borderColor: '#FECACA', backgroundColor: '#FEF2F2' }]}
+                    onPress={() => {
+                      updateContent((prev) => ({ ...prev, logoUrl: '', showLogo: false }));
+                      setShowLogoModal(false);
+                      showToast({ title: 'Logo Removed', message: 'Logo hidden from receipt', type: 'info' });
+                    }}
+                  >
+                    <Text style={[styles.modalCancelBtnText, { color: '#DC2626' }]}>Remove</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <TouchableOpacity style={styles.modalCancelBtn} onPress={() => setShowLogoModal(false)}>
+                    <Text style={styles.modalCancelBtnText}>Cancel</Text>
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity
+                  style={[styles.modalConfirmBtn, { flex: 1 }]}
+                  onPress={handleSaveLogoUrl}
+                  disabled={!logoUrlInput.trim()}
+                >
+                  <Text style={styles.modalConfirmBtnText}>Save URL</Text>
                 </TouchableOpacity>
               </View>
             </View>

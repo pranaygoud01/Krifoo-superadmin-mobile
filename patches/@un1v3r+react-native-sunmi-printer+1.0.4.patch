@@ -1,0 +1,34 @@
+diff --git a/node_modules/@un1v3r/react-native-sunmi-printer/android/src/main/java/com/reactnativesunmiprinter/SunmiScanModule.java b/node_modules/@un1v3r/react-native-sunmi-printer/android/src/main/java/com/reactnativesunmiprinter/SunmiScanModule.java
+index b54bb8b..9b40865 100644
+--- a/node_modules/@un1v3r/react-native-sunmi-printer/android/src/main/java/com/reactnativesunmiprinter/SunmiScanModule.java
++++ b/node_modules/@un1v3r/react-native-sunmi-printer/android/src/main/java/com/reactnativesunmiprinter/SunmiScanModule.java
+@@ -49,14 +49,22 @@ public class SunmiScanModule extends NativeSunmiScanModuleSpec {
+   private final ActivityEventListener mActivityEventListener = new BaseActivityEventListener() {
+     @Override
+     public void onActivityResult(Activity activity, int requestCode, int resultCode, Intent intent) {
+-      if (intent != null) {
++      if (requestCode == START_SCAN && intent != null) {
+         Bundle bundle = intent.getExtras();
+-        ArrayList<HashMap<String, String>> result = (ArrayList<HashMap<String, String>>) bundle.getSerializable("data");
+-        if (null != result) {
+-          Iterator<HashMap<String, String>> it = result.iterator();
+-          while (it.hasNext()) {
+-            HashMap hashMap = it.next();
+-            sendEvent(hashMap.get("VALUE").toString());
++        if (bundle != null) {
++          try {
++            ArrayList<HashMap<String, String>> result = (ArrayList<HashMap<String, String>>) bundle.getSerializable("data");
++            if (null != result) {
++              Iterator<HashMap<String, String>> it = result.iterator();
++              while (it.hasNext()) {
++                HashMap hashMap = it.next();
++                if (hashMap != null && hashMap.get("VALUE") != null) {
++                  sendEvent(hashMap.get("VALUE").toString());
++                }
++              }
++            }
++          } catch (Exception ignored) {
++            // Safe fallback against non-serializable or mismatched intent extras
+           }
+         }
+       }

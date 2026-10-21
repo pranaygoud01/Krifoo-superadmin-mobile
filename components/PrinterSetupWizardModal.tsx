@@ -15,6 +15,8 @@ import {
   Keyboard,
   Animated,
   Easing,
+  Alert,
+  PermissionsAndroid,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Colors } from '../constants/colors';
@@ -37,6 +39,8 @@ import {
   Check,
   ChevronDown,
   ChevronUp,
+  ShieldAlert,
+  ShieldCheck,
 } from 'lucide-react-native';
 import {
   discoverEpsonPrinters,
@@ -77,6 +81,11 @@ export function PrinterSetupWizardModal({
   const [isScanning, setIsScanning] = useState(false);
   const [devices, setDevices] = useState<Array<{ id: string; name: string; connectionType: 'bluetooth' | 'network'; target?: string; ipAddress?: string; macAddress?: string }>>([]);
   const [selectedDevice, setSelectedDevice] = useState<{ id: string; name: string; target?: string; ipAddress?: string; macAddress?: string } | null>(null);
+
+  // Nearby devices permission state (Android)
+  const [hasNearbyPermission, setHasNearbyPermission] = useState<boolean | null>(null);
+  const [isRequestingPermission, setIsRequestingPermission] = useState(false);
+  const [isBluetoothDisabled, setIsBluetoothDisabled] = useState(false);
 
   // Manual IP inputs
   const [ipInput, setIpInput] = useState(currentConfig.ipAddress || '');
@@ -257,6 +266,9 @@ export function PrinterSetupWizardModal({
       setPortInput(String(currentConfig.port || 9100));
       setTestResult(null);
       setIsTemplateDropdownOpen(false);
+      setHasNearbyPermission(null);
+      setIsRequestingPermission(false);
+      setIsBluetoothDisabled(false);
 
       // Load available receipt templates & current active template
       getAllReceiptTemplates(restaurantId).then((allTpls) => {
@@ -283,6 +295,88 @@ export function PrinterSetupWizardModal({
     }
   }, [visible, currentConfig, restaurantId]);
 
+  // Check if Nearby Devices permissions are already granted
+  const checkNearbyPermissions = async (): Promise<boolean> => {
+    if (Platform.OS !== 'android') return true;
+    try {
+      if (Platform.Version >= 31) {
+        const scan = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN);
+        const connect = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT);
+        return scan && connect;
+      } else {
+        const fineLoc = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION);
+        return fineLoc;
+      }
+    } catch (e) {
+      console.warn('[Permissions] check error:', e);
+      return false;
+    }
+  };
+
+  // Request Nearby Devices permissions on Android
+  const requestNearbyPermissions = async (): Promise<boolean> => {
+    if (Platform.OS !== 'android') return true;
+    setIsRequestingPermission(true);
+    try {
+      if (Platform.Version >= 31) {
+        const permissions: any[] = [
+          PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+          PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
+        ];
+        if (Platform.Version >= 33) {
+          const nearbyWifi =
+            (PermissionsAndroid.PERMISSIONS as any).NEARBY_WIFI_DEVICES ||
+            'android.permission.NEARBY_WIFI_DEVICES';
+          permissions.push(nearbyWifi);
+        }
+        permissions.push(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION);
+
+        const statuses = await PermissionsAndroid.requestMultiple(permissions);
+
+        const scanGranted =
+          statuses[PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN] === PermissionsAndroid.RESULTS.GRANTED;
+        const connectGranted =
+          statuses[PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT] === PermissionsAndroid.RESULTS.GRANTED;
+
+        const isGranted = scanGranted || connectGranted;
+        setHasNearbyPermission(isGranted);
+        return isGranted;
+      } else {
+        const statuses = await PermissionsAndroid.requestMultiple([
+          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+          PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION,
+        ]);
+        const isGranted =
+          statuses[PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION] === PermissionsAndroid.RESULTS.GRANTED ||
+          statuses[PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION] === PermissionsAndroid.RESULTS.GRANTED;
+        setHasNearbyPermission(isGranted);
+        return isGranted;
+      }
+    } catch (e) {
+      console.warn('[Permissions] request error:', e);
+      setHasNearbyPermission(false);
+      return false;
+    } finally {
+      setIsRequestingPermission(false);
+    }
+  };
+
+  const handleGrantPermissionPress = async () => {
+    const granted = await requestNearbyPermissions();
+    if (granted) {
+      runDeviceScan();
+    } else {
+      Alert.alert(
+        'Nearby Devices Permission Required',
+        'Android requires "Nearby devices" permission to detect and connect to Bluetooth thermal printers. Please allow it in App Settings.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Open Settings', onPress: () => Linking.openSettings() },
+        ]
+      );
+    }
+  };
+
   // Scan when entering Step 2 with Bluetooth
   useEffect(() => {
     if (visible && step === 2 && selectedType === 'bluetooth') {
@@ -291,8 +385,22 @@ export function PrinterSetupWizardModal({
   }, [step, selectedType, visible]);
 
   const runDeviceScan = async () => {
+    if (Platform.OS === 'android') {
+      const alreadyGranted = await checkNearbyPermissions();
+      if (!alreadyGranted) {
+        const granted = await requestNearbyPermissions();
+        if (!granted) {
+          setHasNearbyPermission(false);
+          setIsScanning(false);
+          return;
+        }
+      }
+      setHasNearbyPermission(true);
+    }
+
     setIsScanning(true);
     setDevices([]);
+    setIsBluetoothDisabled(false);
     const startTime = Date.now();
     try {
       const results = await discoverEpsonPrinters();
@@ -303,11 +411,34 @@ export function PrinterSetupWizardModal({
         await new Promise((res) => setTimeout(res, 1300 - elapsed));
       }
       setDevices(btOnly);
-    } catch (err) {
+    } catch (err: any) {
       console.warn('[Wizard] Scan error:', err);
+      if (err?.message?.toLowerCase().includes('bluetooth is disabled') || err?.code === 'BLUETOOTH_DISABLED') {
+        setIsBluetoothDisabled(true);
+      }
     } finally {
       setIsScanning(false);
     }
+  };
+
+  const requestEnableBluetooth = async () => {
+    if (Platform.OS === 'android') {
+      try {
+        await Linking.sendIntent('android.bluetooth.adapter.action.REQUEST_ENABLE');
+        setTimeout(() => runDeviceScan(), 1200);
+        return;
+      } catch {}
+      try {
+        await Linking.sendIntent('android.settings.BLUETOOTH_SETTINGS');
+        return;
+      } catch {}
+    } else {
+      try {
+        await Linking.openURL('App-Prefs:Bluetooth');
+        return;
+      } catch {}
+    }
+    await Linking.openSettings();
   };
 
   const openBluetoothSettings = async () => {
@@ -686,30 +817,127 @@ export function PrinterSetupWizardModal({
                       />
                       <View style={styles.miniRadarCenter} />
                     </View>
+                  ) : isBluetoothDisabled ? (
+                    <View style={[styles.dotGreen, { backgroundColor: '#F59E0B' }]} />
+                  ) : hasNearbyPermission === false ? (
+                    <View style={[styles.dotGreen, { backgroundColor: '#EF4444' }]} />
                   ) : (
                     <View style={styles.dotGreen} />
                   )}
                   <Text style={styles.scanStatusText}>
                     {isScanning
                       ? 'Scanning for paired printers...'
-                      : devices.length > 0
-                        ? `Found ${devices.length} nearby printer(s)`
-                        : 'No printers found nearby'}
+                      : isBluetoothDisabled
+                        ? 'Bluetooth is turned off'
+                        : hasNearbyPermission === false
+                          ? 'Nearby devices permission required'
+                          : devices.length > 0
+                            ? `Found ${devices.length} nearby printer(s)`
+                            : 'No printers found nearby'}
                   </Text>
                 </View>
 
                 <TouchableOpacity
-                  onPress={runDeviceScan}
-                  disabled={isScanning}
-                  style={[styles.rescanMiniBtn, isScanning && { opacity: 0.75 }]}
+                  onPress={
+                    isBluetoothDisabled
+                      ? requestEnableBluetooth
+                      : hasNearbyPermission === false
+                        ? handleGrantPermissionPress
+                        : runDeviceScan
+                  }
+                  disabled={isScanning || isRequestingPermission}
+                  style={[styles.rescanMiniBtn, (isScanning || isRequestingPermission) && { opacity: 0.75 }]}
                   activeOpacity={0.7}
                 >
                   <Animated.View style={isScanning ? { transform: [{ rotate: sweepAngle }] } : undefined}>
                     <RefreshCw size={13} color="#000000" />
                   </Animated.View>
-                  <Text style={styles.rescanMiniBtnText}>{isScanning ? 'Scanning...' : 'Rescan'}</Text>
+                  <Text style={styles.rescanMiniBtnText}>
+                    {isScanning
+                      ? 'Scanning...'
+                      : isBluetoothDisabled
+                        ? 'Turn On'
+                        : hasNearbyPermission === false
+                          ? 'Grant'
+                          : 'Rescan'}
+                  </Text>
                 </TouchableOpacity>
               </View>
+
+              {/* Bluetooth Disabled Card */}
+              {isBluetoothDisabled && (
+                <View style={[styles.permissionCard, { backgroundColor: '#FFFBEB', borderColor: '#FDE68A' }]}>
+                  <View style={styles.permissionCardHeader}>
+                    <View style={[styles.permissionIconCircle, { backgroundColor: '#FEF3C7' }]}>
+                      <Bluetooth size={22} color="#D97706" />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.permissionTitle, { color: '#B45309' }]}>Bluetooth is Turned Off</Text>
+                      <Text style={[styles.permissionDesc, { color: '#92400E' }]}>
+                        Bluetooth is currently disabled on this device. Please turn on Bluetooth to detect and connect with your receipt printer.
+                      </Text>
+                    </View>
+                  </View>
+                  <View style={styles.permissionActionsRow}>
+                    <TouchableOpacity
+                      style={[styles.grantPermissionBtn, { backgroundColor: '#D97706' }]}
+                      onPress={requestEnableBluetooth}
+                      activeOpacity={0.8}
+                    >
+                      <Bluetooth size={16} color="#FFFFFF" />
+                      <Text style={styles.grantPermissionBtnText}>Turn On Bluetooth</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.openSettingsMiniBtn, { borderColor: '#FCD34D' }]}
+                      onPress={openBluetoothSettings}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={[styles.openSettingsMiniBtnText, { color: '#B45309' }]}>Bluetooth Settings</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
+
+              {/* Nearby Devices Permission Required Card (Android) */}
+              {Platform.OS === 'android' && hasNearbyPermission === false && (
+                <View style={styles.permissionCard}>
+                  <View style={styles.permissionCardHeader}>
+                    <View style={styles.permissionIconCircle}>
+                      <ShieldAlert size={22} color="#DC2626" />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.permissionTitle}>Nearby Devices Permission Required</Text>
+                      <Text style={styles.permissionDesc}>
+                        Android requires "Nearby devices" permission to search, pair, and send orders to Bluetooth receipt printers.
+                      </Text>
+                    </View>
+                  </View>
+                  <View style={styles.permissionActionsRow}>
+                    <TouchableOpacity
+                      style={styles.grantPermissionBtn}
+                      onPress={handleGrantPermissionPress}
+                      disabled={isRequestingPermission}
+                      activeOpacity={0.8}
+                    >
+                      {isRequestingPermission ? (
+                        <ActivityIndicator size="small" color="#FFFFFF" />
+                      ) : (
+                        <>
+                          <Check size={16} color="#FFFFFF" />
+                          <Text style={styles.grantPermissionBtnText}>Grant Permission</Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.openSettingsMiniBtn}
+                      onPress={() => Linking.openSettings()}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.openSettingsMiniBtnText}>Open Settings</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
 
               {/* Impressive Radar Scanning Visualizer (Shown while scanning) */}
               {isScanning ? (
@@ -814,19 +1042,43 @@ export function PrinterSetupWizardModal({
                   </Text>
 
                   <View style={styles.stepsMiniBox}>
-                    <Text style={styles.stepsMiniItem}>1. Turn printer power switch ON.</Text>
-                    <Text style={styles.stepsMiniItem}>2. Pair in tablet Bluetooth Settings (PIN 0000 or 1234).</Text>
-                    <Text style={styles.stepsMiniItem}>3. Tap "Rescan" above.</Text>
+                    {Platform.OS === 'android' && (
+                      <Text style={styles.stepsMiniItem}>1. Allow "Nearby devices" permission for Krifoo Admin.</Text>
+                    )}
+                    <Text style={styles.stepsMiniItem}>2. Turn printer power switch ON.</Text>
+                    <Text style={styles.stepsMiniItem}>3. Pair in tablet Bluetooth Settings (PIN 0000 or 1234).</Text>
+                    <Text style={styles.stepsMiniItem}>4. Tap "Rescan" above.</Text>
                   </View>
 
-                  <TouchableOpacity
-                    onPress={openBluetoothSettings}
-                    style={styles.openSettingsBtn}
-                    activeOpacity={0.8}
-                  >
-                    <Bluetooth size={15} color="#2563EB" />
-                    <Text style={styles.openSettingsBtnText}>Open Tablet Bluetooth Settings</Text>
-                  </TouchableOpacity>
+                  <View style={{ flexDirection: 'row', gap: 8, width: '100%' }}>
+                    {isBluetoothDisabled ? (
+                      <TouchableOpacity
+                        onPress={requestEnableBluetooth}
+                        style={[styles.openSettingsBtn, { backgroundColor: '#FFFBEB', borderColor: '#FDE68A', flex: 1 }]}
+                        activeOpacity={0.8}
+                      >
+                        <Bluetooth size={15} color="#D97706" />
+                        <Text style={[styles.openSettingsBtnText, { color: '#B45309' }]}>Turn On Bluetooth</Text>
+                      </TouchableOpacity>
+                    ) : Platform.OS === 'android' && hasNearbyPermission === false ? (
+                      <TouchableOpacity
+                        onPress={handleGrantPermissionPress}
+                        style={[styles.openSettingsBtn, { backgroundColor: '#FEF2F2', borderColor: '#FECACA', flex: 1 }]}
+                        activeOpacity={0.8}
+                      >
+                        <ShieldAlert size={15} color="#DC2626" />
+                        <Text style={[styles.openSettingsBtnText, { color: '#DC2626' }]}>Grant Permission</Text>
+                      </TouchableOpacity>
+                    ) : null}
+                    <TouchableOpacity
+                      onPress={openBluetoothSettings}
+                      style={[styles.openSettingsBtn, { flex: 1 }]}
+                      activeOpacity={0.8}
+                    >
+                      <Bluetooth size={15} color="#2563EB" />
+                      <Text style={styles.openSettingsBtnText}>Bluetooth Settings</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
               ) : null}
 
@@ -1959,5 +2211,76 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '800',
+  },
+
+  /* Nearby Devices Permission Card */
+  permissionCard: {
+    backgroundColor: '#FEF2F2',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    padding: 14,
+    marginBottom: 14,
+  },
+  permissionCardHeader: {
+    flexDirection: 'row',
+    gap: 12,
+    alignItems: 'flex-start',
+    marginBottom: 12,
+  },
+  permissionIconCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#FEE2E2',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  permissionTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#991B1B',
+    marginBottom: 3,
+  },
+  permissionDesc: {
+    fontSize: 12,
+    color: '#B91C1C',
+    lineHeight: 17,
+  },
+  permissionActionsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 2,
+  },
+  grantPermissionBtn: {
+    backgroundColor: '#DC2626',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 9,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    flex: 1,
+  },
+  grantPermissionBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  openSettingsMiniBtn: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#F87171',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 9,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+  },
+  openSettingsMiniBtnText: {
+    color: '#B91C1C',
+    fontSize: 13,
+    fontWeight: '600',
   },
 });
