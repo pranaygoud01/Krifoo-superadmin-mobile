@@ -43,7 +43,7 @@ import {
   getCachedStoreProfile,
   formatRestaurantAddress,
 } from '../services/receipt-customization.service';
-import { printTestReceiptTemplate } from '../services/thermal-print.service';
+import { printTestReceiptTemplate, resolveLogoAsBase64 } from '../services/thermal-print.service';
 import { getPosPrinterConfig, savePosPrinterConfig } from '../services/pos-config.service';
 import { restaurantService } from '../services/restaurant.service';
 import { restaurantOwnerService } from '../services/restaurant-owner.service';
@@ -366,13 +366,19 @@ export default function ReceiptCustomizationScreen() {
         allowsEditing: true,
         aspect: [1, 1],
         quality: 0.8,
+        base64: true,
       });
 
-      if (!res.canceled && res.assets && res.assets[0]?.uri) {
-        const uri = res.assets[0].uri;
+      if (!res.canceled && res.assets && res.assets[0]) {
+        const asset = res.assets[0];
+        let uri = asset.uri;
+        if (asset.base64) {
+          const mime = asset.mimeType || 'image/png';
+          uri = `data:${mime};base64,${asset.base64}`;
+        }
         updateContent((prev) => ({ ...prev, logoUrl: uri, showLogo: true }));
         setShowLogoModal(false);
-        showToast({ title: 'Logo Selected', message: 'Logo will be rendered on the receipt', type: 'success' });
+        showToast({ title: 'Logo Selected ✅', message: 'Logo embedded for clean printing', type: 'success' });
       }
     } catch (err: any) {
       console.error('[ReceiptCustomization] Image picker error:', err);
@@ -380,12 +386,28 @@ export default function ReceiptCustomizationScreen() {
     }
   };
 
-  const handleSaveLogoUrl = () => {
+  const handleSaveLogoUrl = async () => {
     const trimmed = logoUrlInput.trim();
     if (!trimmed) {
       updateContent((prev) => ({ ...prev, logoUrl: '', showLogo: false }));
       showToast({ title: 'Logo Removed', message: 'Logo will not appear on receipts', type: 'info' });
-    } else {
+      setShowLogoModal(false);
+      return;
+    }
+
+    if (trimmed.startsWith('data:image/')) {
+      updateContent((prev) => ({ ...prev, logoUrl: trimmed, showLogo: true }));
+      showToast({ title: 'Logo Updated ✅', message: 'Logo set successfully', type: 'success' });
+      setShowLogoModal(false);
+      return;
+    }
+
+    try {
+      showToast({ title: 'Processing Logo...', message: 'Downloading & embedding logo...', type: 'info' });
+      const base64Data = await resolveLogoAsBase64(trimmed);
+      updateContent((prev) => ({ ...prev, logoUrl: base64Data, showLogo: true }));
+      showToast({ title: 'Logo Updated ✅', message: 'Logo embedded successfully', type: 'success' });
+    } catch {
       updateContent((prev) => ({ ...prev, logoUrl: trimmed, showLogo: true }));
       showToast({ title: 'Logo Updated ✅', message: 'Logo set successfully', type: 'success' });
     }
@@ -524,7 +546,27 @@ export default function ReceiptCustomizationScreen() {
         message: `Sending '${currentTemplate.name}' to printer...`,
         type: 'info',
       });
-      const ok = await printTestReceiptTemplate(currentTemplate, restaurantId, backendRestaurantName);
+
+      let templateToPrint = currentTemplate;
+      if (templateToPrint.content.showLogo && templateToPrint.content.logoUrl && !templateToPrint.content.logoUrl.startsWith('data:image/')) {
+        try {
+          const base64Logo = await resolveLogoAsBase64(templateToPrint.content.logoUrl);
+          if (base64Logo && base64Logo.startsWith('data:image/')) {
+            templateToPrint = {
+              ...templateToPrint,
+              content: {
+                ...templateToPrint.content,
+                logoUrl: base64Logo,
+              },
+            };
+            updateContent((prev) => ({ ...prev, logoUrl: base64Logo }));
+          }
+        } catch (resolveErr) {
+          console.warn('[ReceiptCustomization] Could not resolve logo to base64 before test print:', resolveErr);
+        }
+      }
+
+      const ok = await printTestReceiptTemplate(templateToPrint, restaurantId, backendRestaurantName);
       if (ok) {
         showToast({ title: 'Test Print Sent ✅', message: 'Receipt printed successfully', type: 'success' });
       } else {

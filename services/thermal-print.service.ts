@@ -62,6 +62,40 @@ export async function setAutoPrintEnabled(enabled: boolean): Promise<void> {
 }
 
 /**
+ * Resolves any logo URI (remote http/https, local file://, content://) into an inline base64 Data URI.
+ * This ensures that Android WebView / Print Spooler renders the logo reliably without
+ * security sandbox restrictions or network latency timing issues.
+ */
+export async function resolveLogoAsBase64(uri?: string): Promise<string> {
+  if (!uri || !uri.trim()) return '';
+  const clean = uri.trim();
+  if (clean.startsWith('data:image/')) {
+    return clean;
+  }
+  try {
+    const response = await fetch(clean);
+    const blob = await response.blob();
+    return await new Promise<string>((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        if (typeof reader.result === 'string') {
+          resolve(reader.result);
+        } else {
+          resolve(clean);
+        }
+      };
+      reader.onerror = () => {
+        resolve(clean);
+      };
+      reader.readAsDataURL(blob);
+    });
+  } catch (err) {
+    console.warn('[thermal-print] Could not resolve logo to base64, using original URI:', err);
+    return clean;
+  }
+}
+
+/**
  * Format currency with symbol (£ for UK)
  */
 function formatMoney(amount?: number): string {
@@ -303,7 +337,7 @@ export function generateCustomizedThermalReceiptHtml(order: Partial<Order> & any
 <body>
   <!-- Header -->
   <div class="header-sec">
-    ${content.showLogo && content.logoUrl ? `<img src="${content.logoUrl}" style="max-width:90px; max-height:65px; display:block; margin:0 auto 6px auto;" />` : ''}
+    ${content.showLogo && content.logoUrl ? `<img src="${content.logoUrl}" alt="Logo" onerror="this.style.display='none'" style="max-width:110px; max-height:70px; object-fit:contain; display:block; margin:0 auto 6px auto; image-rendering:-webkit-optimize-contrast;" />` : ''}
     ${content.customHeaderTitle ? `<div style="font-weight:800; font-size:1em; letter-spacing:0.5px;">${content.customHeaderTitle.toUpperCase()}</div>` : ''}
     ${content.showRestaurantName ? `<div class="title-large">${restaurantName.toUpperCase()}</div>` : ''}
     ${content.headerMessage ? `<div class="tagline">${content.headerMessage}</div>` : ''}
@@ -1038,7 +1072,25 @@ export async function printThermalReceipt(
     const restId = typeof order.restaurantId === 'object' ? order.restaurantId?._id : (order.restaurantId || order.restaurant);
     const baseConfig = await getPosPrinterConfig(restId ? String(restId) : undefined);
     const config = configOverride ? { ...baseConfig, ...configOverride } : baseConfig;
-    const template = customTemplate || (await getActiveReceiptTemplate(restId ? String(restId) : undefined));
+    let template = customTemplate || (await getActiveReceiptTemplate(restId ? String(restId) : undefined));
+
+    // Ensure logo is resolved to inline base64 data URI so WebView print spooler renders it instantly without security sandbox restrictions
+    if (template?.content?.showLogo && template?.content?.logoUrl && !template.content.logoUrl.startsWith('data:image/')) {
+      try {
+        const resolvedLogo = await resolveLogoAsBase64(template.content.logoUrl);
+        if (resolvedLogo) {
+          template = {
+            ...template,
+            content: {
+              ...template.content,
+              logoUrl: resolvedLogo,
+            },
+          };
+        }
+      } catch (logoErr) {
+        console.warn('[printThermalReceipt] Logo resolution warning:', logoErr);
+      }
+    }
 
     // Ensure order has live store details populated
     if (!order.restaurantName && (typeof order.restaurantId !== 'object' || !order.restaurantId?.restaurantName)) {
