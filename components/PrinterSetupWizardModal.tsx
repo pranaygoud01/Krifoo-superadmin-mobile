@@ -49,6 +49,8 @@ import {
   isSunmiAvailable,
   savePosPrinterConfig,
   verifyPrinterConnection,
+  formatPrinterConnectionError,
+  isLikelyAudioDevice,
 } from '../services/thermal-print.service';
 import { PosPrinterConfig, PosBrand, PosConnectionType } from '../services/pos-config.service';
 import {
@@ -115,6 +117,7 @@ export function PrinterSetupWizardModal({
     checked: boolean;
     success: boolean;
     message: string;
+    rawError?: string;
   } | null>(null);
 
   // Testing status
@@ -509,12 +512,14 @@ export function PrinterSetupWizardModal({
           checked: true,
           success: check.success,
           message: check.message,
+          rawError: (check as any).rawError || check.message,
         });
       } catch (err: any) {
         setConnectionStatus({
           checked: true,
           success: false,
           message: err?.message || 'Bluetooth connection check failed',
+          rawError: err?.message,
         });
       } finally {
         setIsVerifyingConnection(false);
@@ -556,12 +561,14 @@ export function PrinterSetupWizardModal({
         checked: true,
         success: check.success,
         message: check.message,
+        rawError: (check as any).rawError || check.message,
       });
     } catch (err: any) {
       setConnectionStatus({
         checked: true,
         success: false,
         message: err?.message || 'Bluetooth connection check failed',
+        rawError: err?.message,
       });
     } finally {
       setIsVerifyingConnection(false);
@@ -630,12 +637,14 @@ export function PrinterSetupWizardModal({
         checked: true,
         success: check.success,
         message: check.message,
+        rawError: (check as any).rawError || check.message,
       });
     } catch (err: any) {
       setConnectionStatus({
         checked: true,
         success: false,
         message: err?.message || 'Verification check failed',
+        rawError: err?.message,
       });
     } finally {
       setIsVerifyingConnection(false);
@@ -749,12 +758,19 @@ export function PrinterSetupWizardModal({
         if (check.success) {
           setConnectionStatus({ checked: true, success: true, message: check.message });
         } else {
-          setConnectionStatus({ checked: true, success: false, message: check.message });
+          const errInfo = formatPrinterConnectionError((check as any).rawError || check.message, selectedDevice?.name || targetVal);
+          setConnectionStatus({
+            checked: true,
+            success: false,
+            message: check.message,
+            rawError: (check as any).rawError || check.message,
+          });
           Alert.alert(
-            'Bluetooth Printer Not Responding',
-            `Could not confirm communication with "${selectedDevice?.name || targetVal}".\n\nReason: ${check.message}\n\nPlease verify that the printer is powered ON and paired in your phone Bluetooth settings.`,
+            errInfo.title,
+            `${errInfo.message}\n\n${errInfo.troubleshootingSteps.map((s) => '• ' + s).join('\n')}`,
             [
               { text: 'Retry Connection', onPress: () => handleVerifyCurrentConnection() },
+              { text: 'Choose Different Device', onPress: () => setStep(2) },
               { text: 'Save Anyway', style: 'destructive', onPress: () => executeSave(finalConfig) },
               { text: 'Cancel', style: 'cancel' },
             ]
@@ -763,11 +779,13 @@ export function PrinterSetupWizardModal({
         }
       } catch (err: any) {
         setIsVerifyingConnection(false);
+        const errInfo = formatPrinterConnectionError(err?.message, selectedDevice?.name || targetVal);
         Alert.alert(
-          'Bluetooth Verification',
-          `Could not confirm printer communication: ${err?.message || 'Check power and pairing.'}`,
+          errInfo.title,
+          `${errInfo.message}\n\n${errInfo.troubleshootingSteps.map((s) => '• ' + s).join('\n')}`,
           [
             { text: 'Retry Connection', onPress: () => handleVerifyCurrentConnection() },
+            { text: 'Choose Different Device', onPress: () => setStep(2) },
             { text: 'Save Anyway', style: 'destructive', onPress: () => executeSave(finalConfig) },
             { text: 'Cancel', style: 'cancel' },
           ]
@@ -1362,88 +1380,140 @@ export function PrinterSetupWizardModal({
           {/* ============================================================== */}
           {step === 3 && (
             <View>
-              {/* Connected Banner */}
-              <View
-                style={[
-                  styles.connectedDeviceHero,
-                  selectedType === 'bluetooth' && connectionStatus?.checked && !connectionStatus.success && styles.connectedDeviceHeroOffline,
-                  selectedType === 'bluetooth' && isVerifyingConnection && styles.connectedDeviceHeroChecking,
-                ]}
-              >
-                <View style={styles.connectedDeviceHeroTop}>
-                  {selectedType === 'bluetooth' ? (
-                    isVerifyingConnection ? (
-                      <ActivityIndicator size="small" color="#2563EB" />
-                    ) : connectionStatus?.checked && connectionStatus.success ? (
-                      <CheckCircle2 size={24} color="#059669" />
-                    ) : connectionStatus?.checked && !connectionStatus.success ? (
-                      <AlertCircle size={24} color="#DC2626" />
-                    ) : (
-                      <Bluetooth size={24} color="#2563EB" />
-                    )
-                  ) : (
-                    <CheckCircle2 size={24} color="#059669" />
-                  )}
-                  <View style={{ flex: 1, marginLeft: 10 }}>
-                    <Text
-                      style={[
-                        styles.heroDeviceTitle,
-                        selectedType === 'bluetooth' && connectionStatus?.checked && !connectionStatus.success && { color: '#991B1B' },
-                      ]}
-                    >
-                      {selectedDevice?.name || 'Thermal POS Printer'}
-                    </Text>
-                    <Text
-                      style={[
-                        styles.heroDeviceSubtitle,
-                        selectedType === 'bluetooth' && connectionStatus?.checked && !connectionStatus.success && { color: '#B91C1C' },
-                      ]}
-                    >
-                      {selectedType === 'bluetooth'
-                        ? isVerifyingConnection
-                          ? 'Checking Bluetooth connection handshake...'
-                          : connectionStatus?.checked && connectionStatus.success
-                            ? 'Bluetooth Link Confirmed • Ready to Print'
-                            : connectionStatus?.checked && !connectionStatus.success
-                              ? `Connection Failed: ${connectionStatus.message || 'Printer not responding'}`
-                              : 'Bluetooth Device Selected • Ready for setup & test print'
-                        : `${selectedType.toUpperCase()} • Ready for setup & test print`}
-                    </Text>
-                  </View>
-
-                  {/* Re-verify Button for Bluetooth */}
-                  {selectedType === 'bluetooth' && (
-                    <TouchableOpacity
-                      style={[
-                        styles.recheckBtn,
-                        connectionStatus?.checked && !connectionStatus.success && styles.recheckBtnOffline,
-                      ]}
-                      onPress={handleVerifyCurrentConnection}
-                      disabled={isVerifyingConnection}
-                      activeOpacity={0.7}
-                    >
-                      {isVerifyingConnection ? (
-                        <ActivityIndicator size="small" color="#2563EB" />
-                      ) : (
-                        <>
-                          <RefreshCw
-                            size={12}
-                            color={connectionStatus?.checked && !connectionStatus.success ? '#DC2626' : '#059669'}
-                          />
-                          <Text
-                            style={[
-                              styles.recheckBtnText,
-                              connectionStatus?.checked && !connectionStatus.success && { color: '#DC2626' },
-                            ]}
-                          >
-                            {connectionStatus?.checked && !connectionStatus.success ? 'Retry Link' : 'Re-check'}
+              {/* Connected / Connection Status Card */}
+              {selectedType === 'bluetooth' && connectionStatus?.checked && !connectionStatus.success ? (
+                (() => {
+                  const errInfo = formatPrinterConnectionError(
+                    connectionStatus.rawError || connectionStatus.message,
+                    selectedDevice?.name
+                  );
+                  return (
+                    <View style={styles.errorHeroCard}>
+                      {/* Error Header */}
+                      <View style={styles.errorHeroHeader}>
+                        <View style={styles.errorHeroIconWrap}>
+                          <AlertCircle size={20} color="#DC2626" />
+                        </View>
+                        <View style={{ flex: 1, marginLeft: 10 }}>
+                          <Text style={styles.errorHeroDeviceTitle} numberOfLines={1}>
+                            {selectedDevice?.name || 'Selected Device'}
                           </Text>
-                        </>
-                      )}
-                    </TouchableOpacity>
-                  )}
+                          <Text style={styles.errorHeroCategory}>
+                            {errInfo.title}
+                          </Text>
+                        </View>
+                        <View style={styles.errorBadge}>
+                          <Text style={styles.errorBadgeText}>NOT CONNECTED</Text>
+                        </View>
+                      </View>
+
+                      {/* Clear, Human-Friendly Explanation */}
+                      <View style={styles.errorBodyBox}>
+                        <Text style={styles.errorExplanationText}>
+                          {errInfo.message}
+                        </Text>
+
+                        {/* Troubleshooting Checklist */}
+                        {errInfo.troubleshootingSteps.length > 0 && (
+                          <View style={styles.errorChecklist}>
+                            <Text style={styles.errorChecklistHeader}>
+                              {errInfo.isLikelyNonPrinter ? 'How to resolve:' : 'Check the following:'}
+                            </Text>
+                            {errInfo.troubleshootingSteps.map((stepText, idx) => (
+                              <View key={idx} style={styles.errorChecklistRow}>
+                                <Text style={styles.errorBullet}>•</Text>
+                                <Text style={styles.errorChecklistText}>{stepText}</Text>
+                              </View>
+                            ))}
+                          </View>
+                        )}
+                      </View>
+
+                      {/* Action Buttons */}
+                      <View style={styles.errorActionsRow}>
+                        <TouchableOpacity
+                          style={styles.changePrinterBtn}
+                          onPress={() => setStep(2)}
+                          activeOpacity={0.8}
+                        >
+                          <ArrowLeft size={14} color="#374151" />
+                          <Text style={styles.changePrinterBtnText}>Choose Different Printer</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          style={styles.retryConnectionBtn}
+                          onPress={handleVerifyCurrentConnection}
+                          disabled={isVerifyingConnection}
+                          activeOpacity={0.8}
+                        >
+                          {isVerifyingConnection ? (
+                            <ActivityIndicator size="small" color="#FFFFFF" />
+                          ) : (
+                            <>
+                              <RefreshCw size={13} color="#FFFFFF" />
+                              <Text style={styles.retryConnectionBtnText}>Retry Link</Text>
+                            </>
+                          )}
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  );
+                })()
+              ) : (
+                <View
+                  style={[
+                    styles.connectedDeviceHero,
+                    selectedType === 'bluetooth' && isVerifyingConnection && styles.connectedDeviceHeroChecking,
+                  ]}
+                >
+                  <View style={styles.connectedDeviceHeroTop}>
+                    {selectedType === 'bluetooth' ? (
+                      isVerifyingConnection ? (
+                        <ActivityIndicator size="small" color="#2563EB" />
+                      ) : connectionStatus?.checked && connectionStatus.success ? (
+                        <CheckCircle2 size={24} color="#059669" />
+                      ) : (
+                        <Bluetooth size={24} color="#2563EB" />
+                      )
+                    ) : (
+                      <CheckCircle2 size={24} color="#059669" />
+                    )}
+                    <View style={{ flex: 1, marginLeft: 10 }}>
+                      <Text style={styles.heroDeviceTitle}>
+                        {selectedDevice?.name || 'Thermal POS Printer'}
+                      </Text>
+                      <Text style={styles.heroDeviceSubtitle}>
+                        {selectedType === 'bluetooth'
+                          ? isVerifyingConnection
+                            ? 'Checking Bluetooth connection handshake...'
+                            : connectionStatus?.checked && connectionStatus.success
+                              ? 'Bluetooth Link Confirmed • Ready to Print'
+                              : 'Bluetooth Device Selected • Ready for setup & test print'
+                          : `${selectedType.toUpperCase()} • Ready for setup & test print`}
+                      </Text>
+                    </View>
+
+                    {/* Re-verify Button for Bluetooth */}
+                    {selectedType === 'bluetooth' && (
+                      <TouchableOpacity
+                        style={styles.recheckBtn}
+                        onPress={handleVerifyCurrentConnection}
+                        disabled={isVerifyingConnection}
+                        activeOpacity={0.7}
+                      >
+                        {isVerifyingConnection ? (
+                          <ActivityIndicator size="small" color="#2563EB" />
+                        ) : (
+                          <>
+                            <RefreshCw size={12} color="#059669" />
+                            <Text style={styles.recheckBtnText}>Re-check</Text>
+                          </>
+                        )}
+                      </TouchableOpacity>
+                    )}
+                  </View>
                 </View>
-              </View>
+              )}
 
               {/* Receipt Template Dropdown Section */}
               <View style={styles.templateSection}>
@@ -2195,6 +2265,144 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     color: '#059669',
+  },
+
+  /* Dedicated Error Card Styles */
+  errorHeroCard: {
+    backgroundColor: '#FEF2F2',
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: '#FECACA',
+    padding: 16,
+    marginBottom: 16,
+    shadowColor: '#DC2626',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  errorHeroHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  errorHeroIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#FEE2E2',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  errorHeroDeviceTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#991B1B',
+  },
+  errorHeroCategory: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#DC2626',
+    marginTop: 1,
+  },
+  errorBadge: {
+    backgroundColor: '#FEE2E2',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+  },
+  errorBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#B91C1C',
+    letterSpacing: 0.5,
+  },
+  errorBodyBox: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#FEE2E2',
+    padding: 12,
+    marginBottom: 14,
+  },
+  errorExplanationText: {
+    fontSize: 13,
+    color: '#374151',
+    lineHeight: 18,
+    fontWeight: '500',
+  },
+  errorChecklist: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
+  },
+  errorChecklistHeader: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#6B7280',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+    marginBottom: 6,
+  },
+  errorChecklistRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 4,
+  },
+  errorBullet: {
+    fontSize: 13,
+    color: '#DC2626',
+    marginRight: 6,
+    lineHeight: 18,
+    fontWeight: '700',
+  },
+  errorChecklistText: {
+    flex: 1,
+    fontSize: 12,
+    color: '#4B5563',
+    lineHeight: 17,
+  },
+  errorActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  changePrinterBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+  },
+  changePrinterBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#374151',
+  },
+  retryConnectionBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#DC2626',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+  },
+  retryConnectionBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
 
   /* Template Dropdown Section */

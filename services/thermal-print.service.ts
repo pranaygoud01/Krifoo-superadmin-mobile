@@ -4,7 +4,7 @@ import { Order } from '../types';
 import { isSunmiAvailable, printSunmiOrderReceipt } from './sunmi-printer.service';
 import { getPosPrinterConfig, savePosPrinterConfig, PosPrinterConfig, POS_BRANDS, getBrandOption, getBrandName, profileFromConfig } from './pos-config.service';
 import { printNetworkOrderReceipt, testNetworkPrinter } from './printer/network-printer.service';
-import { printEpsonOrderReceipt, testEpsonPrinter, testPrinterAlignmentSlip, discoverEpsonPrinters, verifyPrinterConnection } from './printer/epson-printer.service';
+import { printEpsonOrderReceipt, testEpsonPrinter, testPrinterAlignmentSlip, discoverEpsonPrinters, verifyPrinterConnection, formatPrinterConnectionError, isLikelyAudioDevice, FormattedPrinterError } from './printer/epson-printer.service';
 import { buildReceiptDocument, buildDrawerKickDocument, buildCustomizedReceiptDocument, getOrderScheduleInfo, formatScheduleDisplay, getOrderFulfillmentLabel, getSanitizedOrderNotes } from './printer/receipt-document';
 import { resolvePrinter } from './printer/printer-registry';
 import { PrintQueueService } from './printer/print-queue.service';
@@ -24,6 +24,9 @@ export {
   testPrinterAlignmentSlip,
   discoverEpsonPrinters,
   verifyPrinterConnection,
+  formatPrinterConnectionError,
+  isLikelyAudioDevice,
+  FormattedPrinterError,
   buildReceiptDocument,
   buildCustomizedReceiptDocument,
   buildDrawerKickDocument,

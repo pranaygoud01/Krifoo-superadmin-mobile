@@ -21,6 +21,134 @@ export function buildEpsonEposXml(order: Partial<Order> & any, config: PosPrinte
   return EposXmlEncoder.encode(doc, config);
 }
 
+export interface FormattedPrinterError {
+  title: string;
+  message: string;
+  troubleshootingSteps: string[];
+  isLikelyNonPrinter: boolean;
+}
+
+const NON_PRINTER_AUDIO_KEYWORDS = [
+  'rockerz',
+  'airpod',
+  'earbud',
+  'headphone',
+  'headset',
+  'earphone',
+  'soundbar',
+  'speaker',
+  'handsfree',
+  'smartwatch',
+  'smart watch',
+  'watch',
+  'band',
+  'fitbit',
+  'car media',
+  'car audio',
+  'echo dot',
+  'nest mini',
+  'buds',
+  'tws',
+  'soundcore',
+  'realme buds',
+  'oneplus bullets',
+  'boult',
+  'mivi',
+  'noise',
+];
+
+export function isLikelyAudioDevice(name: string): boolean {
+  if (!name) return false;
+  const n = name.toLowerCase();
+  return NON_PRINTER_AUDIO_KEYWORDS.some((kw) => n.includes(kw));
+}
+
+export function formatPrinterConnectionError(rawError: string, deviceName?: string): FormattedPrinterError {
+  const name = (deviceName || '').trim();
+  const lowerErr = (rawError || '').toLowerCase();
+
+  const isAudio = isLikelyAudioDevice(name);
+
+  if (isAudio) {
+    return {
+      title: 'Not a POS Receipt Printer',
+      message: `"${name}" is a Bluetooth audio accessory (headphones/speaker) and does not support thermal receipt printing.`,
+      troubleshootingSteps: [
+        'Please tap "Choose Different Printer" below to select your POS receipt printer.',
+        'If your thermal printer is not listed, make sure its power switch is ON and it is paired in your tablet Bluetooth settings (PIN: 0000 or 1234).',
+      ],
+      isLikelyNonPrinter: true,
+    };
+  }
+
+  if (
+    lowerErr.includes('socket might closed') ||
+    lowerErr.includes('read ret: -1') ||
+    lowerErr.includes('broken pipe') ||
+    lowerErr.includes('connection reset') ||
+    lowerErr.includes('connection refused')
+  ) {
+    return {
+      title: 'Printer Not Responding',
+      message: `Could not establish communication with "${name || 'thermal printer'}". The printer may be turned OFF, sleeping, or out of range.`,
+      troubleshootingSteps: [
+        'Check that the printer power switch is ON and the power LED is green.',
+        'Ensure the thermal paper roll is loaded and the printer lid is fully locked.',
+        'Make sure no other tablet, phone, or POS app is currently connected (Bluetooth thermal printers only accept 1 device at a time).',
+        'Keep your tablet within 5 meters of the printer and try again.',
+      ],
+      isLikelyNonPrinter: false,
+    };
+  }
+
+  if (lowerErr.includes('bluetooth is disabled') || lowerErr.includes('bluetooth_disabled')) {
+    return {
+      title: 'Bluetooth is Switched Off',
+      message: 'Bluetooth is currently disabled on this tablet.',
+      troubleshootingSteps: [
+        'Turn ON Bluetooth in your device quick settings tray.',
+        'Tap "Retry Link" to reconnect.',
+      ],
+      isLikelyNonPrinter: false,
+    };
+  }
+
+  if (lowerErr.includes('not found') || lowerErr.includes('not paired') || lowerErr.includes('bonded')) {
+    return {
+      title: 'Printer Not Paired',
+      message: `"${name || 'The printer'}" is not paired with this tablet.`,
+      troubleshootingSteps: [
+        'Open Bluetooth Settings on your tablet.',
+        'Select your thermal printer to pair (default PIN is usually 0000 or 1234).',
+        'Return here and tap "Retry Link".',
+      ],
+      isLikelyNonPrinter: false,
+    };
+  }
+
+  if (lowerErr.includes('permission') || lowerErr.includes('nearby')) {
+    return {
+      title: 'Bluetooth Permission Required',
+      message: 'Android requires "Nearby devices" permission to communicate with Bluetooth printers.',
+      troubleshootingSteps: [
+        'Go to Settings > Apps > Krifoo Admin > Permissions and allow "Nearby devices".',
+      ],
+      isLikelyNonPrinter: false,
+    };
+  }
+
+  return {
+    title: 'Connection Handshake Failed',
+    message: `Unable to establish communication with "${name || 'printer'}".`,
+    troubleshootingSteps: [
+      'Check that the printer is powered ON and has paper loaded.',
+      'Verify the printer is paired in tablet Bluetooth settings.',
+      'Turn the printer power switch OFF and back ON, then tap "Retry Link".',
+    ],
+    isLikelyNonPrinter: false,
+  };
+}
+
 /**
  * Discover available Epson Bluetooth & Network printers
  */
@@ -38,13 +166,15 @@ export async function discoverEpsonPrinters(): Promise<
       const btDevices = await PosPrinter.getDeviceList();
       if (Array.isArray(btDevices)) {
         for (const dev of btDevices) {
-          discovered.push({
-            id: dev.address || `bt_${dev.name}`,
-            name: dev.name || 'Bluetooth Thermal Printer',
-            connectionType: 'bluetooth' as const,
-            target: dev.address,
-            macAddress: dev.address,
-          });
+          if (!isLikelyAudioDevice(dev.name)) {
+            discovered.push({
+              id: dev.address || `bt_${dev.name}`,
+              name: dev.name || 'Bluetooth Thermal Printer',
+              connectionType: 'bluetooth' as const,
+              target: dev.address,
+              macAddress: dev.address,
+            });
+          }
         }
       }
     }
@@ -63,7 +193,7 @@ export async function discoverEpsonPrinters(): Promise<
       const bonded = await RNBluetoothClassic.getBondedDevices();
       if (Array.isArray(bonded)) {
         for (const b of bonded) {
-          if (!discovered.some((d) => d.target === b.address)) {
+          if (!isLikelyAudioDevice(b.name) && !discovered.some((d) => d.target === b.address)) {
             discovered.push({
               id: b.address,
               name: b.name || 'Paired Bluetooth Printer',
@@ -371,7 +501,7 @@ export async function testPrinterAlignmentSlip(
  */
 export async function verifyPrinterConnection(
   config: PosPrinterConfig
-): Promise<{ success: boolean; message: string }> {
+): Promise<{ success: boolean; message: string; rawError?: string }> {
   const profile = profileFromConfig(config);
   if (!profile) {
     return {
@@ -409,15 +539,20 @@ export async function verifyPrinterConnection(
       };
     } else {
       const failDetail = (result as any).detail || (result as any).reason || 'Printer did not respond';
+      const formatted = formatPrinterConnectionError(failDetail, config.target || printer.model);
       return {
         success: false,
-        message: `${failDetail}. Please ensure the printer is turned on and paired.`,
+        message: `${formatted.title}: ${formatted.message}`,
+        rawError: failDetail,
       };
     }
   } catch (err: any) {
+    const raw = err?.message || 'Failed to communicate with printer.';
+    const formatted = formatPrinterConnectionError(raw, config.target);
     return {
       success: false,
-      message: err?.message || 'Failed to communicate with printer over Bluetooth.',
+      message: `${formatted.title}: ${formatted.message}`,
+      rawError: raw,
     };
   }
 }
