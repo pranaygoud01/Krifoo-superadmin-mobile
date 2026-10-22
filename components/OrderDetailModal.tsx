@@ -202,19 +202,44 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
     : undefined;
   const scheduleInfo = getOrderScheduleInfo(order);
 
+  const cleanAddressString = (text: string) => {
+    if (!text || typeof text !== 'string') return '';
+    return text
+      .split(',')
+      .map(t => t.trim())
+      .filter(t => t.length > 0 && !/hyderabad|telangana/i.test(t))
+      .filter((item, index, arr) => arr.indexOf(item) === index)
+      .join(', ');
+  };
+
   const formatAddress = () => {
     const addr: any = order.deliveryAddress;
     if (!addr) {
       const custAddr: any = order.customerDetails?.address;
       if (typeof custAddr === 'string' && custAddr.trim()) {
-        return custAddr.trim();
+        const cleaned = cleanAddressString(custAddr);
+        return cleaned || custAddr.trim();
       }
       return isTakeaway ? 'Takeaway Order' : isDineIn ? 'Dine In (Takeaway)' : 'Self Pickup';
     }
-    if (typeof addr === 'string') return addr.trim() || (isTakeaway ? 'Takeaway Order' : isDineIn ? 'Dine In (Takeaway)' : 'Self Pickup');
-    if (addr.formattedAddress && typeof addr.formattedAddress === 'string' && addr.formattedAddress.trim()) return addr.formattedAddress.trim();
+    if (typeof addr === 'string') {
+      const cleaned = cleanAddressString(addr);
+      return cleaned || addr.trim() || (isTakeaway ? 'Takeaway Order' : isDineIn ? 'Dine In (Takeaway)' : 'Self Pickup');
+    }
+    if (addr.fullAddress && typeof addr.fullAddress === 'string' && addr.fullAddress.trim()) {
+      const cleaned = cleanAddressString(addr.fullAddress);
+      if (cleaned) return cleaned;
+    }
+    if (addr.formattedAddress && typeof addr.formattedAddress === 'string' && addr.formattedAddress.trim()) {
+      const cleaned = cleanAddressString(addr.formattedAddress);
+      if (cleaned) return cleaned;
+    }
+    if (addr.addressLine1 && typeof addr.addressLine1 === 'string' && addr.addressLine1.includes(',')) {
+      const cleaned = cleanAddressString(addr.addressLine1);
+      if (cleaned) return cleaned;
+    }
 
-    const parts = [
+    const rawParts = [
       addr.houseNumber || addr.flatNumber || addr.doorNo,
       addr.addressLine1,
       addr.addressLine2,
@@ -225,7 +250,19 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
       addr.postalCode || addr.postcode || addr.zipCode,
     ].filter(Boolean);
 
-    return parts.length > 0 ? parts.join(', ') : (addr.fullAddress || addr.address || (isTakeaway ? 'Takeaway Order' : isDineIn ? 'Dine In (Takeaway)' : 'Self Pickup'));
+    const uniqueParts: string[] = [];
+    rawParts.forEach((p: any) => {
+      const str = String(p).trim();
+      if (
+        str &&
+        !/hyderabad|telangana/i.test(str) &&
+        !uniqueParts.some(u => u.toLowerCase() === str.toLowerCase() || u.toLowerCase().includes(str.toLowerCase()))
+      ) {
+        uniqueParts.push(str);
+      }
+    });
+
+    return uniqueParts.length > 0 ? uniqueParts.join(', ') : (addr.address || (isTakeaway ? 'Takeaway Order' : isDineIn ? 'Dine In (Takeaway)' : 'Self Pickup'));
   };
 
   const addressText = formatAddress();

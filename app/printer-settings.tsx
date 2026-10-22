@@ -1235,8 +1235,115 @@ export default function PrinterSettingsScreen() {
                   </View>
                 )}
               </TouchableOpacity>
-            </View>
 
+              <View style={styles.faqItemSeparator} />
+
+              {/* Accordion 5: Supported Printers & Series */}
+              <TouchableOpacity
+                style={styles.faqItem}
+                onPress={() => setExpandedFaq(expandedFaq === 'supported_printers' ? null : 'supported_printers')}
+                activeOpacity={0.7}
+              >
+                <View style={styles.faqQuestionRow}>
+                  <Text style={styles.faqQuestionText}>Which Bluetooth & thermal printers are supported?</Text>
+                  {expandedFaq === 'supported_printers' ? (
+                    <ChevronUp size={16} color="#64748B" />
+                  ) : (
+                    <ChevronDown size={16} color="#94A3B8" />
+                  )}
+                </View>
+                {expandedFaq === 'supported_printers' && (
+                  <View style={styles.faqAnswerBox}>
+                    <Text style={[styles.faqAnswerText, { marginBottom: 10 }]}>
+                      Krifoo POS uses the universal <Text style={{ fontWeight: '700', color: '#0F172A' }}>ESC/POS</Text> command architecture and Epson <Text style={{ fontWeight: '700', color: '#0F172A' }}>ePOS</Text> protocol over Bluetooth (SPP & BLE), Wi-Fi/Ethernet, and built-in POS terminals. The following brands and series are verified and supported:
+                    </Text>
+
+                    {/* 1. Epson */}
+                    <View style={styles.faqPrinterCategory}>
+                      <View style={styles.faqCategoryHeader}>
+                        <Text style={styles.faqCategoryTitle}>1. Epson TM Series</Text>
+                        <View style={[styles.faqCategoryBadge, { backgroundColor: '#EFF6FF' }]}>
+                          <Text style={[styles.faqCategoryBadgeText, { color: '#1D4ED8' }]}>RECOMMENDED</Text>
+                        </View>
+                      </View>
+                      <Text style={styles.faqCategoryDesc}>
+                        • <Text style={{ fontWeight: '600' }}>TM-m30 Series:</Text> TM-m30, TM-m30II, TM-m30II-H, TM-m30III (Bluetooth BLE/SPP & WiFi){'\n'}
+                        • <Text style={{ fontWeight: '600' }}>TM-m10 & TM-m50:</Text> TM-m10 (Compact 58mm POS), TM-m50{'\n'}
+                        • <Text style={{ fontWeight: '600' }}>TM-T88 Series:</Text> TM-T88VI-i, TM-T88VII (Bluetooth & Ethernet LAN){'\n'}
+                        • <Text style={{ fontWeight: '600' }}>TM-T20 & TM-T82:</Text> TM-T20II, TM-T20III, TM-T20X, TM-T82II, TM-T82III{'\n'}
+                        • <Text style={{ fontWeight: '600' }}>TM-U220 Series:</Text> TM-U220 (Impact/Dot-matrix kitchen printer){'\n'}
+                        • <Text style={{ fontWeight: '600' }}>Mobile Series:</Text> TM-P20, TM-P60II, TM-P80
+                      </Text>
+                    </View>
+
+                    {/* 2. Star Micronics */}
+                    <View style={styles.faqPrinterCategory}>
+                      <View style={styles.faqCategoryHeader}>
+                        <Text style={styles.faqCategoryTitle}>2. Star Micronics Series</Text>
+                        <View style={[styles.faqCategoryBadge, { backgroundColor: '#FFFBEB' }]}>
+                          <Text style={[styles.faqCategoryBadgeText, { color: '#B45309' }]}>STAR ESC/POS</Text>
+                        </View>
+                      </View>
+                      <Text style={styles.faqCategoryDesc}>
+                        • <Text style={{ fontWeight: '600' }}>TSP100 / TSP143 Series:</Text> TSP143IIIBI, TSP100III Bluetooth{'\n'}
+                        • <Text style={{ fontWeight: '600' }}>TSP650 Series:</Text> TSP654IIBI, TSP650II Bluetooth{'\n'}
+                        • <Text style={{ fontWeight: '600' }}>mC-Print Series:</Text> mC-Print2 (MCP21LB), mC-Print3 (MCP31LB){'\n'}
+                        • <Text style={{ fontWeight: '600' }}>mPOP Series:</Text> Combined Bluetooth receipt printer & cash drawer{'\n'}
+                        • <Text style={{ fontWeight: '600' }}>SM Mobile Series:</Text> SM-L200, SM-S220i, SM-S230i, SM-T300i, SM-T400i
+                      </Text>
+                    </View>
+
+                    {/* 3. Munbyn, Xprinter & Rongta */}
+                    <View style={styles.faqPrinterCategory}>
+                      <View style={styles.faqCategoryHeader}>
+                        <Text style={styles.faqCategoryTitle}>3. Munbyn / Xprinter / Rongta</Text>
+                        <View style={[styles.faqCategoryBadge, { backgroundColor: '#F0FDF4' }]}>
+                          <Text style={[styles.faqCategoryBadgeText, { color: '#15803D' }]}>AMAZON UK POS</Text>
+                        </View>
+                      </View>
+                      <Text style={styles.faqCategoryDesc}>
+                        • <Text style={{ fontWeight: '600' }}>Xprinter 58mm & 80mm:</Text> XP-58, XP-58IIH, XP-N160I, XP-N160II, XP-C260, XP-C300, XP-Q90EC{'\n'}
+                        • <Text style={{ fontWeight: '600' }}>Munbyn Series:</Text> ITPP047, ITPP068, ITPP964, ITPP082, IMP001, IMP002{'\n'}
+                        • <Text style={{ fontWeight: '600' }}>Rongta Series:</Text> RP326, RP327, RP80, RPP02, RPP200, RPP300
+                      </Text>
+                    </View>
+
+                    {/* 4. Generic Bluetooth ESC/POS */}
+                    <View style={styles.faqPrinterCategory}>
+                      <View style={styles.faqCategoryHeader}>
+                        <Text style={styles.faqCategoryTitle}>4. Generic Desktop & Portable Bluetooth Printers</Text>
+                      </View>
+                      <Text style={styles.faqCategoryDesc}>
+                        • <Text style={{ fontWeight: '600' }}>POS-58 Series (58mm):</Text> POS-5802DD, POS-5805DD, MPT-II, ZJ-5802, GOOJPRT PT-210, JP-58H{'\n'}
+                        • <Text style={{ fontWeight: '600' }}>POS-80 Series (80mm):</Text> POS-8001, POS-8002, MPT-III, RP80, ZJ-8220, ZJ-8250{'\n'}
+                        • <Text style={{ fontWeight: '600' }}>HOIN Series:</Text> HOP-E58, HOP-E801, HOP-E802
+                      </Text>
+                    </View>
+
+                    {/* 5. Citizen & Bixolon */}
+                    <View style={styles.faqPrinterCategory}>
+                      <View style={styles.faqCategoryHeader}>
+                        <Text style={styles.faqCategoryTitle}>5. Citizen & Bixolon</Text>
+                      </View>
+                      <Text style={styles.faqCategoryDesc}>
+                        • <Text style={{ fontWeight: '600' }}>Citizen:</Text> CT-S310II, CT-S651, CMP-20II, CMP-30II{'\n'}
+                        • <Text style={{ fontWeight: '600' }}>Bixolon & Sam4s:</Text> SRP-350plusIII, SRP-Q300, SPP-R200III/R310, Sam4s Giant-100
+                      </Text>
+                    </View>
+
+                    {/* Specifications Box */}
+                    <View style={[styles.faqSpecsBox, { marginTop: 12 }]}>
+                      <Text style={styles.faqSpecsTitle}>Hardware Specifications & Capabilities</Text>
+                      <Text style={styles.faqSpecsText}>
+                        • <Text style={{ fontWeight: '700' }}>Paper Roll Sizes:</Text> 58mm (2-inch / 32 columns, default) & 80mm (3-inch / 48 columns){'\n'}
+                        • <Text style={{ fontWeight: '700' }}>Bluetooth Modes:</Text> Classic Bluetooth SPP (Android) & Bluetooth Low Energy (BLE){'\n'}
+                        • <Text style={{ fontWeight: '700' }}>Peripherals:</Text> Automatic Paper Cut (Full/Partial) and RJ11/RJ12 Cash Drawer Kick (Pins 1 & 2)
+                      </Text>
+                    </View>
+                  </View>
+                )}
+              </TouchableOpacity>
+            </View>
 
           </>
         )}
@@ -2121,6 +2228,57 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor: '#F1F5F9',
     marginVertical: 4,
+  },
+  faqPrinterCategory: {
+    marginTop: 10,
+    marginBottom: 4,
+  },
+  faqCategoryHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 3,
+  },
+  faqCategoryTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  faqCategoryBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 1.5,
+    borderRadius: 4,
+  },
+  faqCategoryBadgeText: {
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+  },
+  faqCategoryDesc: {
+    fontSize: 11,
+    color: '#475569',
+    lineHeight: 18,
+    paddingLeft: 2,
+  },
+  faqSpecsBox: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 8,
+    padding: 10,
+  },
+  faqSpecsTitle: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#0F172A',
+    marginBottom: 4,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  faqSpecsText: {
+    fontSize: 11,
+    color: '#334155',
+    lineHeight: 17,
   },
 
   /* Architecture pipeline footer */
