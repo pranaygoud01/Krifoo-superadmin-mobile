@@ -1,6 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
-import { isSunmiAvailable } from './sunmi-printer.service';
 
 export type PosBrand =
   | 'sunmi'

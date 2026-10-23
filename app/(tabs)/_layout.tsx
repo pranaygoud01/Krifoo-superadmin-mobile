@@ -18,7 +18,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { useAuth } from '../../context/AuthContext';
 
-if (Platform.OS === 'android') {
+if (Platform.OS === 'android' && !(global as any)._IS_FABRIC && !(global as any).nativeFabricUIManager) {
   if (UIManager.setLayoutAnimationEnabledExperimental) {
     UIManager.setLayoutAnimationEnabledExperimental(true);
   }
