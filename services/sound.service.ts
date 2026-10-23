@@ -1,7 +1,14 @@
-import { Audio } from 'expo-av';
 import { Vibration, Platform, AppState } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+
+let Audio: any = null;
+try {
+  // Safe load of expo-av to prevent crash if ExponentAV native module is not present
+  Audio = require('expo-av').Audio;
+} catch (e) {
+  console.warn('[SoundService] ExponentAV native module not available in this client.');
+}
 
 export const SOUND_SETTINGS_KEY = '@krifoo_admin_sound_settings';
 
@@ -25,7 +32,7 @@ export const DEFAULT_SOUND_SETTINGS: SoundSettings = {
   notifyCancellations: true,
 };
 
-let activeSound: Audio.Sound | null = null;
+let activeSound: any = null;
 let buzzTimeout: any = null;
 let iosHapticInterval: any = null;
 let currentRequestId = 0;
@@ -65,6 +72,7 @@ export async function saveSoundSettings(settings: Partial<SoundSettings>): Promi
  * Configure audio mode to ensure sound plays loudly even if device is on silent/vibrate
  */
 async function configureAudio() {
+  if (!Audio?.setAudioModeAsync) return;
   try {
     await Audio.setAudioModeAsync({
       playsInSilentModeIOS: true,
@@ -189,29 +197,31 @@ export async function playOrderBuzzSound(
     }
 
     // 3. Audio setup & playback
-    await configureAudio();
+    if (Audio?.Sound) {
+      await configureAudio();
 
-    if (requestId !== currentRequestId) return;
+      if (requestId !== currentRequestId) return;
 
-    const { sound } = await Audio.Sound.createAsync(
-      require('../assets/sounds/order_buzz.wav'),
-      {
-        shouldPlay: false,
-        isLooping: true,
-        volume: settings.volume,
+      const { sound } = await Audio.Sound.createAsync(
+        require('../assets/sounds/order_buzz.wav'),
+        {
+          shouldPlay: false,
+          isLooping: true,
+          volume: settings.volume,
+        }
+      );
+
+      // If stopped/cancelled while loading the asset, immediately unload
+      if (requestId !== currentRequestId) {
+        try {
+          await sound.unloadAsync();
+        } catch (e) {}
+        return;
       }
-    );
 
-    // If stopped/cancelled while loading the asset, immediately unload
-    if (requestId !== currentRequestId) {
-      try {
-        await sound.unloadAsync();
-      } catch (e) {}
-      return;
+      activeSound = sound;
+      await sound.playAsync();
     }
-
-    activeSound = sound;
-    await sound.playAsync();
 
     // 4. Guaranteed auto-stop buzz after specified duration
     buzzTimeout = setTimeout(async () => {

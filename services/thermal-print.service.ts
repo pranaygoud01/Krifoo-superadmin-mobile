@@ -1,4 +1,3 @@
-import * as Print from 'expo-print';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Order } from '../types';
 import { isSunmiAvailable, printSunmiOrderReceipt } from './sunmi-printer.service';

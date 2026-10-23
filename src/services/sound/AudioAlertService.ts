@@ -1,18 +1,25 @@
-import { Audio } from 'expo-av';
 import { Vibration, Platform, AppState } from 'react-native';
 import * as Haptics from 'expo-haptics';
+
+let Audio: any = null;
+try {
+  Audio = require('expo-av').Audio;
+} catch (e) {
+  console.warn('[AudioAlertService] ExponentAV native module not available in this client.');
+}
 
 /**
  * Interactive Audio Alert Service (`expo-av`).
  * Loops alert tone until restaurant staff explicitly clicks "Accept" or "Reject".
  */
 class AudioAlertService {
-  private activeSound: Audio.Sound | null = null;
+  private activeSound: any = null;
   private autoStopTimer: any = null;
   private hapticInterval: any = null;
   private isAlertActive: boolean = false;
 
   private async configureAudioMode(): Promise<void> {
+    if (!Audio?.setAudioModeAsync) return;
     try {
       await Audio.setAudioModeAsync({
         playsInSilentModeIOS: true,
@@ -46,17 +53,19 @@ class AudioAlertService {
         }, 1000);
       }
 
-      const { sound } = await Audio.Sound.createAsync(
-        require('../../../assets/sounds/order_buzz.wav'),
-        {
-          shouldPlay: true,
-          isLooping: true,
-          volume: 1.0,
-        }
-      );
+      if (Audio?.Sound) {
+        const { sound } = await Audio.Sound.createAsync(
+          require('../../../assets/sounds/order_buzz.wav'),
+          {
+            shouldPlay: true,
+            isLooping: true,
+            volume: 1.0,
+          }
+        );
 
-      this.activeSound = sound;
-      await sound.playAsync();
+        this.activeSound = sound;
+        await sound.playAsync();
+      }
 
       // Fallback auto-stop if unhandled after timeoutMs
       this.autoStopTimer = setTimeout(() => {

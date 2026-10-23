@@ -1,5 +1,11 @@
-import * as Print from 'expo-print';
 import { PrinterTransport, TransportResult } from './transport.types';
+
+let Print: any = null;
+try {
+  Print = require('expo-print');
+} catch (e) {
+  console.warn('[SystemTransport] ExpoPrint native module not available in this client.');
+}
 
 export class SystemTransport implements PrinterTransport {
   constructor(
@@ -8,10 +14,17 @@ export class SystemTransport implements PrinterTransport {
   ) {}
 
   async isAvailable(): Promise<boolean> {
-    return true; // System spooler / AirPrint is available on all iOS and Android devices
+    return Boolean(Print && (Print.printAsync || Print.printToFileAsync));
   }
 
   async send(payload: Uint8Array | string): Promise<TransportResult> {
+    if (!Print) {
+      return {
+        ok: false,
+        kind: 'protocol_error',
+        detail: 'expo-print is not available in this client environment',
+      };
+    }
     try {
       const html =
         this.htmlContent ||
