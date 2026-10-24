@@ -21,12 +21,12 @@ export type PosConnectionType = 'builtin' | 'network' | 'bluetooth' | 'system';
  * Makes invalid printer states unrepresentable at compile time (Fixes Bug #9, #4, #11).
  */
 export type PrinterProfile =
-  | { connectionType: 'network_epos'; ipAddress: string; port?: number }
-  | { connectionType: 'network_raw'; ipAddress: string; port: number }
-  | { connectionType: 'ble'; macAddress: string; serviceUuid?: string; writeCharacteristicUuid?: string }
-  | { connectionType: 'spp'; macAddress: string; target?: string }
-  | { connectionType: 'builtin' }
-  | { connectionType: 'system' };
+  | { connectionType: 'network_epos'; ipAddress: string; port?: number; deviceName?: string }
+  | { connectionType: 'network_raw'; ipAddress: string; port: number; deviceName?: string }
+  | { connectionType: 'ble'; macAddress: string; serviceUuid?: string; writeCharacteristicUuid?: string; deviceName?: string }
+  | { connectionType: 'spp'; macAddress: string; target?: string; deviceName?: string }
+  | { connectionType: 'builtin'; deviceName?: string }
+  | { connectionType: 'system'; deviceName?: string };
 
 export interface PosPrinterConfig {
   brand: PosBrand;
@@ -35,6 +35,8 @@ export interface PosPrinterConfig {
   port: number;
   macAddress?: string;
   target?: string;
+  deviceName?: string;
+  printerName?: string;
   paperWidth: '80mm' | '58mm';
   autoPrint: boolean;
   copies: number;
@@ -146,12 +148,14 @@ export const DEFAULT_POS_CONFIG: PosPrinterConfig = {
  * avoiding silent invalid network/bluetooth attempts.
  */
 export function profileFromConfig(config: PosPrinterConfig): PrinterProfile | null {
+  const deviceName = config.deviceName || config.printerName;
+
   switch (config.connectionType) {
     case 'builtin':
-      return { connectionType: 'builtin' };
+      return { connectionType: 'builtin', deviceName };
 
     case 'system':
-      return { connectionType: 'system' };
+      return { connectionType: 'system', deviceName };
 
     case 'network': {
       const ip = (config.ipAddress || '').trim();
@@ -164,6 +168,7 @@ export function profileFromConfig(config: PosPrinterConfig): PrinterProfile | nu
           connectionType: 'network_epos',
           ipAddress: ip,
           port: config.port || 8008,
+          deviceName,
         };
       }
       // Standard raw socket port 9100
@@ -171,6 +176,7 @@ export function profileFromConfig(config: PosPrinterConfig): PrinterProfile | nu
         connectionType: 'network_raw',
         ipAddress: ip,
         port: config.port || 9100,
+        deviceName,
       };
     }
 
@@ -185,17 +191,19 @@ export function profileFromConfig(config: PosPrinterConfig): PrinterProfile | nu
           connectionType: 'spp',
           macAddress: mac,
           target: config.target,
+          deviceName,
         };
       }
       // iOS / Modern TM-m30 uses BLE GATT
       return {
         connectionType: 'ble',
         macAddress: mac,
+        deviceName,
       };
     }
 
     default:
-      return { connectionType: 'system' };
+      return { connectionType: 'system', deviceName };
   }
 }
 

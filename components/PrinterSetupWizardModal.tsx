@@ -297,7 +297,10 @@ export function PrinterSetupWizardModal({
       if (currentConfig.target || currentConfig.macAddress) {
         setSelectedDevice({
           id: currentConfig.target || currentConfig.macAddress || 'curr_dev',
-          name: (currentConfig.brand === 'star' ? 'Star Micronics Printer' : 'Epson TM-m30 / Thermal Printer'),
+          name:
+            currentConfig.deviceName ||
+            currentConfig.printerName ||
+            (currentConfig.brand === 'star' ? 'Star Micronics Printer' : 'Bluetooth Thermal Printer'),
           target: currentConfig.target,
           macAddress: currentConfig.macAddress,
           ipAddress: currentConfig.ipAddress,
@@ -735,9 +738,21 @@ export function PrinterSetupWizardModal({
           ? 'system'
           : 'epson';
 
+    const resolvedDeviceName =
+      selectedDevice?.name ||
+      (selectedType === 'builtin'
+        ? 'Sunmi POS Built-in Thermal Printer'
+        : selectedType === 'system'
+          ? 'System Print Spooler'
+          : selectedType === 'bluetooth'
+            ? 'Bluetooth Thermal Printer'
+            : 'Network Thermal Printer');
+
     const finalConfig: Partial<PosPrinterConfig> = {
       connectionType: selectedType,
       brand: brandVal,
+      deviceName: resolvedDeviceName,
+      printerName: resolvedDeviceName,
       target: selectedType === 'bluetooth' ? targetVal : '',
       macAddress: selectedType === 'bluetooth' ? (selectedDevice?.macAddress || (targetVal.startsWith('BT:') ? '' : targetVal)) : '',
       ipAddress: selectedType === 'network' ? ipVal : '',

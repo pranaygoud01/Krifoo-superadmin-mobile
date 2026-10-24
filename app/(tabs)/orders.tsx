@@ -14,8 +14,11 @@ import {
   Modal,
   Platform,
   AppState,
+  NativeSyntheticEvent,
+  NativeScrollEvent,
+  LayoutAnimation,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
 import { OrderDetailModal } from '../../components/OrderDetailModal';
 import { AssignDeliveryModal } from '../../components/AssignDeliveryModal';
@@ -570,18 +573,18 @@ const OrderCardItem: React.FC<OrderCardProps> = ({
             }}
             activeOpacity={0.8}
           >
-            <Check size={isTablet ? 15 : 13} color="#FFFFFF" />
-            <Text style={[styles.acceptBtnText, isTablet && styles.acceptBtnTextTablet]}>Accept</Text>
+            <Check size={isTablet ? 15 : compact ? 12 : 13} color="#FFFFFF" />
+            <Text style={[styles.acceptBtnText, isTablet && styles.acceptBtnTextTablet, compact && { fontSize: 11 }]}>Accept</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.printIconBtn, isTablet && styles.printIconBtnTablet]}
+            style={[styles.printIconBtn, isTablet && styles.printIconBtnTablet, compact && { width: 34, height: 32 }]}
             onPress={(e: any) => {
               e.stopPropagation?.();
               onPrint(order);
             }}
             activeOpacity={0.8}
           >
-            <Printer size={16} color="#11181C" />
+            <Printer size={compact ? 14 : 16} color="#11181C" />
           </TouchableOpacity>
         </View>
       );
@@ -592,61 +595,108 @@ const OrderCardItem: React.FC<OrderCardProps> = ({
       if (fulfillmentType === 'dine_in') {
         // Eat-In (Dine-In) Order in Kitchen: "Ready to Serve" button -> marks served/delivered
         return (
-          <View style={[styles.actionButtonsRow, isTablet && styles.actionButtonsRowTablet]}>
+          <View style={[styles.actionButtonsRow, isTablet && styles.actionButtonsRowTablet, compact && { gap: 6, marginTop: 8 }]}>
             <TouchableOpacity
-              style={[styles.acceptBtn, isTablet && styles.acceptBtnTablet, { backgroundColor: '#7C3AED' }]}
+              style={[styles.acceptBtn, isTablet && styles.acceptBtnTablet, { backgroundColor: '#7C3AED' }, compact && { paddingVertical: 7, paddingHorizontal: 6 }]}
               onPress={(e: any) => {
                 e.stopPropagation?.();
                 onUpdateStatus(order._id, 'delivered');
               }}
               activeOpacity={0.8}
             >
-              <UtensilsCrossed size={isTablet ? 15 : 13} color="#FFFFFF" />
-              <Text style={[styles.acceptBtnText, isTablet && styles.acceptBtnTextTablet]}>Ready to Serve</Text>
+              <UtensilsCrossed size={isTablet ? 15 : compact ? 12 : 13} color="#FFFFFF" />
+              <Text style={[styles.acceptBtnText, isTablet && styles.acceptBtnTextTablet, compact && { fontSize: 11 }]} numberOfLines={1}>Ready to Serve</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.printIconBtn, isTablet && styles.printIconBtnTablet]}
+              style={[styles.printIconBtn, isTablet && styles.printIconBtnTablet, compact && { width: 34, height: 32 }]}
               onPress={(e: any) => {
                 e.stopPropagation?.();
                 onPrint(order);
               }}
               activeOpacity={0.8}
             >
-              <Printer size={16} color="#11181C" />
+              <Printer size={compact ? 14 : 16} color="#11181C" />
             </TouchableOpacity>
           </View>
         );
       } else if (isPickup) {
         // Self Pickup in Kitchen: Show "Ready" (Ready for Pickup) -> moves to Self Pickup tab
         return (
-          <View style={[styles.actionButtonsRow, isTablet && styles.actionButtonsRowTablet]}>
+          <View style={[styles.actionButtonsRow, isTablet && styles.actionButtonsRowTablet, compact && { gap: 6, marginTop: 8 }]}>
             <TouchableOpacity
-              style={[styles.acceptBtn, isTablet && styles.acceptBtnTablet, { backgroundColor: '#FF5C39' }]}
+              style={[styles.acceptBtn, isTablet && styles.acceptBtnTablet, { backgroundColor: '#FF5C39' }, compact && { paddingVertical: 7, paddingHorizontal: 6 }]}
               onPress={(e: any) => {
                 e.stopPropagation?.();
                 onUpdateStatus(order._id, 'ready_for_pickup');
               }}
               activeOpacity={0.8}
             >
-              <Check size={isTablet ? 15 : 13} color="#FFFFFF" />
-              <Text style={[styles.acceptBtnText, isTablet && styles.acceptBtnTextTablet]}>
-                {fulfillmentType === 'takeaway' ? 'Ready for Takeaway' : 'Ready for Pickup'}
+              <Check size={isTablet ? 15 : compact ? 12 : 13} color="#FFFFFF" />
+              <Text style={[styles.acceptBtnText, isTablet && styles.acceptBtnTextTablet, compact && { fontSize: 11 }]} numberOfLines={1}>
+                {fulfillmentType === 'takeaway' ? (compact ? 'Ready (Takeaway)' : 'Ready for Takeaway') : (compact ? 'Ready (Pickup)' : 'Ready for Pickup')}
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.printIconBtn, isTablet && styles.printIconBtnTablet]}
+              style={[styles.printIconBtn, isTablet && styles.printIconBtnTablet, compact && { width: 34, height: 32 }]}
               onPress={(e: any) => {
                 e.stopPropagation?.();
                 onPrint(order);
               }}
               activeOpacity={0.8}
             >
-              <Printer size={16} color="#11181C" />
+              <Printer size={compact ? 14 : 16} color="#11181C" />
             </TouchableOpacity>
           </View>
         );
       } else {
         // Delivery order in kitchen: Button to assign Rider + Out for Delivery button
+        if (compact) {
+          return (
+            <View style={[styles.actionButtonsRow, { flexDirection: 'column', gap: 6, marginTop: 8 }]}>
+              <View style={{ flexDirection: 'row', gap: 6, width: '100%' }}>
+                <TouchableOpacity
+                  style={[styles.assignDriverIconBtn, { flex: 1, paddingVertical: 7, paddingHorizontal: 6 }]}
+                  onPress={(e: any) => {
+                    e.stopPropagation?.();
+                    onAssignDelivery(order);
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <Bike size={12} color="#FFFFFF" />
+                  <Text style={[styles.assignDriverText, { fontSize: 11 }]} numberOfLines={1}>
+                    {deliveryPartnerName ? `Rider: ${deliveryPartnerName}` : 'Assign Rider'}
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.printIconBtn, { width: 34, height: 32 }]}
+                  onPress={(e: any) => {
+                    e.stopPropagation?.();
+                    onPrint(order);
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <Printer size={14} color="#11181C" />
+                </TouchableOpacity>
+              </View>
+
+              <TouchableOpacity
+                style={[styles.outForDeliveryBtn, { width: '100%', paddingVertical: 7, paddingHorizontal: 6 }]}
+                onPress={(e: any) => {
+                  e.stopPropagation?.();
+                  onUpdateStatus(order._id, 'out_for_delivery');
+                }}
+                activeOpacity={0.8}
+              >
+                <Truck size={13} color="#FFFFFF" />
+                <Text style={[styles.outForDeliveryBtnText, { fontSize: 11 }]} numberOfLines={1}>
+                  Out for Delivery
+                </Text>
+              </TouchableOpacity>
+            </View>
+          );
+        }
+
         return (
           <View style={[styles.actionButtonsRow, isTablet && styles.actionButtonsRowTablet]}>
             <TouchableOpacity
@@ -693,29 +743,29 @@ const OrderCardItem: React.FC<OrderCardProps> = ({
     // 4. Self Pickup Orders in Ready State (Waiting in Self Pickup Tab for Customer Collection)
     if (isPickup && order.status === 'ready_for_pickup') {
       return (
-        <View style={[styles.actionButtonsRow, isTablet && styles.actionButtonsRowTablet]}>
+        <View style={[styles.actionButtonsRow, isTablet && styles.actionButtonsRowTablet, compact && { gap: 6, marginTop: 8 }]}>
           <TouchableOpacity
-            style={[styles.acceptBtn, isTablet && styles.acceptBtnTablet, { backgroundColor: '#10B981' }]}
+            style={[styles.acceptBtn, isTablet && styles.acceptBtnTablet, { backgroundColor: '#10B981' }, compact && { paddingVertical: 7, paddingHorizontal: 6 }]}
             onPress={(e: any) => {
               e.stopPropagation?.();
               onUpdateStatus(order._id, 'delivered');
             }}
             activeOpacity={0.8}
           >
-            <Check size={isTablet ? 15 : 13} color="#FFFFFF" />
-            <Text style={[styles.acceptBtnText, isTablet && styles.acceptBtnTextTablet]}>
-              {fulfillmentType === 'takeaway' ? 'Mark Collected (Takeaway)' : 'Delivered'}
+            <Check size={isTablet ? 15 : compact ? 12 : 13} color="#FFFFFF" />
+            <Text style={[styles.acceptBtnText, isTablet && styles.acceptBtnTextTablet, compact && { fontSize: 11 }]} numberOfLines={1}>
+              {fulfillmentType === 'takeaway' ? (compact ? 'Collected' : 'Mark Collected (Takeaway)') : (compact ? 'Collected' : 'Delivered')}
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.printIconBtn, isTablet && styles.printIconBtnTablet]}
+            style={[styles.printIconBtn, isTablet && styles.printIconBtnTablet, compact && { width: 34, height: 32 }]}
             onPress={(e: any) => {
               e.stopPropagation?.();
               onPrint(order);
             }}
             activeOpacity={0.8}
           >
-            <Printer size={16} color="#11181C" />
+            <Printer size={compact ? 14 : 16} color="#11181C" />
           </TouchableOpacity>
         </View>
       );
@@ -723,6 +773,49 @@ const OrderCardItem: React.FC<OrderCardProps> = ({
 
     // 5. Out for Delivery
     if (order.status === 'out_for_delivery') {
+      if (compact) {
+        return (
+          <View style={[styles.actionButtonsRow, { flexDirection: 'column', gap: 6, marginTop: 8 }]}>
+            <View style={{ flexDirection: 'row', gap: 6, width: '100%' }}>
+              <TouchableOpacity
+                style={[styles.acceptBtn, { flex: 1, paddingVertical: 7, paddingHorizontal: 6 }]}
+                onPress={(e: any) => {
+                  e.stopPropagation?.();
+                  onUpdateStatus(order._id, 'delivered');
+                }}
+                activeOpacity={0.8}
+              >
+                <Check size={12} color="#FFFFFF" />
+                <Text style={[styles.acceptBtnText, { fontSize: 11 }]} numberOfLines={1}>Delivered</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.printIconBtn, { width: 34, height: 32 }]}
+                onPress={(e: any) => {
+                  e.stopPropagation?.();
+                  onPrint(order);
+                }}
+                activeOpacity={0.8}
+              >
+                <Printer size={14} color="#11181C" />
+              </TouchableOpacity>
+            </View>
+
+            <TouchableOpacity
+              style={[styles.assignDriverIconBtn, { width: '100%', paddingVertical: 7, paddingHorizontal: 6 }]}
+              onPress={(e: any) => {
+                e.stopPropagation?.();
+                onAssignDelivery(order);
+              }}
+              activeOpacity={0.8}
+            >
+              <Bike size={12} color="#FFFFFF" />
+              <Text style={[styles.assignDriverText, { fontSize: 11 }]} numberOfLines={1}>
+                {deliveryPartnerName ? `Rider: ${deliveryPartnerName}` : 'Assign Rider'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        );
+      }
       return (
         <View style={[styles.actionButtonsRow, isTablet && styles.actionButtonsRowTablet]}>
           <TouchableOpacity
@@ -766,27 +859,27 @@ const OrderCardItem: React.FC<OrderCardProps> = ({
     // 6. Any other active Self Pickup order
     if (isPickup) {
       return (
-        <View style={[styles.actionButtonsRow, isTablet && styles.actionButtonsRowTablet]}>
+        <View style={[styles.actionButtonsRow, isTablet && styles.actionButtonsRowTablet, compact && { gap: 6, marginTop: 8 }]}>
           <TouchableOpacity
-            style={[styles.acceptBtn, isTablet && styles.acceptBtnTablet, { backgroundColor: '#10B981' }]}
+            style={[styles.acceptBtn, isTablet && styles.acceptBtnTablet, { backgroundColor: '#10B981' }, compact && { paddingVertical: 7, paddingHorizontal: 6 }]}
             onPress={(e: any) => {
               e.stopPropagation?.();
               onUpdateStatus(order._id, 'delivered');
             }}
             activeOpacity={0.8}
           >
-            <Check size={isTablet ? 15 : 13} color="#FFFFFF" />
-            <Text style={[styles.acceptBtnText, isTablet && styles.acceptBtnTextTablet]}>Delivered</Text>
+            <Check size={isTablet ? 15 : compact ? 12 : 13} color="#FFFFFF" />
+            <Text style={[styles.acceptBtnText, isTablet && styles.acceptBtnTextTablet, compact && { fontSize: 11 }]}>Delivered</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.printIconBtn, isTablet && styles.printIconBtnTablet]}
+            style={[styles.printIconBtn, isTablet && styles.printIconBtnTablet, compact && { width: 34, height: 32 }]}
             onPress={(e: any) => {
               e.stopPropagation?.();
               onPrint(order);
             }}
             activeOpacity={0.8}
           >
-            <Printer size={16} color="#11181C" />
+            <Printer size={compact ? 14 : 16} color="#11181C" />
           </TouchableOpacity>
         </View>
       );
@@ -852,96 +945,97 @@ const OrderCardItem: React.FC<OrderCardProps> = ({
       )}
 
       <View style={styles.kanbanCardTop}>
-        <View style={styles.kanbanOrderIdCol}>
+        <View style={[styles.kanbanOrderIdCol, compact && { flex: 1, minWidth: 0, marginRight: 6 }]}>
           <View style={styles.kanbanOrderIdRow}>
-            <Text style={[styles.kanbanOrderId, isTablet && styles.kanbanOrderIdTablet]}>#{orderNum}</Text>
+            <Text style={[styles.kanbanOrderId, isTablet && styles.kanbanOrderIdTablet, compact && { fontSize: 12 }]} numberOfLines={1}>#{orderNum}</Text>
             {isPaid ? (
-              <View style={styles.paidBadge}>
-                <Text style={[styles.paidBadgeText, isTablet && { fontSize: 10 }]}>PAID</Text>
+              <View style={[styles.paidBadge, compact && { paddingHorizontal: 4, paddingVertical: 1 }]}>
+                <Text style={[styles.paidBadgeText, isTablet && { fontSize: 10 }, compact && { fontSize: 8 }]}>PAID</Text>
               </View>
             ) : isFailed ? (
-              <View style={styles.failedBadge}>
-                <Text style={[styles.failedBadgeText, isTablet && { fontSize: 10 }]}>FAILED</Text>
+              <View style={[styles.failedBadge, compact && { paddingHorizontal: 4, paddingVertical: 1 }]}>
+                <Text style={[styles.failedBadgeText, isTablet && { fontSize: 10 }, compact && { fontSize: 8 }]}>FAILED</Text>
               </View>
             ) : isRefunded ? (
-              <View style={styles.refundedBadge}>
-                <Text style={[styles.refundedBadgeText, isTablet && { fontSize: 10 }]}>REFUNDED</Text>
+              <View style={[styles.refundedBadge, compact && { paddingHorizontal: 4, paddingVertical: 1 }]}>
+                <Text style={[styles.refundedBadgeText, isTablet && { fontSize: 10 }, compact && { fontSize: 8 }]}>REFUNDED</Text>
               </View>
             ) : (
-              <View style={styles.pendingBadge}>
-                <Text style={[styles.pendingBadgeText, isTablet && { fontSize: 10 }]}>UNPAID</Text>
+              <View style={[styles.pendingBadge, compact && { paddingHorizontal: 4, paddingVertical: 1 }]}>
+                <Text style={[styles.pendingBadgeText, isTablet && { fontSize: 10 }, compact && { fontSize: 8 }]}>UNPAID</Text>
               </View>
             )}
           </View>
-          <Text style={[styles.kanbanPaymentBelowId, isTablet && styles.kanbanPaymentBelowIdTablet]}>{paymentLabel}</Text>
+          <Text style={[styles.kanbanPaymentBelowId, isTablet && styles.kanbanPaymentBelowIdTablet, compact && { fontSize: 10 }]} numberOfLines={1}>{paymentLabel}</Text>
         </View>
 
-        <View style={styles.kanbanAmountRow}>
-          <Text style={[styles.kanbanAmount, isTablet && styles.kanbanAmountTablet]}>£{(totalAmount || 0).toFixed(2)}</Text>
-          <Text style={[styles.kanbanItemCount, isTablet && styles.kanbanItemCountTablet]}>{itemCount} items</Text>
+        <View style={[styles.kanbanAmountRow, compact && { flexShrink: 0, alignItems: 'flex-end' }]}>
+          <Text style={[styles.kanbanAmount, isTablet && styles.kanbanAmountTablet, compact && { fontSize: 13 }]}>£{(totalAmount || 0).toFixed(2)}</Text>
+          <Text style={[styles.kanbanItemCount, isTablet && styles.kanbanItemCountTablet, compact && { fontSize: 9 }]}>{itemCount} items</Text>
         </View>
       </View>
 
       <View style={styles.kanbanRestaurantRow}>
-        <Text style={[styles.kanbanRestaurant, isTablet && styles.kanbanRestaurantTablet]} numberOfLines={1}>{restaurantName}</Text>
+        <Text style={[styles.kanbanRestaurant, isTablet && styles.kanbanRestaurantTablet, compact && { fontSize: 12 }]} numberOfLines={1}>{restaurantName}</Text>
       </View>
 
       <View style={[styles.sourceBadgeContainer, isTablet && styles.sourceBadgeContainerTablet]}>
-        <View style={[sourceDetails.isExternal ? styles.sourceBadgeExternal : styles.sourceBadgeKrifoo, isTablet && (sourceDetails.isExternal ? styles.sourceBadgeExternalTablet : styles.sourceBadgeKrifooTablet)]}>
+        <View style={[sourceDetails.isExternal ? styles.sourceBadgeExternal : styles.sourceBadgeKrifoo, isTablet && (sourceDetails.isExternal ? styles.sourceBadgeExternalTablet : styles.sourceBadgeKrifooTablet), compact && { paddingHorizontal: 6, paddingVertical: 2.5, maxWidth: '100%' }]}>
           <Text
-            style={[sourceDetails.isExternal ? styles.sourceBadgeTextExternal : styles.sourceBadgeTextKrifoo, isTablet && (sourceDetails.isExternal ? styles.sourceBadgeTextExternalTablet : styles.sourceBadgeTextKrifooTablet)]}
+            style={[sourceDetails.isExternal ? styles.sourceBadgeTextExternal : styles.sourceBadgeTextKrifoo, isTablet && (sourceDetails.isExternal ? styles.sourceBadgeTextExternalTablet : styles.sourceBadgeTextKrifooTablet), compact && { fontSize: 10 }]}
             numberOfLines={1}
+            ellipsizeMode="tail"
           >
             {sourceDetails.isExternal ? (sourceDetails.domainUrl.includes('Takeaway') ? `🥡 ${sourceDetails.domainUrl}` : `🌐 ${sourceDetails.domainUrl}`) : '📱 krifoo.co.uk'}
           </Text>
         </View>
       </View>
 
-      <View style={styles.kanbanDivider} />
+      <View style={[styles.kanbanDivider, compact && { marginVertical: 6 }]} />
 
-      <View style={[styles.kanbanCustomerRow, isTablet && styles.kanbanCustomerRowTablet]}>
-        <View style={[styles.kanbanAvatar, isTablet && styles.kanbanAvatarTablet]}>
-          <Text style={[styles.kanbanAvatarText, isTablet && styles.kanbanAvatarTextTablet]}>{customerName.charAt(0).toUpperCase()}</Text>
+      <View style={[styles.kanbanCustomerRow, isTablet && styles.kanbanCustomerRowTablet, compact && { minWidth: 0, gap: 6, marginBottom: 4 }]}>
+        <View style={[styles.kanbanAvatar, isTablet && styles.kanbanAvatarTablet, compact && { width: 22, height: 22, borderRadius: 11 }]}>
+          <Text style={[styles.kanbanAvatarText, isTablet && styles.kanbanAvatarTextTablet, compact && { fontSize: 10 }]}>{customerName.charAt(0).toUpperCase()}</Text>
         </View>
-        <View style={{ flex: 1 }}>
-          <Text style={[styles.kanbanCustomerName, isTablet && styles.kanbanCustomerNameTablet]}>{customerName}</Text>
-          {customerPhone ? <Text style={[styles.kanbanCustomerPhone, isTablet && styles.kanbanCustomerPhoneTablet]}>{customerPhone}</Text> : null}
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={[styles.kanbanCustomerName, isTablet && styles.kanbanCustomerNameTablet, compact && { fontSize: 11.5, lineHeight: 15 }]} numberOfLines={1}>{customerName}</Text>
+          {customerPhone ? <Text style={[styles.kanbanCustomerPhone, isTablet && styles.kanbanCustomerPhoneTablet, compact && { fontSize: 10 }]} numberOfLines={1}>{customerPhone}</Text> : null}
         </View>
       </View>
 
       {fulfillmentType === 'delivery' && deliveryAddressText ? (
-        <View style={[styles.kanbanAddressRow, isTablet && styles.kanbanAddressRowTablet]}>
-          <MapPin size={isTablet ? 15 : 13} color="#2563EB" style={styles.addressPinIcon} />
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.kanbanAddressHeader, isTablet && styles.kanbanAddressHeaderTablet]}>Delivery Address:</Text>
-            <Text style={[styles.kanbanAddressText, isTablet && styles.kanbanAddressTextTablet]} numberOfLines={2}>
+        <View style={[styles.kanbanAddressRow, isTablet && styles.kanbanAddressRowTablet, compact && { paddingHorizontal: 6, paddingVertical: 5, marginBottom: 5, gap: 5, minWidth: 0 }]}>
+          <MapPin size={isTablet ? 15 : compact ? 11 : 13} color="#2563EB" style={[styles.addressPinIcon, compact && { marginTop: 1 }]} />
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={[styles.kanbanAddressHeader, isTablet && styles.kanbanAddressHeaderTablet, compact && { fontSize: 9, marginBottom: 0 }]}>DELIVERY ADDRESS:</Text>
+            <Text style={[styles.kanbanAddressText, isTablet && styles.kanbanAddressTextTablet, compact && { fontSize: 10, lineHeight: 13 }]} numberOfLines={2}>
               {deliveryAddressText}
             </Text>
           </View>
         </View>
       ) : null}
 
-      <View style={[styles.kanbanTypeRow, isTablet && styles.kanbanTypeRowTablet]}>
+      <View style={[styles.kanbanTypeRow, isTablet && styles.kanbanTypeRowTablet, compact && { gap: 4, marginBottom: 5 }]}>
         {scheduleInfo.isScheduled && (
-          <View style={[styles.scheduledTag, isTablet && { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 }]}>
-            <Clock size={isTablet ? 13 : 11} color="#92400E" />
-            <Text style={[styles.scheduledTagText, isTablet && { fontSize: 11 }]}>
+          <View style={[styles.scheduledTag, isTablet && { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 }, compact && { paddingHorizontal: 5, paddingVertical: 2.5, borderRadius: 6, maxWidth: '100%' }]}>
+            <Clock size={isTablet ? 13 : compact ? 10 : 11} color="#92400E" />
+            <Text style={[styles.scheduledTagText, isTablet && { fontSize: 11 }, compact && { fontSize: 9.5 }]} numberOfLines={1} ellipsizeMode="tail">
               Scheduled: {scheduleInfo.scheduleTimeText}
             </Text>
           </View>
         )}
         {fulfillmentType === 'delivery' ? (
-          <View style={[styles.deliveryTag, isTablet && { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 }]}>
-            <Bike size={isTablet ? 14 : 12} color="#2563EB" />
-            <Text style={[styles.deliveryTagText, isTablet && { fontSize: 12 }]}>Delivery Order</Text>
+          <View style={[styles.deliveryTag, isTablet && { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 }, compact && { paddingHorizontal: 5, paddingVertical: 2.5, borderRadius: 6 }]}>
+            <Bike size={isTablet ? 14 : compact ? 11 : 12} color="#2563EB" />
+            <Text style={[styles.deliveryTagText, isTablet && { fontSize: 12 }, compact && { fontSize: 10 }]}>Delivery Order</Text>
           </View>
         ) : fulfillmentType === 'dine_in' ? (
-          <View style={[styles.dineInTag, isTablet && { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 }]}>
-            <UtensilsCrossed size={isTablet ? 14 : 12} color="#7C3AED" />
-            <Text style={[styles.dineInTagText, isTablet && { fontSize: 12 }]}>
-                Dine In (Takeaway) {
+          <View style={[styles.dineInTag, isTablet && { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 }, compact && { paddingHorizontal: 5, paddingVertical: 2.5, borderRadius: 6, maxWidth: '100%' }]}>
+            <UtensilsCrossed size={isTablet ? 14 : compact ? 11 : 12} color="#7C3AED" />
+            <Text style={[styles.dineInTagText, isTablet && { fontSize: 12 }, compact && { fontSize: 10 }]} numberOfLines={1} ellipsizeMode="tail">
+                Dine In {
                 (order as any).tableNumber
-                  ? `• Table ${(order as any).tableNumber}`
+                  ? `• T${(order as any).tableNumber}`
                   : (order.deliveryAddress as any)?.addressLine1?.toLowerCase().startsWith('table')
                   ? `• ${(order.deliveryAddress as any).addressLine1}`
                   : typeof order.notes === 'string' && order.notes.includes('Table')
@@ -951,48 +1045,49 @@ const OrderCardItem: React.FC<OrderCardProps> = ({
             </Text>
           </View>
         ) : fulfillmentType === 'takeaway' ? (
-          <View style={[styles.takeawayTag, isTablet && { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 }]}>
-            <ShoppingBag size={isTablet ? 14 : 12} color="#D97706" />
-            <Text style={[styles.takeawayTagText, isTablet && { fontSize: 12 }]}>
+          <View style={[styles.takeawayTag, isTablet && { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 }, compact && { paddingHorizontal: 5, paddingVertical: 2.5, borderRadius: 6 }]}>
+            <ShoppingBag size={isTablet ? 14 : compact ? 11 : 12} color="#D97706" />
+            <Text style={[styles.takeawayTagText, isTablet && { fontSize: 12 }, compact && { fontSize: 10 }]} numberOfLines={1} ellipsizeMode="tail">
               {order.status === 'delivered'
                 ? 'Takeaway (Collected)'
                 : order.status === 'ready_for_pickup'
-                ? 'Takeaway (Ready for Collection)'
+                ? 'Takeaway (Ready)'
                 : order.status === 'preparing' || order.status === 'confirmed'
-                ? 'Takeaway (In Kitchen)'
+                ? 'Takeaway (Kitchen)'
                 : 'Takeaway Order'}
             </Text>
           </View>
         ) : (
-          <View style={[styles.pickupTag, isTablet && { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 }]}>
-            <ShoppingBag size={isTablet ? 14 : 12} color="#EA580C" />
-            <Text style={[styles.pickupTagText, isTablet && { fontSize: 12 }]}>
+          <View style={[styles.pickupTag, isTablet && { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 }, compact && { paddingHorizontal: 5, paddingVertical: 2.5, borderRadius: 6 }]}>
+            <ShoppingBag size={isTablet ? 14 : compact ? 11 : 12} color="#EA580C" />
+            <Text style={[styles.pickupTagText, isTablet && { fontSize: 12 }, compact && { fontSize: 10 }]} numberOfLines={1} ellipsizeMode="tail">
               {order.status === 'delivered'
-                ? 'Self Pickup (Picked Up)'
+                ? 'Pickup (Picked Up)'
                 : order.status === 'ready_for_pickup'
-                ? 'Self Pickup (Ready for Collection)'
+                ? 'Pickup (Ready)'
                 : order.status === 'preparing' || order.status === 'confirmed'
-                ? 'Self Pickup (In Kitchen)'
+                ? 'Pickup (Kitchen)'
                 : 'Self Pickup'}
             </Text>
           </View>
         )}
         {deliveryPartnerName && (
-          <View style={[styles.riderBadge, isTablet && { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 }]}>
-            <Bike size={isTablet ? 13 : 11} color="#6B7280" />
-            <Text style={[styles.riderText, isTablet && { fontSize: 11 }]}>{deliveryPartnerName}</Text>
+          <View style={[styles.riderBadge, isTablet && { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 }, compact && { paddingHorizontal: 5, paddingVertical: 2.5, borderRadius: 6 }]}>
+            <Bike size={isTablet ? 13 : compact ? 10 : 11} color="#6B7280" />
+            <Text style={[styles.riderText, isTablet && { fontSize: 11 }, compact && { fontSize: 9.5 }]} numberOfLines={1}>{deliveryPartnerName}</Text>
           </View>
         )}
       </View>
 
-      <View style={styles.kanbanFooter}>
+      <View style={[styles.kanbanFooter, compact && { marginTop: 4 }]}>
         <View style={styles.kanbanDateRow}>
-          <Clock size={isTablet ? 13 : 11} color="#9BA1A6" />
-          <Text style={[styles.kanbanDate, isTablet && { fontSize: 11 }]}>{formatDateTime(order.createdAt)}</Text>
+          <Clock size={isTablet ? 13 : compact ? 10 : 11} color="#9BA1A6" />
+          <Text style={[styles.kanbanDate, isTablet && { fontSize: 11 }, compact && { fontSize: 9.5 }]}>{formatDateTime(order.createdAt)}</Text>
         </View>
         <View
           style={[
             styles.orderTypeBadge,
+            compact && { paddingHorizontal: 4, paddingVertical: 1.5 },
             fulfillmentType === 'delivery'
               ? { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }
               : fulfillmentType === 'dine_in'
@@ -1006,6 +1101,7 @@ const OrderCardItem: React.FC<OrderCardProps> = ({
             style={[
               styles.orderTypeText,
               isTablet && { fontSize: 10 },
+              compact && { fontSize: 8 },
               fulfillmentType === 'delivery'
                 ? { color: '#2563EB' }
                 : fulfillmentType === 'dine_in'
@@ -1014,21 +1110,22 @@ const OrderCardItem: React.FC<OrderCardProps> = ({
                 ? { color: '#B45309' }
                 : { color: '#EA580C' },
             ]}
+            numberOfLines={1}
           >
             {fulfillmentType === 'delivery'
               ? 'DELIVERY'
               : fulfillmentType === 'dine_in'
-                ? 'DINE IN (TAKEAWAY)'
+                ? 'DINE IN'
               : fulfillmentType === 'takeaway'
-              ? 'TAKEAWAY ORDER'
+              ? 'TAKEAWAY'
               : 'PICKUP'}
           </Text>
         </View>
       </View>
 
-      <TouchableOpacity style={[styles.viewItemsBtn, isTablet && { marginTop: 12, paddingTop: 10 }]} onPress={() => setExpanded(!expanded)} activeOpacity={0.7}>
-        <Text style={[styles.viewItemsBtnText, isTablet && { fontSize: 11 }]}>VIEW ITEMS & NOTES ({itemCount})</Text>
-        {expanded ? <ChevronUp size={isTablet ? 15 : 13} color="#9BA1A6" /> : <ChevronDown size={isTablet ? 15 : 13} color="#9BA1A6" />}
+      <TouchableOpacity style={[styles.viewItemsBtn, isTablet && { marginTop: 12, paddingTop: 10 }, compact && { marginTop: 6, paddingTop: 6 }]} onPress={() => setExpanded(!expanded)} activeOpacity={0.7}>
+        <Text style={[styles.viewItemsBtnText, isTablet && { fontSize: 11 }, compact && { fontSize: 9.5 }]}>VIEW ITEMS & NOTES ({itemCount})</Text>
+        {expanded ? <ChevronUp size={isTablet ? 15 : compact ? 11 : 13} color="#9BA1A6" /> : <ChevronDown size={isTablet ? 15 : compact ? 11 : 13} color="#9BA1A6" />}
       </TouchableOpacity>
 
       {expanded && (
@@ -1071,9 +1168,15 @@ const OrderCardItem: React.FC<OrderCardProps> = ({
 };
 
 export default function OrdersScreen() {
+  const insets = useSafeAreaInsets();
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const isTablet = windowWidth >= TABLET_BREAKPOINT;
   const isMobile = windowWidth < TABLET_BREAKPOINT;
+
+  const [headerHeight, setHeaderHeight] = useState(65);
+  const [searchHeight, setSearchHeight] = useState(54);
+  const [toolbarHeight, setToolbarHeight] = useState(isTablet ? 42 : 46);
+  const [isHeaderCollapsed, setIsHeaderCollapsed] = useState(false);
 
   // Board view layout customization:
   // Users can customize how many status tabs / columns fit per screen (e.g. 1, 2, 3, 4, 5, 6, or 'auto').
@@ -1093,27 +1196,25 @@ export default function OrdersScreen() {
     return boardColumnsSetting;
   }, [boardColumnsSetting, autoColumns]);
 
-  const boardHorizontalPadding = isTablet ? 16 : 10;
-  const boardColumnGap = effectiveColumns >= 4 ? 8 : (isTablet ? 12 : 10);
+  // Remove the gap between status tabs: flush edge-to-edge columns
+  const boardHorizontalPadding = 0;
+  const boardColumnGap = 0;
 
   const columnWidth = useMemo(() => {
     if (effectiveColumns === 1) {
       if (boardColumnsSetting === 1) {
-        return windowWidth - (boardHorizontalPadding * 2);
+        return windowWidth;
       }
       return isTablet
-        ? windowWidth - (boardHorizontalPadding * 2)
-        : Math.round(windowWidth * 0.82);
+        ? windowWidth
+        : Math.round(windowWidth * 0.9);
     }
-    const totalPadding = boardHorizontalPadding * 2;
-    const totalGaps = (effectiveColumns - 1) * boardColumnGap;
-    const rawWidth = Math.floor((windowWidth - totalPadding - totalGaps) / effectiveColumns);
+    const rawWidth = Math.floor(windowWidth / effectiveColumns);
     return Math.max(isTablet ? 200 : 160, rawWidth);
-  }, [effectiveColumns, boardColumnsSetting, windowWidth, boardHorizontalPadding, boardColumnGap, isTablet]);
+  }, [effectiveColumns, boardColumnsSetting, windowWidth, isTablet]);
 
   const isCompact = columnWidth < 260 || effectiveColumns >= 4;
-  const snapInterval = columnWidth + boardColumnGap;
-  const columnMaxHeight = Math.max(450, windowHeight - (isTablet ? 210 : 230));
+  const snapInterval = columnWidth;
 
   // Load saved Board view columns setting from AsyncStorage
   useEffect(() => {
@@ -1164,6 +1265,31 @@ export default function OrdersScreen() {
   const [paymentStatusFilter, setPaymentStatusFilter] = useState<'all' | 'paid' | 'pending'>('all');
   const [activeTab, setActiveTab] = useState<string>('all');
   const [viewMode, setViewMode] = useState<'tabs' | 'board'>('tabs');
+
+  // Full length board calculation:
+  // The boards length should be full length extending all the way down to the bottom
+  const boardFullHeight = Math.max(520, windowHeight - insets.top - searchHeight - (viewMode === 'board' ? toolbarHeight : 45));
+
+  const toggleHeaderCollapse = useCallback((collapse: boolean) => {
+    setIsHeaderCollapsed((prev) => {
+      if (prev !== collapse) {
+        try {
+          LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+        } catch {}
+        return collapse;
+      }
+      return prev;
+    });
+  }, []);
+
+  const handleListScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const y = e.nativeEvent.contentOffset.y;
+    if (y > 35 && !isHeaderCollapsed) {
+      toggleHeaderCollapse(true);
+    } else if (y <= 5 && isHeaderCollapsed) {
+      toggleHeaderCollapse(false);
+    }
+  }, [isHeaderCollapsed, toggleHeaderCollapse]);
 
   // Dateframe dropdown & Comprehensive filter modal
   const [dateDropdownOpen, setDateDropdownOpen] = useState(false);
@@ -1637,8 +1763,11 @@ export default function OrdersScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      {/* Page Header */}
-      <View style={[styles.pageHeader, isMobile && styles.pageHeaderMobile, isTablet && styles.pageHeaderTablet]}>
+      {/* Page Header (collapses on scroll down to maximize board length) */}
+      {!isHeaderCollapsed && (
+        <View
+          style={[styles.pageHeader, isMobile && styles.pageHeaderMobile, isTablet && styles.pageHeaderTablet]}
+        >
         <View style={{ flexShrink: 1 }}>
           <View style={styles.pageTitleRow}>
             <Text style={[styles.pageTitle, isMobile && styles.pageTitleMobile]}>Orders Board</Text>
@@ -1693,9 +1822,14 @@ export default function OrdersScreen() {
           </TouchableOpacity>
         </View>
       </View>
+      )}
 
-      {/* Controls */}
-      <View style={[styles.controlsRow, isTablet && styles.controlsRowTablet]}>
+      {/* STICKY SEARCH SECTION */}
+      <View
+        style={[styles.stickySearchWrapper, isHeaderCollapsed && styles.stickySearchWrapperElevated]}
+      >
+        {/* Controls */}
+        <View style={[styles.controlsRow, isTablet && styles.controlsRowTablet]}>
         {/* Search + Filter + Channel Row */}
         <View style={[styles.searchAndChannelRow, isTablet && styles.searchAndChannelRowTablet]}>
           <View style={[styles.searchBox, { flex: 1 }]}>
@@ -1847,6 +1981,10 @@ export default function OrdersScreen() {
           </View>
         )}
       </View>
+    </View>
+
+    {/* Modals Layer */}
+    <View pointerEvents="box-none" style={styles.modalsOverlayWrapper}>
 
       {/* Comprehensive Filter Modal */}
       <Modal
@@ -2442,7 +2580,10 @@ export default function OrdersScreen() {
           </View>
         </TouchableOpacity>
       </Modal>
+    </View>
 
+    {/* Main Body Container (Toolbar + Content) */}
+    <View style={styles.mainBodyContainer}>
       {/* Status Tabs Navigation Bar (Shown in Tabs mode) */}
       {viewMode === 'tabs' && (
         <View style={[styles.statusTabsBarContainer, isTablet && styles.statusTabsBarContainerTablet]}>
@@ -2474,7 +2615,10 @@ export default function OrdersScreen() {
 
       {/* Board View Column / Tab Size Customizer Toolbar (Shown in Board mode) */}
       {viewMode === 'board' && (
-        <View style={[styles.boardToolbarContainer, isTablet ? styles.boardToolbarContainerTablet : styles.boardToolbarContainerMobile]}>
+        <View
+          onLayout={(e) => setToolbarHeight(e.nativeEvent.layout.height)}
+          style={[styles.boardToolbarContainer, isTablet ? styles.boardToolbarContainerTablet : styles.boardToolbarContainerMobile]}
+        >
           <View style={[styles.boardToolbarLeft, isMobile && { flex: 1, marginRight: 8 }]}>
             {isTablet && (
               <View style={styles.boardToolbarLabelRow}>
@@ -2572,6 +2716,8 @@ export default function OrdersScreen() {
             numColumns={isTablet ? 2 : 1}
             columnWrapperStyle={isTablet ? styles.ordersColumnWrapper : undefined}
             contentContainerStyle={[styles.tabOrdersList, isTablet && styles.tabOrdersListTablet]}
+            onScroll={handleListScroll}
+            scrollEventThrottle={16}
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#FF5C39" colors={['#FF5C39']} />}
             renderItem={({ item }) => (
               <View style={isTablet ? styles.orderGridItemWrapper : undefined}>
@@ -2595,7 +2741,6 @@ export default function OrdersScreen() {
           contentContainerStyle={[
             styles.kanbanBoard,
             isTablet && styles.kanbanBoardTablet,
-            effectiveColumns >= 4 && { gap: 8 },
           ]}
           decelerationRate="fast"
           snapToInterval={snapInterval}
@@ -2622,7 +2767,6 @@ export default function OrdersScreen() {
                     flexShrink: 0,
                     flexGrow: 0,
                     height: '100%',
-                    maxHeight: columnMaxHeight,
                   },
                 ]}
               >
@@ -2682,11 +2826,13 @@ export default function OrdersScreen() {
                     keyExtractor={(item) => item._id}
                     showsVerticalScrollIndicator={false}
                     style={{ flex: 1 }}
+                    onScroll={handleListScroll}
+                    scrollEventThrottle={16}
                     contentContainerStyle={[
                       styles.kanbanCardList,
                       isTablet && styles.kanbanCardListTablet,
-                      isCompact && { padding: 8, gap: 8 },
-                      { paddingBottom: isTablet ? 35 : 55 },
+                      isCompact && { padding: 6, gap: 6 },
+                      { paddingBottom: isTablet ? 95 : 85 },
                     ]}
                     refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={accentColor} colors={[accentColor]} />}
                     renderItem={({ item }) => (
@@ -2707,6 +2853,7 @@ export default function OrdersScreen() {
           })}
         </ScrollView>
       )}
+    </View>
 
       <OrderDetailModal
         visible={detailModalVisible}
@@ -2755,6 +2902,29 @@ export default function OrdersScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F8F9FA' },
+  stickySearchWrapper: {
+    backgroundColor: '#FFFFFF',
+    zIndex: 20,
+    width: '100%',
+  },
+  stickySearchWrapperElevated: {
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  modalsOverlayWrapper: {
+    position: 'absolute',
+    width: 0,
+    height: 0,
+    overflow: 'hidden',
+  },
+  mainBodyContainer: {
+    flex: 1,
+    width: '100%',
+    backgroundColor: '#F8F9FA',
+  },
   pageHeader: {
     flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between',
     paddingHorizontal: 16, paddingTop: 12, paddingBottom: 8,
@@ -3461,22 +3631,23 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   kanbanBoard: {
-    paddingHorizontal: 12,
-    paddingTop: 10,
-    paddingBottom: 95,
-    gap: 12,
+    paddingHorizontal: 0,
+    paddingTop: 0,
+    paddingBottom: 0,
+    gap: 0,
     flexDirection: 'row',
     alignItems: 'stretch',
     flexGrow: 1,
   },
   kanbanColumn: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#EEEEEE',
+    borderRadius: 0,
+    borderWidth: 0,
+    borderRightWidth: 1,
+    borderRightColor: '#EBEBEB',
     overflow: 'hidden',
     height: '100%',
-    maxHeight: 800,
+    flex: 1,
   },
   kanbanColumnHeader: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
@@ -3503,6 +3674,7 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     elevation: 1,
     position: 'relative',
+    overflow: 'hidden',
   },
   cardTopStatusStrip: {
     position: 'absolute',
@@ -3721,16 +3893,18 @@ const styles = StyleSheet.create({
 
   /* Tablet Responsive Layout Enhancements (width >= 768px) */
   kanbanBoardTablet: {
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 110,
-    gap: 14,
+    paddingHorizontal: 0,
+    paddingTop: 0,
+    paddingBottom: 0,
+    gap: 0,
     alignItems: 'stretch',
     flexGrow: 1,
   },
   kanbanColumnTablet: {
-    borderRadius: 16,
-    borderWidth: 1.5,
+    borderRadius: 0,
+    borderWidth: 0,
+    borderRightWidth: 1,
+    borderRightColor: '#E5E7EB',
   },
   kanbanColumnHeaderTablet: {
     paddingHorizontal: 16,
@@ -4328,9 +4502,10 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
   },
   kanbanCardCompact: {
-    padding: 10,
-    paddingTop: 13,
-    borderRadius: 10,
+    padding: 7,
+    paddingTop: 10,
+    borderRadius: 8,
+    overflow: 'hidden',
   },
 
   /* Mobile Responsive Enhancements (< 768px) */

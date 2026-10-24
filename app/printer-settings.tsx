@@ -55,6 +55,7 @@ import {
   testPrinterAlignmentSlip,
   openCashDrawer,
   isSunmiAvailable,
+  discoverEpsonPrinters,
 } from '../services/thermal-print.service';
 import {
   PosPrinterConfig,
@@ -138,6 +139,31 @@ export default function PrinterSettingsScreen() {
         }
       } catch (e) {
         console.warn('[PrinterSettings] Error checking template paper width sync:', e);
+      }
+
+      // If Bluetooth printer is configured but lacks real deviceName (or has generic fallback),
+      // resolve its actual name from paired/discovered devices
+      if (
+        cfg.connectionType === 'bluetooth' &&
+        (cfg.macAddress || cfg.target) &&
+        (!cfg.deviceName ||
+          cfg.deviceName.includes('Star Micronics') ||
+          cfg.deviceName.includes('Epson TM-m30') ||
+          cfg.deviceName === 'Bluetooth Thermal Printer')
+      ) {
+        try {
+          const currentTarget = (cfg.macAddress || cfg.target || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+          const devList = await discoverEpsonPrinters();
+          const match = devList.find((d) => {
+            const dTarget = (d.macAddress || d.target || d.id || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+            return dTarget && currentTarget && (dTarget === currentTarget || currentTarget.includes(dTarget) || dTarget.includes(currentTarget));
+          });
+          if (match && match.name) {
+            cfg = await savePosPrinterConfig({ deviceName: match.name, printerName: match.name }, restaurantId);
+          }
+        } catch (e) {
+          console.warn('[PrinterSettings] Auto-resolve device name error:', e);
+        }
       }
 
       setPosConfig(cfg);
@@ -229,6 +255,8 @@ export default function PrinterSettingsScreen() {
           connectionType: 'bluetooth',
           target: deviceTarget,
           macAddress: device.macAddress || (deviceTarget.startsWith('BT:') ? '' : deviceTarget),
+          deviceName: device.name,
+          printerName: device.name,
         },
         restaurantId
       );
@@ -245,6 +273,8 @@ export default function PrinterSettingsScreen() {
         {
           connectionType: 'network',
           ipAddress: device.ipAddress,
+          deviceName: device.name,
+          printerName: device.name,
         },
         restaurantId
       );
@@ -303,6 +333,8 @@ export default function PrinterSettingsScreen() {
         ipAddress: '',
         target: '',
         macAddress: '',
+        deviceName: '',
+        printerName: '',
         connectionType: 'bluetooth',
       },
       restaurantId
@@ -649,7 +681,7 @@ export default function PrinterSettingsScreen() {
                 </View>
                 <View style={styles.heroTextContainer}>
                   <Text style={styles.heroPrinterTitle} numberOfLines={1}>
-                    {arch.title}
+                    {posConfig.deviceName || posConfig.printerName || arch.title}
                   </Text>
                   <Text style={styles.heroPrinterSubtitle} numberOfLines={1}>
                     {arch.targetSummary}
@@ -1390,10 +1422,12 @@ function getArchitectureDetails(config: PosPrinterConfig, profile: PrinterProfil
     };
   }
 
+  const resolvedName = config.deviceName || config.printerName || (profile as any)?.deviceName;
+
   switch (profile.connectionType) {
     case 'network_epos':
       return {
-        title: config.brand === 'epson' ? 'Epson TM-m30 / TM-T88 Network' : 'Network ePOS Printer',
+        title: resolvedName || (config.brand === 'epson' ? 'Epson TM-m30 / TM-T88 Network' : 'Network ePOS Printer'),
         transportBadge: 'Wi-Fi / LAN (Port 8008)',
         targetSummary: `IP: ${profile.ipAddress}:${profile.port || 8008}`,
         encoderName: 'EposXmlEncoder',
@@ -1402,7 +1436,7 @@ function getArchitectureDetails(config: PosPrinterConfig, profile: PrinterProfil
       };
     case 'network_raw':
       return {
-        title: 'Universal ESC/POS Network Printer',
+        title: resolvedName || 'Universal ESC/POS Network Printer',
         transportBadge: 'Wi-Fi / LAN (Port 9100)',
         targetSummary: `IP: ${profile.ipAddress}:${profile.port || 9100}`,
         encoderName: 'EscPosEncoder',
@@ -1411,7 +1445,7 @@ function getArchitectureDetails(config: PosPrinterConfig, profile: PrinterProfil
       };
     case 'ble':
       return {
-        title: 'Epson TM-m30 / TM-m10 Bluetooth',
+        title: resolvedName || 'Bluetooth Low Energy Printer',
         transportBadge: 'Bluetooth Low Energy (BLE)',
         targetSummary: `MAC: ${profile.macAddress}`,
         encoderName: 'EscPosEncoder',
@@ -1420,7 +1454,7 @@ function getArchitectureDetails(config: PosPrinterConfig, profile: PrinterProfil
       };
     case 'spp':
       return {
-        title: 'Star Micronics / ESC-POS Bluetooth',
+        title: resolvedName || 'Bluetooth Thermal Printer',
         transportBadge: 'Bluetooth Classic (SPP)',
         targetSummary: `${profile.target || profile.macAddress}`,
         encoderName: 'EscPosEncoder',
@@ -1429,7 +1463,7 @@ function getArchitectureDetails(config: PosPrinterConfig, profile: PrinterProfil
       };
     case 'builtin':
       return {
-        title: 'Sunmi POS Integrated Printer',
+        title: resolvedName || 'Sunmi POS Integrated Printer',
         transportBadge: 'Sunmi Hardware AIDL',
         targetSummary: 'Sunmi Internal Printer Service',
         encoderName: 'Direct Sunmi Native',
@@ -1438,7 +1472,7 @@ function getArchitectureDetails(config: PosPrinterConfig, profile: PrinterProfil
       };
     case 'system':
       return {
-        title: 'System Print Spooler',
+        title: resolvedName || 'System Print Spooler',
         transportBadge: 'AirPrint / Android Spooler',
         targetSummary: 'Native Print Dialog',
         encoderName: 'HTML / CSS 80mm',
