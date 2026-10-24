@@ -46,6 +46,8 @@ function formatOrderDate(dateString?: string, scheduledText?: string | null): { 
 export class EscPosBuilder {
   private buffer: number[] = [];
   private cols: number;
+  private currentAlign: 'left' | 'center' | 'right' = 'left';
+  private currentWidthMulti: number = 1;
 
   constructor(paperWidth: '80mm' | '58mm' = '80mm') {
     this.cols = paperWidth === '58mm' ? 32 : 48;
@@ -64,16 +66,28 @@ export class EscPosBuilder {
   }
 
   public alignLeft(): this {
+    this.currentAlign = 'left';
     this.buffer.push(0x1b, 0x61, 0);
     return this;
   }
 
   public alignCenter(): this {
+    this.currentAlign = 'center';
+    if (this.cols === 32) {
+      // 58mm mode: Keep hardware alignment strictly left so 80mm paper doesn't center across 80mm
+      this.buffer.push(0x1b, 0x61, 0);
+      return this;
+    }
     this.buffer.push(0x1b, 0x61, 1);
     return this;
   }
 
   public alignRight(): this {
+    this.currentAlign = 'right';
+    if (this.cols === 32) {
+      this.buffer.push(0x1b, 0x61, 0);
+      return this;
+    }
     this.buffer.push(0x1b, 0x61, 2);
     return this;
   }
@@ -121,6 +135,7 @@ export class EscPosBuilder {
   }
 
   public setSize(widthMulti: number = 1, heightMulti: number = 1): this {
+    this.currentWidthMulti = widthMulti;
     // GS ! n (Character size: (width - 1) * 16 + (height - 1))
     const w = Math.min(Math.max(widthMulti - 1, 0), 7);
     const h = Math.min(Math.max(heightMulti - 1, 0), 7);
@@ -151,7 +166,16 @@ export class EscPosBuilder {
   }
 
   public line(str: string = ''): this {
-    this.text(str);
+    if (this.cols === 32 && this.currentAlign !== 'left') {
+      const isDouble = this.currentWidthMulti > 1 && str.length <= 16;
+      const lineCapacity = isDouble ? 16 : 32;
+      const pad = this.currentAlign === 'center'
+        ? Math.max(0, Math.floor((lineCapacity - str.length) / 2))
+        : Math.max(0, lineCapacity - str.length);
+      this.text(' '.repeat(pad) + str);
+    } else {
+      this.text(str);
+    }
     this.buffer.push(0x0a); // LF
     return this;
   }
@@ -176,10 +200,11 @@ export class EscPosBuilder {
   /**
    * Print 2-column key-value row (e.g. Subtotal £20.00)
    */
-  public twoColumn(left: string, right: string): this {
+  public twoColumn(left: string, right: string, isDoubleSize: boolean = false): this {
     const leftLen = left.length;
     const rightLen = right.length;
-    const spaces = Math.max(1, this.cols - leftLen - rightLen);
+    const targetCols = isDoubleSize ? Math.floor(this.cols / 2) : this.cols;
+    const spaces = Math.max(1, targetCols - leftLen - rightLen);
     this.line(left + ' '.repeat(spaces) + right);
     return this;
   }
@@ -336,7 +361,7 @@ export function buildEscPosReceipt(order: Partial<Order> & any, config: PosPrint
   // SCHEDULED BANNER (If Scheduled)
   if (scheduleInfo.isScheduled && scheduleInfo.scheduleTimeText) {
     builder.doubleDivider();
-    builder.bold(true).setSize(1, 2).line(`*** SCHEDULED ${fulfillmentType} ***`);
+    builder.bold(true).setSize(1, 1).line(`*** SCHEDULED ${fulfillmentType} ***`);
     builder.setSize(1, 1).line(`TARGET TIME: ${scheduleInfo.scheduleTimeText.toUpperCase()}`);
     builder.bold(false);
     builder.doubleDivider();
@@ -503,7 +528,7 @@ export function buildEscPosReceipt(order: Partial<Order> & any, config: PosPrint
   // TOTAL
   const grandTotal = order.pricing?.total !== undefined ? order.pricing.total : (order.pricing?.totalAmount !== undefined ? order.pricing.totalAmount : (order.totalAmount || order.total || subtotal));
   builder.bold(true).setSize(2, 2);
-  builder.twoColumn('TOTAL:', formatMoney(grandTotal));
+  builder.twoColumn('TOTAL:', formatMoney(grandTotal), true);
   builder.setSize(1, 1).bold(false);
   builder.divider();
 

@@ -12,6 +12,7 @@ export type ReceiptCommand =
       size?: 'normal' | 'double' | 'small';
       font?: 'fontA' | 'fontB';
     }
+  | { type: 'image'; data: string; align?: 'left' | 'center' | 'right' }
   | { type: 'line'; char?: string }
   | { type: 'feed'; lines: number }
   | { type: 'cut'; mode?: 'full' | 'partial' }
@@ -297,6 +298,33 @@ function getOrderItems(order: any): any[] {
 }
 
 /**
+ * Word-wraps text so each line does not exceed maxWidth characters.
+ */
+function wrapText(text: string, maxWidth: number): string[] {
+  if (!text) return [];
+  if (text.length <= maxWidth) return [text];
+
+  const words = text.split(' ');
+  const lines: string[] = [];
+  let current = '';
+
+  for (const word of words) {
+    if (!current) {
+      current = word;
+    } else if ((current + ' ' + word).length <= maxWidth) {
+      current += ' ' + word;
+    } else {
+      lines.push(current);
+      current = word;
+    }
+  }
+  if (current) {
+    lines.push(current);
+  }
+  return lines;
+}
+
+/**
  * Builds a protocol-neutral receipt document representation from an order
  */
 export function buildReceiptDocument(order: Partial<Order> & any, config?: Partial<PosPrinterConfig>): ReceiptCommand[] {
@@ -385,7 +413,7 @@ export function buildReceiptDocument(order: Partial<Order> & any, config?: Parti
   const fulfillmentLabel = getOrderFulfillmentLabel(order);
   if (scheduleInfo.isScheduled && scheduleInfo.scheduleTimeText) {
     commands.push({ type: 'line', char: '=' });
-    commands.push({ type: 'text', value: `*** SCHEDULED ${fulfillmentLabel} ***`, bold: true, align: 'center', size: 'double' });
+    commands.push({ type: 'text', value: `*** SCHEDULED ${fulfillmentLabel} ***`, bold: true, align: 'center', size: 'normal' });
     commands.push({ type: 'text', value: `ORDER TYPE: ${fulfillmentLabel}`, bold: true, align: 'center', size: 'normal' });
     commands.push({ type: 'text', value: `TARGET: ${scheduleInfo.scheduleTimeText.toUpperCase()}`, bold: true, align: 'center', size: 'normal' });
     commands.push({ type: 'line', char: '=' });
@@ -394,7 +422,10 @@ export function buildReceiptDocument(order: Partial<Order> & any, config?: Parti
   }
 
   // 4. Customer & Delivery Address Details
-  commands.push({ type: 'text', value: `Customer: ${customerName}`, bold: true, align: 'left' });
+  const custLines = wrapText(`Customer: ${customerName}`, cols);
+  for (const line of custLines) {
+    commands.push({ type: 'text', value: line, bold: true, align: 'left' });
+  }
   if (customerPhone) {
     commands.push({ type: 'text', value: `Phone:    ${customerPhone}`, align: 'left' });
   }
@@ -405,7 +436,10 @@ export function buildReceiptDocument(order: Partial<Order> & any, config?: Parti
     (typeof order.deliveryAddress === 'string' ? order.deliveryAddress : null);
 
   if (rawAddress && !isDineIn) {
-    commands.push({ type: 'text', value: `Address:  ${rawAddress}`, bold: true, align: 'left' });
+    const addrLines = wrapText(`Address:  ${rawAddress}`, cols);
+    for (const line of addrLines) {
+      commands.push({ type: 'text', value: line, bold: true, align: 'left' });
+    }
     if (order.deliveryAddress?.postalCode || order.deliveryAddress?.postcode) {
       const pc = (order.deliveryAddress?.postalCode || order.deliveryAddress?.postcode).toUpperCase();
       commands.push({ type: 'text', value: `Postcode: ${pc}`, bold: true, align: 'left' });
@@ -464,8 +498,9 @@ export function buildReceiptDocument(order: Partial<Order> & any, config?: Parti
   const discount = Number(order.pricing?.discount ?? order.pricing?.discountAmount ?? (order as any).discountAmount ?? 0);
   const total = Number(order.pricing?.total ?? order.pricing?.totalAmount ?? order.totalAmount ?? (subtotal + deliveryFee + onlinePaymentFee + handlingCharge + platformFee + tax + tip - discount));
 
-  const formatSummaryRow = (label: string, value: string) => {
-    const spaces = Math.max(1, cols - label.length - value.length);
+  const formatSummaryRow = (label: string, value: string, isDoubleSize: boolean = false) => {
+    const targetCols = isDoubleSize ? Math.floor(cols / 2) : cols;
+    const spaces = Math.max(1, targetCols - label.length - value.length);
     return label + ' '.repeat(spaces) + value;
   };
 
@@ -495,7 +530,7 @@ export function buildReceiptDocument(order: Partial<Order> & any, config?: Parti
   }
 
   commands.push({ type: 'line' });
-  commands.push({ type: 'text', value: formatSummaryRow('TOTAL:', formatMoney(total)), bold: true, align: 'left', size: 'double' });
+  commands.push({ type: 'text', value: formatSummaryRow('TOTAL:', formatMoney(total), true), bold: true, align: 'left', size: 'double' });
   commands.push({ type: 'line' });
 
   // 7. Payment Information
@@ -507,7 +542,10 @@ export function buildReceiptDocument(order: Partial<Order> & any, config?: Parti
   const displayNotes = getSanitizedOrderNotes(order.notes);
   if (displayNotes) {
     commands.push({ type: 'line' });
-    commands.push({ type: 'text', value: `NOTE: ${displayNotes}`, bold: true, align: 'left' });
+    const noteLines = wrapText(`NOTE: ${displayNotes}`, cols);
+    for (const line of noteLines) {
+      commands.push({ type: 'text', value: line, bold: true, align: 'left' });
+    }
   }
 
   // 9. Footer & Cut / Drawer
@@ -621,7 +659,11 @@ export function buildCustomizedReceiptDocument(
 
   // 1. Header Section
   if (content.showLogo && content.logoUrl) {
-    commands.push({ type: 'text', value: '[ *** LOGO *** ]', align: headerAlign, font });
+    commands.push({
+      type: 'image',
+      data: content.logoUrl,
+      align: headerAlign,
+    });
   }
 
   if (content.customHeaderTitle && content.customHeaderTitle.trim()) {
@@ -647,17 +689,23 @@ export function buildCustomizedReceiptDocument(
   }
 
   if (content.headerMessage && content.headerMessage.trim()) {
-    commands.push({
-      type: 'text',
-      value: content.headerMessage.trim(),
-      italic: layout.italicElements.tagline,
-      align: headerAlign,
-      font,
-    });
+    const msgLines = wrapText(content.headerMessage.trim(), cols);
+    for (const l of msgLines) {
+      commands.push({
+        type: 'text',
+        value: l,
+        italic: layout.italicElements.tagline,
+        align: headerAlign,
+        font,
+      });
+    }
   }
 
   if (content.showAddress && restaurantAddress) {
-    commands.push({ type: 'text', value: restaurantAddress, align: headerAlign, font });
+    const addrLines = wrapText(restaurantAddress, cols);
+    for (const l of addrLines) {
+      commands.push({ type: 'text', value: l, align: headerAlign, font });
+    }
   }
 
   if (content.showPhone && restaurantPhone) {
@@ -723,7 +771,7 @@ export function buildCustomizedReceiptDocument(
   const showSched = content.showScheduledTime !== false && customScheduleInfo.isScheduled && customScheduleInfo.scheduleTimeText;
   if (showSched) {
     commands.push({ type: 'line', char: '=' });
-    commands.push({ type: 'text', value: `*** SCHEDULED ${customFulfillmentLabel} ***`, bold: true, align: 'center', size: 'double', font });
+    commands.push({ type: 'text', value: `*** SCHEDULED ${customFulfillmentLabel} ***`, bold: true, align: 'center', size: 'normal', font });
     commands.push({ type: 'text', value: `ORDER TYPE: ${customFulfillmentLabel}`, bold: true, align: 'center', size: 'normal', font });
     commands.push({ type: 'text', value: `TARGET: ${(customScheduleInfo.scheduleTimeText || '').toUpperCase()}`, bold: true, align: 'center', size: 'normal', font });
     commands.push({ type: 'line', char: '=' });
@@ -744,13 +792,16 @@ export function buildCustomizedReceiptDocument(
 
   // 3. Customer & Delivery Address Details
   if (content.showCustomerInfo) {
-    commands.push({
-      type: 'text',
-      value: `Customer: ${customerName}`,
-      bold: layout.boldElements.customerDetails,
-      align: 'left',
-      font,
-    });
+    const custLines = wrapText(`Customer: ${customerName}`, cols);
+    for (const l of custLines) {
+      commands.push({
+        type: 'text',
+        value: l,
+        bold: layout.boldElements.customerDetails,
+        align: 'left',
+        font,
+      });
+    }
 
     if (customerPhone) {
       commands.push({ type: 'text', value: `Phone:    ${customerPhone}`, align: 'left', font });
@@ -764,7 +815,10 @@ export function buildCustomizedReceiptDocument(
     const isPickupOrder = isCustomTakeaway || fulfillmentType.includes('PICKUP') || fulfillmentType.includes('COLLECT') || fulfillmentType.includes('TAKEAWAY');
 
     if (rawAddress && !isDineIn && !isPickupOrder && !rawAddress.toLowerCase().includes('pickup')) {
-      commands.push({ type: 'text', value: `Address:  ${rawAddress}`, bold: true, align: 'left', font });
+      const addrLines = wrapText(`Address:  ${rawAddress}`, cols);
+      for (const l of addrLines) {
+        commands.push({ type: 'text', value: l, bold: true, align: 'left', font });
+      }
       if (order.deliveryAddress?.postalCode || order.deliveryAddress?.postcode) {
         const pc = (order.deliveryAddress?.postalCode || order.deliveryAddress?.postcode).toUpperCase();
         commands.push({ type: 'text', value: `Postcode: ${pc}`, bold: true, align: 'left', font });
@@ -824,8 +878,9 @@ export function buildCustomizedReceiptDocument(
   const discount = Number(order.pricing?.discount ?? order.pricing?.discountAmount ?? (order as any).discountAmount ?? 0);
   const total = Number(order.pricing?.total ?? order.pricing?.totalAmount ?? order.totalAmount ?? (subtotal + deliveryFee + onlinePaymentFee + handlingCharge + platformFee + tax + tip - discount));
 
-  const formatSummaryRow = (label: string, value: string) => {
-    const spaces = Math.max(1, cols - label.length - value.length);
+  const formatSummaryRow = (label: string, value: string, isDoubleSize: boolean = false) => {
+    const targetCols = isDoubleSize ? Math.floor(cols / 2) : cols;
+    const spaces = Math.max(1, targetCols - label.length - value.length);
     return label + ' '.repeat(spaces) + value;
   };
 
@@ -856,13 +911,14 @@ export function buildCustomizedReceiptDocument(
     commands.push({ type: 'text', value: formatSummaryRow('Discount:', `-${formatMoney(discount)}`), align: totalsAlign, font });
   }
 
+  const isDoubleTotal = layout.fontSize !== 'small';
   commands.push({ type: 'line' });
   commands.push({
     type: 'text',
-    value: formatSummaryRow('TOTAL:', formatMoney(total)),
+    value: formatSummaryRow('TOTAL:', formatMoney(total), isDoubleTotal),
     bold: layout.boldElements.totalAmount,
     align: totalsAlign,
-    size: layout.fontSize === 'small' ? 'normal' : 'double',
+    size: isDoubleTotal ? 'double' : 'normal',
     font,
   });
   commands.push({ type: 'line' });
@@ -871,28 +927,37 @@ export function buildCustomizedReceiptDocument(
   if (content.showPaymentMethod) {
     const pType = (order.paymentType || '').toLowerCase();
     const paymentText = pType === 'cash' ? 'PAYMENT: CASH (COLLECT ON DELIVERY)' : 'PAYMENT: ONLINE (PAID)';
-    commands.push({ type: 'text', value: paymentText, bold: true, align: 'center', font });
+    const payLines = wrapText(paymentText, cols);
+    for (const l of payLines) {
+      commands.push({ type: 'text', value: l, bold: true, align: 'center', font });
+    }
   }
 
   // 7. Order Notes / Special Instructions
   const customDisplayNotes = getSanitizedOrderNotes(order.notes);
   if (customDisplayNotes) {
     commands.push({ type: 'line' });
-    commands.push({ type: 'text', value: `NOTE: ${customDisplayNotes}`, bold: true, align: 'left', font });
+    const noteLines = wrapText(`NOTE: ${customDisplayNotes}`, cols);
+    for (const l of noteLines) {
+      commands.push({ type: 'text', value: l, bold: true, align: 'left', font });
+    }
   }
 
   // 8. Footer Message & QR Code
   commands.push({ type: 'feed', lines: 1 });
 
   if (content.footerMessage && content.footerMessage.trim()) {
-    commands.push({
-      type: 'text',
-      value: content.footerMessage.trim(),
-      bold: true,
-      italic: layout.italicElements.footerMessage,
-      align: footerAlign,
-      font,
-    });
+    const footLines = wrapText(content.footerMessage.trim(), cols);
+    for (const l of footLines) {
+      commands.push({
+        type: 'text',
+        value: l,
+        bold: true,
+        italic: layout.italicElements.footerMessage,
+        align: footerAlign,
+        font,
+      });
+    }
   }
 
   if (content.showQrCode && content.qrCodeData && content.qrCodeData.trim()) {

@@ -147,16 +147,24 @@ export default function ReceiptCustomizationScreen() {
   const [previewToolsExpanded, setPreviewToolsExpanded] = useState<boolean>(true);
   const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
 
-  // Modals
+  // Modals & Confirmation States
   const [showNewModal, setShowNewModal] = useState(false);
   const [newTemplateName, setNewTemplateName] = useState('');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [showSaveConfirm, setShowSaveConfirm] = useState(false);
+  const [savedSnapshot, setSavedSnapshot] = useState<string>('');
   const [showLogoModal, setShowLogoModal] = useState(false);
   const [logoUrlInput, setLogoUrlInput] = useState('');
   const [backendRestaurantName, setBackendRestaurantName] = useState<string>('');
   const [backendRestaurantAddress, setBackendRestaurantAddress] = useState<string>('');
   const [backendRestaurantPhone, setBackendRestaurantPhone] = useState<string>('');
+
+  // Track if current template has pending unsaved changes
+  const hasUnsavedChanges = useMemo(() => {
+    if (!savedSnapshot) return false;
+    return JSON.stringify(currentTemplate) !== savedSnapshot;
+  }, [currentTemplate, savedSnapshot]);
 
   // Load initial templates and restaurant data from backend
   useEffect(() => {
@@ -183,6 +191,7 @@ export default function ReceiptCustomizationScreen() {
       setTemplates(all);
       setActiveTemplateId(active.id);
       setCurrentTemplate(active);
+      setSavedSnapshot(JSON.stringify(active));
 
       // Fetch restaurant name directly from backend order/store profile
       try {
@@ -229,6 +238,7 @@ export default function ReceiptCustomizationScreen() {
   // Open editor for a template
   const handleOpenEditor = (template: ReceiptTemplate) => {
     setCurrentTemplate(template);
+    setSavedSnapshot(JSON.stringify(template));
     setScreenMode('editor');
   };
 
@@ -426,14 +436,21 @@ export default function ReceiptCustomizationScreen() {
     setShowLogoModal(false);
   };
 
-  // Save changes
-  const handleSaveTemplate = async () => {
+  // Open save confirmation dialog
+  const handleSaveTemplate = () => {
+    setShowSaveConfirm(true);
+  };
+
+  // Perform saving template customizations
+  const performSaveTemplate = async () => {
+    setShowSaveConfirm(false);
     setSaving(true);
     try {
       const saved = await saveReceiptTemplate(currentTemplate, restaurantId, true);
       const all = await getAllReceiptTemplates(restaurantId);
       setTemplates(all);
       setCurrentTemplate(saved);
+      setSavedSnapshot(JSON.stringify(saved));
       setActiveTemplateId(saved.id);
 
       // Synchronize POS printer hardware config
@@ -443,13 +460,47 @@ export default function ReceiptCustomizationScreen() {
 
       showToast({
         title: 'Template Saved ✅',
-        message: `'${saved.name}' (${saved.layout.paperWidth}) updated and synchronized with printer settings.`,
+        message: `'${saved.name}' (${saved.layout.paperWidth}) saved and synchronized with printer settings.`,
         type: 'success',
       });
     } catch (err: any) {
       showToast({ title: 'Save Failed', message: err?.message || 'Failed to save template', type: 'error' });
     } finally {
       setSaving(false);
+    }
+  };
+
+  // Safe back navigation preventing lost work
+  const handleBackNavigation = () => {
+    if (hasUnsavedChanges) {
+      Alert.alert(
+        'Unsaved Changes',
+        'You have unsaved customizations on this template. What would you like to do?',
+        [
+          { text: 'Keep Editing', style: 'cancel' },
+          {
+            text: 'Discard & Exit',
+            style: 'destructive',
+            onPress: () => {
+              if (savedSnapshot) {
+                try {
+                  setCurrentTemplate(JSON.parse(savedSnapshot));
+                } catch { }
+              }
+              setScreenMode('templates_list');
+            },
+          },
+          {
+            text: 'Save & Exit',
+            onPress: async () => {
+              await performSaveTemplate();
+              setScreenMode('templates_list');
+            },
+          },
+        ]
+      );
+    } else {
+      setScreenMode('templates_list');
     }
   };
 
@@ -477,6 +528,7 @@ export default function ReceiptCustomizationScreen() {
       const all = await getAllReceiptTemplates(restaurantId);
       setTemplates(all);
       setCurrentTemplate(saved);
+      setSavedSnapshot(JSON.stringify(saved));
       setShowNewModal(false);
       setNewTemplateName('');
       setActiveTemplateId(saved.id);
@@ -511,6 +563,7 @@ export default function ReceiptCustomizationScreen() {
       const all = await getAllReceiptTemplates(restaurantId);
       setTemplates(all);
       setCurrentTemplate(saved);
+      setSavedSnapshot(JSON.stringify(saved));
       showToast({ title: 'Template Duplicated', message: `Created '${dupName}'`, type: 'success' });
     } catch (err: any) {
       showToast({ title: 'Duplicate Failed', message: err?.message || 'Could not duplicate', type: 'error' });
@@ -527,6 +580,7 @@ export default function ReceiptCustomizationScreen() {
       setTemplates(all);
       setActiveTemplateId(active.id);
       setCurrentTemplate(active);
+      setSavedSnapshot(JSON.stringify(active));
       setShowDeleteConfirm(false);
       setTargetDeleteTemplate(null);
       showToast({ title: 'Template Deleted', message: `'${tplToDelete.name}' removed successfully`, type: 'info' });
@@ -542,11 +596,68 @@ export default function ReceiptCustomizationScreen() {
       const all = await getAllReceiptTemplates(restaurantId);
       setTemplates(all);
       setCurrentTemplate(reset);
+      setSavedSnapshot(JSON.stringify(reset));
       setShowResetConfirm(false);
       showToast({ title: 'Reset Complete', message: 'All templates restored to system defaults', type: 'success' });
     } catch (err: any) {
       showToast({ title: 'Reset Failed', message: err?.message || 'Could not reset', type: 'error' });
     }
+  };
+
+  // Reset current template back to Standard POS Receipt defaults
+  const handleResetCurrentToStandard = () => {
+    Alert.alert(
+      'Reset to Standard Receipt',
+      'Are you sure you want to restore the Standard POS Receipt settings? All custom layout formatting, hidden elements, and custom spacing will be reset.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reset',
+          style: 'destructive',
+          onPress: async () => {
+            const preservedWidth = currentTemplate.layout?.paperWidth || '58mm';
+            const standardTemplate: ReceiptTemplate = {
+              ...DEFAULT_RECEIPT_TEMPLATE,
+              id: currentTemplate.id,
+              name: currentTemplate.id === DEFAULT_RECEIPT_TEMPLATE.id ? DEFAULT_RECEIPT_TEMPLATE.name : currentTemplate.name,
+              isDefault: currentTemplate.isDefault,
+              layout: {
+                ...DEFAULT_RECEIPT_TEMPLATE.layout,
+                paperWidth: preservedWidth,
+              },
+              content: {
+                ...DEFAULT_RECEIPT_TEMPLATE.content,
+              },
+              updatedAt: new Date().toISOString(),
+            };
+
+            setCurrentTemplate(standardTemplate);
+            setSaving(true);
+            try {
+              const saved = await saveReceiptTemplate(standardTemplate, restaurantId, activeTemplateId === currentTemplate.id);
+              const all = await getAllReceiptTemplates(restaurantId);
+              setTemplates(all);
+              setCurrentTemplate(saved);
+              setSavedSnapshot(JSON.stringify(saved));
+              showToast({
+                title: 'Standard Receipt Restored ✅',
+                message: 'Receipt settings restored to default standard template.',
+                type: 'success',
+              });
+            } catch (err: any) {
+              console.error('[ReceiptCustomization] Reset error:', err);
+              showToast({
+                title: 'Reset Template',
+                message: 'Layout reverted to standard. Tap Save to store permanently.',
+                type: 'info',
+              });
+            } finally {
+              setSaving(false);
+            }
+          },
+        },
+      ]
+    );
   };
 
   // Test Print
@@ -1364,7 +1475,7 @@ export default function ReceiptCustomizationScreen() {
             <View style={{ flex: 1 }}>
               <Text style={styles.previewToolsTitle}>Formatting Tools</Text>
               <Text style={styles.previewToolsSubtitle} numberOfLines={1}>
-                Line spacing, base font scale & date format
+                Date & time format settings
               </Text>
             </View>
           </View>
@@ -1383,78 +1494,7 @@ export default function ReceiptCustomizationScreen() {
 
         {previewToolsExpanded && (
           <View style={styles.previewToolsBody}>
-            {/* Group 1: Typography & Line Spacing */}
-            <View style={styles.previewToolGroup}>
-              <View style={styles.previewToolGroupHeader}>
-                <Sliders size={13} color="#0F172A" />
-                <Text style={styles.previewToolGroupTitle}>Typography & Spacing</Text>
-              </View>
-
-              {/* Dropdown 3: Line Spacing */}
-              {renderDropdownField(
-                'lineSpacing',
-                'Line Spacing',
-                <Sliders size={13} color="#475569" />,
-                currentTemplate.layout.lineSpacing === 'compact'
-                  ? 'Compact Spacing (Saves Paper)'
-                  : currentTemplate.layout.lineSpacing === 'relaxed'
-                    ? 'Relaxed Spacing (Spacious)'
-                    : 'Normal Spacing (Standard)',
-                [
-                  {
-                    value: 'normal',
-                    label: 'Normal Spacing (Standard)',
-                    desc: 'Default balanced vertical line spacing',
-                  },
-                  {
-                    value: 'compact',
-                    label: 'Compact Spacing (Saves Paper)',
-                    desc: 'Tighter line pitch to reduce roll usage',
-                  },
-                  {
-                    value: 'relaxed',
-                    label: 'Relaxed Spacing (Spacious)',
-                    desc: 'Generous line height for quick kitchen reading',
-                  },
-                ],
-                (val) => updateLayout((l) => ({ ...l, lineSpacing: val as ReceiptLineSpacing }))
-              )}
-
-              {/* Dropdown 4: Base Font Size */}
-              {renderDropdownField(
-                'fontSize',
-                'Base Font Scale',
-                <Type size={13} color="#475569" />,
-                currentTemplate.layout.fontSize === 'small'
-                  ? 'Small (Compact 11px)'
-                  : currentTemplate.layout.fontSize === 'large'
-                    ? 'Large (Prominent 14px)'
-                    : 'Medium (Standard 12.5px)',
-                [
-                  {
-                    value: 'small',
-                    label: 'Small (Compact 11px)',
-                    desc: 'Compact font for long, item-heavy receipts',
-                  },
-                  {
-                    value: 'medium',
-                    label: 'Medium (Standard 12.5px)',
-                    desc: 'Recommended standard readable font',
-                  },
-                  {
-                    value: 'large',
-                    label: 'Large (Prominent 14px)',
-                    desc: 'High visibility for busy kitchen prep stations',
-                  },
-                ],
-                (val) => updateLayout((l) => ({ ...l, fontSize: val as ReceiptFontSize }))
-              )}
-            </View>
-
-            {/* Divider */}
-            <View style={styles.previewToolsGroupDivider} />
-
-            {/* Group 2: Date & Time Format */}
+            {/* Group: Date & Time Format */}
             <View style={styles.previewToolGroup}>
               <View style={styles.previewToolGroupHeader}>
                 <Clock size={13} color="#0F172A" />
@@ -1533,6 +1573,24 @@ export default function ReceiptCustomizationScreen() {
                 (val) => updateContent((c) => ({ ...c, showScheduledTime: val === 'visible' }))
               )}
             </View>
+
+            {/* Divider */}
+            <View style={styles.previewToolsGroupDivider} />
+
+            {/* Reset to Standard Option */}
+            <TouchableOpacity
+              style={styles.previewToolsResetBtn}
+              onPress={handleResetCurrentToStandard}
+              activeOpacity={0.7}
+            >
+              <RotateCcw size={15} color="#EA580C" />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.previewToolsResetBtnTitle}>Reset to Standard Receipt</Text>
+                <Text style={styles.previewToolsResetBtnSub}>
+                  Restore all layout, sections & default styling
+                </Text>
+              </View>
+            </TouchableOpacity>
           </View>
         )}
       </View>
@@ -1610,7 +1668,7 @@ export default function ReceiptCustomizationScreen() {
             >
               <Clock size={12} color={isPreviewScheduled ? '#FFFFFF' : '#64748B'} />
               <Text style={[styles.sampleChipText, isPreviewScheduled && styles.sampleChipTextActive]}>
-                {isPreviewScheduled ? '⏰ Slot: 18:30' : '⚡ ASAP'}
+                {isPreviewScheduled ? '⏰ Slot' : '⚡ ASAP'}
               </Text>
             </TouchableOpacity>
           </View>
@@ -1639,6 +1697,14 @@ export default function ReceiptCustomizationScreen() {
               {canvaMode ? 'Edit Mode' : 'Preview Mode'}
             </Text>
           </TouchableOpacity>
+        </View>
+
+        {/* Contextual Guidance Tooltip */}
+        <View style={styles.interactiveHintBanner}>
+          <Sparkles size={13} color="#2563EB" />
+          <Text style={styles.interactiveHintText}>
+            Tap any section to edit font size, alignment, or visibility
+          </Text>
         </View>
 
         {/* Floating Contextual Canva Toolbar */}
@@ -2276,40 +2342,35 @@ export default function ReceiptCustomizationScreen() {
 
 
   // -------------------------------------------------------------
-  // TEMPLATES LIST VIEW (Cards Grid / List)
+  // -------------------------------------------------------------
+  // TEMPLATES LIST VIEW (Modern Mobile-First POS Receipt Management)
   // -------------------------------------------------------------
   const renderTemplatesListView = () => {
+    const activeTemplate = templates.find((t) => t.id === activeTemplateId) || currentTemplate;
+    const isPrintingActive = testPrintingId === activeTemplate.id;
+
     return (
       <View style={{ flex: 1, backgroundColor: '#F8FAFC' }}>
-        {/* Header Bar */}
+        {/* Screen Header Bar */}
         <View style={styles.topHeader}>
           <View style={styles.topHeaderLeft}>
             <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} activeOpacity={0.7}>
-              <ArrowLeft size={18} color="#11181C" />
+              <ArrowLeft size={22} color="#0F172A" />
             </TouchableOpacity>
             <View>
-              <View style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 6 }}>
-                <Text style={styles.headerTitle}>Receipt Templates</Text>
-                <View style={styles.badgePro}>
-                  <Sparkles size={11} color="#FF5C39" />
-                  <Text style={styles.badgeProText}>{templates.length} TEMPLATES</Text>
-                </View>
-              </View>
-              {/* <Text style={styles.headerSubtitle}>
-                Select an active print layout or tap any card to customize
-              </Text> */}
+              <Text style={styles.headerTitle}>Receipt Templates</Text>
             </View>
           </View>
 
           <View style={styles.topHeaderRight}>
-            <TouchableOpacity onPress={() => setShowResetConfirm(true)} style={styles.resetHeaderBtn} activeOpacity={0.7}>
-              <RotateCcw size={13} color="#64748B" />
-              <Text style={styles.resetHeaderBtnText}>Reset</Text>
+            <TouchableOpacity
+              onPress={() => setShowResetConfirm(true)}
+              style={styles.resetHeaderBtn}
+              activeOpacity={0.7}
+            >
+              <RotateCcw size={13} color="#475569" />
+              <Text style={styles.resetHeaderBtnText}>Reset to Default</Text>
             </TouchableOpacity>
-            {/* <TouchableOpacity onPress={() => setShowNewModal(true)} style={styles.newTemplateHeaderBtn} activeOpacity={0.8}>
-              <Plus size={14} color="#FFFFFF" />
-              <Text style={styles.newTemplateHeaderBtnText}>New Template</Text>
-            </TouchableOpacity> */}
           </View>
         </View>
 
@@ -2318,20 +2379,89 @@ export default function ReceiptCustomizationScreen() {
           contentContainerStyle={styles.templatesListScrollContent}
           showsVerticalScrollIndicator={false}
         >
-          {/* Active Template Notice Banner */}
-          <View style={styles.activeTemplateBanner}>
-            <View style={styles.activeTemplateBannerLeft}>
-              <View style={styles.activePulseDot} />
-              <Text style={styles.activeTemplateBannerLabel}>Active:</Text>
-              <Text style={styles.activeTemplateBannerName}>
-                {templates.find((t) => t.id === activeTemplateId)?.name || currentTemplate.name}
-              </Text>
+          {/* Active Template Dedicated Top Section */}
+          <View style={styles.activeSectionContainer}>
+            <View style={styles.sectionHeaderRow}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <View style={styles.activePulseDot} />
+                <Text style={styles.sectionHeaderLabel}>ACTIVE PRINTER TEMPLATE</Text>
+              </View>
+              <View style={styles.activeStatusPill}>
+                <Check size={11} color="#059669" />
+                <Text style={styles.activeStatusPillText}>ACTIVE</Text>
+              </View>
             </View>
-            <View style={styles.activeTemplateBannerTag}>
-              <Text style={styles.activeTemplateBannerTagText}>
-                {templates.find((t) => t.id === activeTemplateId)?.layout.paperWidth || '80mm'} Roll
-              </Text>
+
+            <View style={styles.activeHeroCard}>
+              {/* Hero Top Row: Icon, Title & Switch */}
+              <View style={styles.activeHeroTopRow}>
+                <View style={styles.activeHeroIconCircle}>
+                  <Receipt size={22} color="#10B981" />
+                </View>
+                <View style={{ flex: 1, paddingRight: 8 }}>
+                  <Text style={styles.activeHeroTitle}>{activeTemplate.name}</Text>
+                  <Text style={styles.activeHeroSubtitle}>
+                    Primary layout for automatic & manual receipt prints
+                  </Text>
+                </View>
+                <View style={styles.activeSwitchWrap}>
+                  <Switch
+                    value={true}
+                    disabled={true}
+                    trackColor={{ false: '#CBD5E1', true: '#A7F3D0' }}
+                    thumbColor="#10B981"
+                  />
+                </View>
+              </View>
+
+              {/* Hero Metadata Tags Row */}
+              <View style={styles.activeHeroBadgesRow}>
+                <View style={styles.heroBadgeEmerald}>
+                  <Receipt size={11} color="#065F46" />
+                  <Text style={styles.heroBadgeEmeraldText}>{activeTemplate.layout.paperWidth} Roll</Text>
+                </View>
+                <View style={styles.heroBadgeBlue}>
+                  <ShoppingBag size={11} color="#0369A1" />
+                  <Text style={styles.heroBadgeBlueText}>All Orders (Dine-In, Delivery, Takeaway)</Text>
+                </View>
+              </View>
+
+              <View style={styles.activeHeroDivider} />
+
+              {/* Hero Actions Row */}
+              <View style={styles.activeHeroActionsRow}>
+                <TouchableOpacity
+                  style={styles.heroCustomizeBtn}
+                  onPress={() => handleOpenEditor(activeTemplate)}
+                  activeOpacity={0.85}
+                >
+                  <Sliders size={14} color="#FFFFFF" />
+                  <Text style={styles.heroCustomizeBtnText}>Customize Layout</Text>
+                  <ChevronRight size={14} color="#FFFFFF" />
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.heroTestPrintBtn}
+                  onPress={(e) => handleCardTestPrint(activeTemplate, e)}
+                  disabled={isPrintingActive}
+                  activeOpacity={0.7}
+                >
+                  {isPrintingActive ? (
+                    <ActivityIndicator size="small" color="#0F172A" />
+                  ) : (
+                    <>
+                      <Printer size={14} color="#0F172A" />
+                      <Text style={styles.heroTestPrintBtnText}>Test Print</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              </View>
             </View>
+          </View>
+
+          {/* All Templates Header */}
+          <View style={styles.allTemplatesSectionHeader}>
+            <Text style={styles.sectionHeaderLabel}>ALL TEMPLATES ({templates.length})</Text>
           </View>
 
           {/* Cards List */}
@@ -2342,165 +2472,144 @@ export default function ReceiptCustomizationScreen() {
               const isPrintingThis = testPrintingId === tpl.id;
 
               return (
-                <TouchableOpacity
+                <View
                   key={tpl.id}
                   style={[
                     styles.templateCard,
                     isActive && styles.templateCardActive,
                   ]}
-                  onPress={() => handleOpenEditor(tpl)}
-                  activeOpacity={0.92}
                 >
-                  {/* Card Top Row: Icon, Titles & Badges */}
-                  <View style={styles.cardTopRow}>
-                    {/* <View style={[styles.cardIconBox, isActive && styles.cardIconBoxActive]}>
-                      <Receipt size={20} color={isActive ? '#10B981' : '#FF5C39'} />
-                    </View> */}
-
-                    <View style={{ flex: 1, paddingHorizontal: 10 }}>
+                  {/* Card Header: Title & Paper Width Pill */}
+                  <View style={styles.cardHeaderRow}>
+                    <View style={{ flex: 1 }}>
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                        <Text style={styles.cardName}>{tpl.name}</Text>
+                        <Text style={styles.cardTitle}>{tpl.name}</Text>
                         {isActive && (
-                          <View style={styles.cardActivePill}>
-                            <Check size={10} color="#065F46" />
-                            <Text style={styles.cardActivePillText}>ACTIVE</Text>
+                          <View style={styles.cardActiveTag}>
+                            <View style={styles.cardActiveTagDot} />
+                            <Text style={styles.cardActiveTagText}>ACTIVE</Text>
                           </View>
                         )}
                       </View>
-                      {/* <Text style={styles.cardDesc} numberOfLines={2}>
-                        {tpl.description || 'Thermal receipt print configuration'}
-                      </Text> */}
+                      <Text style={styles.cardSubtitle} numberOfLines={1}>
+                        {tpl.description || (is58mm ? 'Compact receipt layout (32 columns)' : 'Standard wide receipt layout (48 columns)')}
+                      </Text>
                     </View>
 
-                    <View style={[styles.cardRollBadge, is58mm && styles.cardRollBadge58mm]}>
-                      <Text style={styles.cardRollBadgeText}>{tpl.layout.paperWidth}</Text>
+                    {/* Paper Size Indicator Badge */}
+                    <View style={[styles.paperWidthPill, is58mm && styles.paperWidthPill58mm]}>
+                      <Text style={[styles.paperWidthPillText, is58mm && styles.paperWidthPillText58mm]}>
+                        {tpl.layout.paperWidth}
+                      </Text>
                     </View>
                   </View>
 
-                  {/* Feature Chips */}
-                  <View style={styles.cardChipsRow}>
-                    <View style={styles.cardChip}>
-                      <Text style={styles.cardChipText}>{tpl.layout.paperWidth} Roll</Text>
+                  {/* Metadata Tags */}
+                  <View style={styles.cardMetaTagsRow}>
+                    <View style={styles.metaBadge}>
+                      <Text style={styles.metaBadgeText}>{tpl.layout.paperWidth} Roll</Text>
                     </View>
-                    <View style={styles.cardChip}>
-                      <Text style={styles.cardChipText}>
-                        {tpl.layout.fontFamily === 'fontA' ? 'Font A' : 'Font B'}
+                    <View style={styles.metaBadge}>
+                      <Text style={styles.metaBadgeText}>
+                        {is58mm ? 'Takeaway & Express' : 'Dine-In & Full'}
                       </Text>
                     </View>
-                    {/* <View style={styles.cardChip}>
-                      <Text style={styles.cardChipText}>{tpl.layout.lineSpacing} Spacing</Text>
-                    </View> */}
-                    {/* {tpl.content.showLogo && (
-                      <View style={styles.cardChip}>
-                        <Text style={styles.cardChipText}>Logo</Text>
+                    {tpl.isDefault && (
+                      <View style={[styles.metaBadge, { backgroundColor: '#F1F5F9' }]}>
+                        <Text style={[styles.metaBadgeText, { color: '#64748B' }]}>System Default</Text>
                       </View>
-                    )} */}
-                    {/* {tpl.content.showQrCode && (
-                      <View style={styles.cardChip}>
-                        <Text style={styles.cardChipText}>QR Code</Text>
-                      </View>
-                    )} */}
-                    {/* {tpl.content.showTaxId && (
-                      <View style={styles.cardChip}>
-                        <Text style={styles.cardChipText}>VAT ID</Text>
-                      </View>
-                    )} */}
+                    )}
                   </View>
 
                   <View style={styles.cardDivider} />
 
-                  {/* Card Interactive Actions Row */}
-                  <View style={styles.cardBottomRow}>
-                    {/* Active Template Button */}
-                    {isActive ? (
-                      <View style={styles.cardActiveButton}>
-                        <Check size={13} color="#10B981" />
-                        <Text style={styles.cardActiveButtonText}>Active</Text>
-                      </View>
-                    ) : (
-                      <TouchableOpacity
-                        style={styles.cardActivateButton}
-                        onPress={(e) => handleActivateTemplate(tpl, e)}
-                        activeOpacity={0.7}
-                      >
-                        <Check size={13} color="#475569" />
-                        <Text style={styles.cardActivateButtonText}>Set as Active</Text>
-                      </TouchableOpacity>
-                    )}
-
-                    {/* Test Print Button */}
+                  {/* Quick Actions Row */}
+                  <View style={styles.cardActionsRow}>
+                    {/* Primary Button: Customize Layout */}
                     <TouchableOpacity
-                      style={styles.cardTestPrintButton}
-                      onPress={(e) => handleCardTestPrint(tpl, e)}
-                      disabled={isPrintingThis}
-                      activeOpacity={0.7}
-                    >
-                      {isPrintingThis ? (
-                        <ActivityIndicator size="small" color="#0F172A" />
-                      ) : (
-                        <>
-                          <Printer size={13} color="#0F172A" />
-                          <Text style={styles.cardTestPrintButtonText}>Test Print</Text>
-                        </>
-                      )}
-                    </TouchableOpacity>
-
-                    {/* Customize / Edit Button */}
-                    <TouchableOpacity
-                      style={styles.cardCustomizeButton}
+                      style={styles.cardCustomizePrimaryBtn}
                       onPress={() => handleOpenEditor(tpl)}
                       activeOpacity={0.8}
                     >
                       <Sliders size={13} color="#FFFFFF" />
-                      <Text style={styles.cardCustomizeButtonText}>Customize</Text>
+                      <Text style={styles.cardCustomizePrimaryText}>Customize Layout</Text>
                       <ChevronRight size={13} color="#FFFFFF" />
                     </TouchableOpacity>
 
-                    {/* Actions: Duplicate & Delete */}
-                    <View style={styles.cardActionsGroup}>
+                    {/* Secondary Actions Group */}
+                    <View style={styles.cardSecondaryActions}>
+                      {/* Test Print */}
                       <TouchableOpacity
-                        style={styles.cardActionIcon}
-                        onPress={(e) => handleDuplicateTemplateItem(tpl, e)}
-                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        style={styles.cardIconBtn}
+                        onPress={(e) => handleCardTestPrint(tpl, e)}
+                        disabled={isPrintingThis}
+                        activeOpacity={0.7}
                       >
-                        <Copy size={13} color="#64748B" />
+                        {isPrintingThis ? (
+                          <ActivityIndicator size="small" color="#0F172A" />
+                        ) : (
+                          <Printer size={15} color="#334155" />
+                        )}
                       </TouchableOpacity>
 
+                      {/* Set Active Switch / Button */}
+                      <TouchableOpacity
+                        style={[styles.cardSwitchBtn, isActive && styles.cardSwitchBtnActive]}
+                        onPress={(e) => !isActive && handleActivateTemplate(tpl, e)}
+                        disabled={isActive}
+                        activeOpacity={0.7}
+                      >
+                        <Check size={12} color={isActive ? '#10B981' : '#64748B'} />
+                        <Text style={[styles.cardSwitchText, isActive && styles.cardSwitchTextActive]}>
+                          {isActive ? 'Active' : 'Set Active'}
+                        </Text>
+                      </TouchableOpacity>
+
+                      {/* Duplicate */}
+                      <TouchableOpacity
+                        style={styles.cardIconBtn}
+                        onPress={(e) => handleDuplicateTemplateItem(tpl, e)}
+                        activeOpacity={0.7}
+                      >
+                        <Copy size={15} color="#64748B" />
+                      </TouchableOpacity>
+
+                      {/* Delete (if custom) */}
                       {!tpl.isDefault && (
                         <TouchableOpacity
-                          style={styles.cardActionIcon}
+                          style={[styles.cardIconBtn, styles.cardDeleteIconBtn]}
                           onPress={(e) => {
                             if (e && e.stopPropagation) e.stopPropagation();
                             setTargetDeleteTemplate(tpl);
                             setShowDeleteConfirm(true);
                           }}
-                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                          activeOpacity={0.7}
                         >
-                          <Trash2 size={13} color="#EF4444" />
+                          <Trash2 size={15} color="#EF4444" />
                         </TouchableOpacity>
                       )}
                     </View>
                   </View>
-                </TouchableOpacity>
+                </View>
               );
             })}
 
-            {/* Below: Prominent Add New Template Button Card */}
+            {/* Add New Template: Clean Dashed Card */}
             <TouchableOpacity
-              style={styles.addNewTemplateCard}
+              style={styles.addNewTemplateDashedCard}
               onPress={() => setShowNewModal(true)}
               activeOpacity={0.8}
             >
-              <View style={styles.addNewCircle}>
-                <Plus size={20} color="#FF5C39" />
+              <View style={styles.addNewPlusCircle}>
+                <Plus size={18} color="#FF5C39" />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.addNewCardTitle}>+ Create New Template</Text>
+                <Text style={styles.addNewCardTitle}>+ Create Custom Template</Text>
                 <Text style={styles.addNewCardSubtitle}>
-                  Design a custom receipt layout
+                  Design a custom receipt layout tailored for your restaurant
                 </Text>
               </View>
-              <ChevronRight size={18} color="#FF5C39" />
+              <ChevronRight size={18} color="#94A3B8" />
             </TouchableOpacity>
           </View>
         </ScrollView>
@@ -2534,25 +2643,25 @@ export default function ReceiptCustomizationScreen() {
               {/* Row 1: Top Navigation & Action Controls */}
               <View style={styles.editorNavRow}>
                 <TouchableOpacity
-                  onPress={() => setScreenMode('templates_list')}
+                    onPress={handleBackNavigation}
                   style={styles.editorBackBtn}
                   activeOpacity={0.7}
                 >
-                  <ArrowLeft size={16} color="#0F172A" />
-                  <Text style={styles.editorBackText}>Templates</Text>
+                    <ArrowLeft size={20} color="#0F172A" />
+
                 </TouchableOpacity>
 
                 <View style={styles.editorActionsGroup}>
-                  {/* {activeTemplateId !== currentTemplate.id && (
+                    {/* Reset to standard template */}
                     <TouchableOpacity
-                      style={styles.editorSetActiveBtn}
-                      onPress={() => handleActivateTemplate(currentTemplate)}
+                      style={styles.editorResetBtn}
+                      onPress={handleResetCurrentToStandard}
+                      disabled={saving}
                       activeOpacity={0.8}
                     >
-                      <Check size={13} color="#059669" />
-                      <Text style={styles.editorSetActiveText}>Set Active</Text>
+                      <RotateCcw size={12} color="#475569" />
+                      <Text style={styles.editorResetText}>Reset</Text>
                     </TouchableOpacity>
-                  )} */}
 
                   <TouchableOpacity
                     style={styles.editorTestPrintBtn}
@@ -2571,7 +2680,7 @@ export default function ReceiptCustomizationScreen() {
                   </TouchableOpacity>
 
                   <TouchableOpacity
-                    style={styles.editorSaveBtn}
+                      style={[styles.editorSaveBtn, hasUnsavedChanges && styles.editorSaveBtnUnsaved]}
                     onPress={handleSaveTemplate}
                     disabled={saving}
                     activeOpacity={0.8}
@@ -2581,7 +2690,7 @@ export default function ReceiptCustomizationScreen() {
                     ) : (
                       <>
                         <Save size={14} color="#FFFFFF" />
-                        <Text style={styles.editorSaveText}>Save</Text>
+                            <Text style={styles.editorSaveText}>{hasUnsavedChanges ? 'Save *' : 'Save'}</Text>
                       </>
                     )}
                   </TouchableOpacity>
@@ -2591,9 +2700,17 @@ export default function ReceiptCustomizationScreen() {
               {/* Row 2: Template Name, Active Status & Hardware Specs */}
               <View style={styles.editorMetaBar}>
                 <View style={styles.editorTitleRow}>
-                  <Text style={styles.editorMainTitle} numberOfLines={1}>
-                    {currentTemplate.name}
-                  </Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                      <Text style={styles.editorMainTitle} numberOfLines={1}>
+                        {currentTemplate.name}
+                      </Text>
+                      {hasUnsavedChanges ? (
+                        <View style={styles.unsavedDotBadge}>
+                          <View style={styles.unsavedDot} />
+                          <Text style={styles.unsavedDotText}>Unsaved</Text>
+                        </View>
+                      ) : null}
+                    </View>
                   {activeTemplateId === currentTemplate.id ? (
                     <View style={styles.editorActivePill}>
                       <View style={styles.editorActivePulse} />
@@ -2682,84 +2799,7 @@ export default function ReceiptCustomizationScreen() {
                         </TouchableOpacity>
                       </View>
                     )}
-                  </View>
-
-                  {/* Dropdown 2: Hardware Font Pitch / Family */}
-                  <View style={styles.topDropdownAnchor}>
-                    <TouchableOpacity
-                      style={[
-                        styles.topDropdownBtn,
-                        openDropdownId === 'top_font_family' && styles.topDropdownBtnOpen,
-                      ]}
-                      onPress={() => setOpenDropdownId(openDropdownId === 'top_font_family' ? null : 'top_font_family')}
-                      activeOpacity={0.75}
-                    >
-                      <Type size={12} color={openDropdownId === 'top_font_family' ? '#FF5C39' : '#0F172A'} />
-                      <Text style={styles.topDropdownBtnLabel}>Font:</Text>
-                      <Text style={styles.topDropdownBtnValue}>
-                        {currentTemplate.layout.fontFamily === 'fontB' ? 'Font B' : 'Font A'}
-                      </Text>
-                      <ChevronDown
-                        size={12}
-                        color={openDropdownId === 'top_font_family' ? '#FF5C39' : '#64748B'}
-                        style={{ transform: [{ rotate: openDropdownId === 'top_font_family' ? '180deg' : '0deg' }] }}
-                      />
-                    </TouchableOpacity>
-
-                    {openDropdownId === 'top_font_family' && (
-                      <View style={[styles.topFloatingMenu, { minWidth: 200 }]}>
-                        <TouchableOpacity
-                          style={[
-                            styles.topFloatingMenuItem,
-                            currentTemplate.layout.fontFamily === 'fontA' && styles.topFloatingMenuItemActive,
-                          ]}
-                          onPress={() => handleTopHardwareChange({ fontFamily: 'fontA' }, 'Font A')}
-                          activeOpacity={0.7}
-                        >
-                          <View style={{ flex: 1 }}>
-                            <Text
-                              style={[
-                                styles.topFloatingMenuLabel,
-                                currentTemplate.layout.fontFamily === 'fontA' && styles.topFloatingMenuLabelActive,
-                              ]}
-                            >
-                              Font A (Standard)
-                            </Text>
-                            <Text style={styles.topFloatingMenuSub}>12×24 • 48 chars/line</Text>
-                          </View>
-                          {currentTemplate.layout.fontFamily === 'fontA' && <Check size={13} color="#FF5C39" />}
-                        </TouchableOpacity>
-
-                        <TouchableOpacity
-                          style={[
-                            styles.topFloatingMenuItem,
-                            currentTemplate.layout.fontFamily === 'fontB' && styles.topFloatingMenuItemActive,
-                          ]}
-                          onPress={() => handleTopHardwareChange({ fontFamily: 'fontB' }, 'Font B')}
-                          activeOpacity={0.7}
-                        >
-                          <View style={{ flex: 1 }}>
-                            <Text
-                              style={[
-                                styles.topFloatingMenuLabel,
-                                currentTemplate.layout.fontFamily === 'fontB' && styles.topFloatingMenuLabelActive,
-                              ]}
-                            >
-                              Font B (Condensed)
-                            </Text>
-                            <Text style={styles.topFloatingMenuSub}>9×17 • Dense columns</Text>
-                          </View>
-                          {currentTemplate.layout.fontFamily === 'fontB' && <Check size={13} color="#FF5C39" />}
-                        </TouchableOpacity>
-                      </View>
-                    )}
-                  </View>
-
-                  {/* Canva Live Editor badge */}
-                  {/* <View style={styles.editorMetaChipAccent}>
-                    <Palette size={11} color="#FF5C39" />
-                    <Text style={styles.editorMetaChipAccentText}>Canva Live Editor</Text>
-                  </View> */}
+                    </View>
                 </View>
               </View>
             </View>
@@ -2988,6 +3028,18 @@ export default function ReceiptCustomizationScreen() {
           onConfirm={handleResetDefaults}
           onClose={() => setShowResetConfirm(false)}
         />
+
+        {/* Save Customization Confirmation Modal */}
+        <ConfirmModal
+          visible={showSaveConfirm}
+          title="Save Receipt Template"
+          message={`Save customizations to "${currentTemplate.name}" (${currentTemplate.layout.paperWidth})? All changes will take effect immediately on your thermal receipt printer.`}
+          confirmText="Save & Apply"
+          cancelText="Keep Editing"
+          isDestructive={false}
+          onConfirm={performSaveTemplate}
+          onClose={() => setShowSaveConfirm(false)}
+        />
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -3012,7 +3064,7 @@ const styles = StyleSheet.create({
   backBtn: {
     padding: 8,
     borderRadius: 8,
-    backgroundColor: '#F1F5F9',
+
   },
   headerTitle: { fontSize: 18, fontWeight: '800', color: '#0F172A' },
   badgePro: {
@@ -3836,16 +3888,6 @@ const styles = StyleSheet.create({
     color: '#7C2D12',
     lineHeight: 15,
   },
-  sectionHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
-    paddingBottom: 8,
-  },
-
 
   // TEMPLATE CARDS LIST STYLES
   templatesListScroll: { flex: 1 },
@@ -3853,159 +3895,270 @@ const styles = StyleSheet.create({
   resetHeaderBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    paddingVertical: 7,
-    paddingHorizontal: 10,
-    borderRadius: 8,
-    backgroundColor: '#F1F5F9',
-  },
-  resetHeaderBtnText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#64748B',
-  },
-  newTemplateHeaderBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
     gap: 5,
     paddingVertical: 7,
     paddingHorizontal: 12,
     borderRadius: 8,
-    backgroundColor: '#FF5C39',
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
   },
-  newTemplateHeaderBtnText: {
+  resetHeaderBtnText: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#FFFFFF',
+    color: '#334155',
   },
 
-  activeTemplateBanner: {
+  // Active Hero Section
+  activeSectionContainer: {
+    marginBottom: 22,
+  },
+  sectionHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  sectionHeaderLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#64748B',
+    letterSpacing: 0.5,
+  },
+  activeStatusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
     backgroundColor: '#ECFDF5',
     borderWidth: 1,
     borderColor: '#A7F3D0',
+    paddingHorizontal: 8,
+    paddingVertical: 2.5,
     borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    marginBottom: 16,
   },
-  activeTemplateBannerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    flex: 1,
+  activeStatusPillText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#065F46',
   },
   activePulseDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
     backgroundColor: '#10B981',
   },
-  activeTemplateBannerLabel: {
-    fontSize: 12,
-    color: '#065F46',
-    fontWeight: '600',
+  activeHeroCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: '#10B981',
+    padding: 16,
+    shadowColor: '#10B981',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 3,
   },
-  activeTemplateBannerName: {
-    fontSize: 13,
-    color: '#065F46',
+  activeHeroTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  activeHeroIconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  activeHeroTitle: {
+    fontSize: 16.5,
     fontWeight: '800',
+    color: '#0F172A',
   },
-  activeTemplateBannerTag: {
-    backgroundColor: '#D1FAE5',
+  activeHeroSubtitle: {
+    fontSize: 11.5,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  activeSwitchWrap: {
+    paddingLeft: 4,
+  },
+  activeHeroBadgesRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 12,
+  },
+  heroBadgeEmerald: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
     paddingHorizontal: 8,
-    paddingVertical: 3,
+    paddingVertical: 3.5,
     borderRadius: 6,
   },
-  activeTemplateBannerTagText: {
+  heroBadgeEmeraldText: {
     fontSize: 11,
-    fontWeight: '800',
+    fontWeight: '700',
     color: '#065F46',
   },
+  heroBadgeBlue: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#F0F9FF',
+    borderWidth: 1,
+    borderColor: '#BAE6FD',
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    borderRadius: 6,
+  },
+  heroBadgeBlueText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#0369A1',
+  },
+  activeHeroDivider: {
+    height: 1,
+    backgroundColor: '#F1F5F9',
+    marginVertical: 14,
+  },
+  activeHeroActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  heroCustomizeBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#FF5C39',
+    paddingVertical: 9,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    shadowColor: '#FF5C39',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  heroCustomizeBtnText: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  heroTestPrintBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    paddingVertical: 9,
+    paddingHorizontal: 13,
+    borderRadius: 8,
+  },
+  heroTestPrintBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
 
+  // All Templates Section
+  allTemplatesSectionHeader: {
+    marginBottom: 10,
+  },
   cardsListContainer: {
     gap: 14,
   },
   templateCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 16,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: '#E2E8F0',
     padding: 16,
     shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 6,
-    elevation: 2,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    elevation: 1,
   },
   templateCardActive: {
-    borderColor: '#10B981',
-    borderWidth: 2,
+    borderColor: '#CBD5E1',
     backgroundColor: '#FFFFFF',
   },
-  cardTopRow: {
+  cardHeaderRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 10,
   },
-  cardIconBox: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
-    backgroundColor: '#FFF1EE',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  cardIconBoxActive: {
-    backgroundColor: '#ECFDF5',
-  },
-  cardName: {
-    fontSize: 15,
+  cardTitle: {
+    fontSize: 15.5,
     fontWeight: '800',
     color: '#0F172A',
   },
-  cardActivePill: {
+  cardSubtitle: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 3,
+  },
+  cardActiveTag: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 3,
-    backgroundColor: '#D1FAE5',
+    gap: 4,
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 6,
   },
-  cardActivePillText: {
+  cardActiveTagDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+    backgroundColor: '#10B981',
+  },
+  cardActiveTagText: {
     fontSize: 9.5,
     fontWeight: '800',
     color: '#065F46',
   },
-  cardDesc: {
-    fontSize: 12,
-    color: '#64748B',
-    marginTop: 2,
-  },
-  cardRollBadge: {
+  paperWidthPill: {
     backgroundColor: '#0F172A',
     paddingHorizontal: 8,
-    paddingVertical: 3,
+    paddingVertical: 3.5,
     borderRadius: 6,
   },
-  cardRollBadge58mm: {
-    backgroundColor: '#3B82F6',
+  paperWidthPill58mm: {
+    backgroundColor: '#2563EB',
   },
-  cardRollBadgeText: {
-    fontSize: 11,
+  paperWidthPillText: {
+    fontSize: 10.5,
     fontWeight: '800',
     color: '#FFFFFF',
   },
-
-  cardChipsRow: {
+  paperWidthPillText58mm: {
+    color: '#FFFFFF',
+  },
+  cardMetaTagsRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 6,
-    marginTop: 12,
+    marginTop: 10,
   },
-  cardChip: {
+  metaBadge: {
     backgroundColor: '#F8FAFC',
     borderWidth: 1,
     borderColor: '#E2E8F0',
@@ -4013,7 +4166,7 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
     borderRadius: 6,
   },
-  cardChipText: {
+  metaBadgeText: {
     fontSize: 11,
     fontWeight: '600',
     color: '#475569',
@@ -4021,119 +4174,105 @@ const styles = StyleSheet.create({
   cardDivider: {
     height: 1,
     backgroundColor: '#F1F5F9',
-    marginVertical: 14,
+    marginVertical: 12,
   },
-
-  cardBottomRow: {
+  cardActionsRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     gap: 8,
     flexWrap: 'wrap',
   },
-  cardActiveButton: {
+  cardCustomizePrimaryBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
-    backgroundColor: '#ECFDF5',
-    borderWidth: 1,
-    borderColor: '#A7F3D0',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-  },
-  cardActiveButtonText: {
-    fontSize: 11.5,
-    fontWeight: '700',
-    color: '#065F46',
-  },
-  cardActivateButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    backgroundColor: '#F8FAFC',
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-  },
-  cardActivateButtonText: {
-    fontSize: 11.5,
-    fontWeight: '700',
-    color: '#334155',
-  },
-  cardTestPrintButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    backgroundColor: '#F1F5F9',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-  },
-  cardTestPrintButtonText: {
-    fontSize: 11.5,
-    fontWeight: '700',
-    color: '#0F172A',
-  },
-  cardCustomizeButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
     backgroundColor: '#FF5C39',
     paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingVertical: 7,
     borderRadius: 8,
   },
-  cardCustomizeButtonText: {
+  cardCustomizePrimaryText: {
     fontSize: 11.5,
-    fontWeight: '700',
+    fontWeight: '800',
     color: '#FFFFFF',
   },
-  cardActionsGroup: {
+  cardSecondaryActions: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
     marginLeft: 'auto',
   },
-  cardActionIcon: {
-    padding: 6,
-    borderRadius: 6,
+  cardIconBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
     backgroundColor: '#F8FAFC',
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#CBD5E1',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  cardDeleteIconBtn: {
+    borderColor: '#FECACA',
+    backgroundColor: '#FEF2F2',
+  },
+  cardSwitchBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  cardSwitchBtnActive: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#A7F3D0',
+  },
+  cardSwitchText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  cardSwitchTextActive: {
+    color: '#065F46',
   },
 
-  // Below: Add New Card
-  addNewTemplateCard: {
+  // Dashed Add New Card
+  addNewTemplateDashedCard: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
     backgroundColor: '#FFFFFF',
-    borderWidth: 2,
-    borderColor: '#FFD7CE',
+    borderWidth: 1.5,
+    borderColor: '#CBD5E1',
     borderStyle: 'dashed',
-    borderRadius: 16,
+    borderRadius: 14,
     padding: 16,
-    marginTop: 4,
+    marginTop: 6,
   },
-  addNewCircle: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
+  addNewPlusCircle: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     backgroundColor: '#FFF1EE',
+    borderWidth: 1,
+    borderColor: '#FFD9D0',
     justifyContent: 'center',
     alignItems: 'center',
   },
   addNewCardTitle: {
-    fontSize: 14,
+    fontSize: 13.5,
     fontWeight: '800',
-    color: '#FF5C39',
+    color: '#0F172A',
   },
   addNewCardSubtitle: {
-    fontSize: 11.5,
+    fontSize: 11,
     color: '#64748B',
-    marginTop: 1,
+    marginTop: 2,
   },
 
   // Enhanced Editor Header Styles
@@ -4155,10 +4294,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingHorizontal: 11,
+    paddingHorizontal: 12,
     paddingVertical: 7,
     borderRadius: 8,
     backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
   },
   editorBackText: {
     fontSize: 12.5,
@@ -4185,6 +4326,22 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     color: '#059669',
+  },
+  editorResetBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+    borderRadius: 8,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  editorResetText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#64748B',
   },
   editorTestPrintBtn: {
     flexDirection: 'row',
@@ -4216,10 +4373,59 @@ const styles = StyleSheet.create({
     shadowRadius: 3,
     elevation: 2,
   },
+  editorSaveBtnUnsaved: {
+    backgroundColor: '#EA580C',
+    shadowColor: '#EA580C',
+    shadowOpacity: 0.35,
+  },
   editorSaveText: {
     fontSize: 12.5,
     fontWeight: '800',
     color: '#FFFFFF',
+  },
+  unsavedDotBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#FFF7ED',
+    borderWidth: 1,
+    borderColor: '#FFEDD5',
+    paddingHorizontal: 7,
+    paddingVertical: 2.5,
+    borderRadius: 12,
+  },
+  unsavedDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#EA580C',
+  },
+  unsavedDotText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#C2410C',
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+  interactiveHintBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    width: '100%',
+    maxWidth: 360,
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    marginBottom: 10,
+  },
+  interactiveHintText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#1E40AF',
+    flex: 1,
   },
   editorMetaBar: {
     paddingHorizontal: 16,
@@ -4548,6 +4754,28 @@ const styles = StyleSheet.create({
   toolDropdownItemDesc: {
     fontSize: 10.5,
     color: '#64748B',
+    marginTop: 1,
+  },
+  previewToolsResetBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    backgroundColor: '#FFF7ED',
+    borderWidth: 1,
+    borderColor: '#FFEDD5',
+    borderRadius: 10,
+    marginTop: 4,
+  },
+  previewToolsResetBtnTitle: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#C2410C',
+  },
+  previewToolsResetBtnSub: {
+    fontSize: 10.5,
+    color: '#EA580C',
     marginTop: 1,
   },
 

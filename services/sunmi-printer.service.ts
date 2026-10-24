@@ -288,6 +288,22 @@ export async function printSunmiOrderReceipt(
     // ==========================================
     sunmi.setAlignment(getAlignValue(template.layout.alignment.header));
 
+    if (template.content.showLogo && template.content.logoUrl) {
+      try {
+        let cleanBase64 = template.content.logoUrl.trim();
+        if (cleanBase64.includes(',')) {
+          cleanBase64 = cleanBase64.split(',')[1];
+        }
+        const targetWidth = is58mm ? 256 : 384;
+        if (typeof sunmi.printBitmap === 'function') {
+          sunmi.printBitmap(cleanBase64, targetWidth);
+          sunmi.lineWrap(1);
+        }
+      } catch (logoErr) {
+        console.warn('[SunmiPrinter] Error printing logo bitmap:', logoErr);
+      }
+    }
+
     if (template.content.customHeaderTitle) {
       sunmi.setFontSize(baseFontSize + 8);
       sunmi.setFontWeight(true);

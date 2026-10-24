@@ -1,6 +1,8 @@
 import { CommandEncoder } from './encoder.types';
 import { ReceiptCommand } from '../receipt-document';
 import { PosPrinterConfig } from '../../pos-config.service';
+import { rasterizeImage } from './image-rasterizer';
+import { Buffer } from 'buffer';
 
 function escapeXml(str: string): string {
   return str
@@ -20,16 +22,76 @@ export const EposXmlEncoder: CommandEncoder<string> = {
 
     let bodyXml = '';
 
+    const wrapLine = (text: string, maxWidth: number): string[] => {
+      if (!text) return [''];
+      if (text.length <= maxWidth) return [text];
+      const words = text.split(' ');
+      const lines: string[] = [];
+      let current = '';
+
+      for (const word of words) {
+        if (!current) {
+          current = word;
+        } else if ((current + ' ' + word).length <= maxWidth) {
+          current += ' ' + word;
+        } else {
+          lines.push(current);
+          current = word;
+        }
+      }
+      if (current) {
+        lines.push(current);
+      }
+      return lines;
+    };
+
     for (const cmd of doc) {
       switch (cmd.type) {
         case 'text': {
-          const align = cmd.align || 'left';
-          const isDouble = cmd.size === 'double';
-          const width = isDouble ? '2' : '1';
-          const height = isDouble ? '2' : '1';
-          const em = cmd.bold ? 'true' : 'false';
-          const escaped = escapeXml(cmd.value);
-          bodyXml += `    <text align="${align}" width="${width}" height="${height}" em="${em}">${escaped}&#10;</text>\n`;
+          if (is58mm) {
+            const wantsDouble = cmd.size === 'double';
+            const canBeDouble = wantsDouble && cmd.value.length <= 16;
+            const lineCapacity = canBeDouble ? 16 : 32;
+            const width = canBeDouble ? '2' : '1';
+            const height = canBeDouble ? '2' : '1';
+            const em = cmd.bold ? 'true' : 'false';
+
+            const rawLines = cmd.value.split('\n');
+            for (const rLine of rawLines) {
+              const wrapped = wrapLine(rLine, lineCapacity);
+              for (const line of wrapped) {
+                let formatted = line;
+                if (cmd.align === 'center') {
+                  const pad = Math.max(0, Math.floor((lineCapacity - line.length) / 2));
+                  formatted = ' '.repeat(pad) + line;
+                } else if (cmd.align === 'right') {
+                  const pad = Math.max(0, lineCapacity - line.length);
+                  formatted = ' '.repeat(pad) + line;
+                }
+                const escaped = escapeXml(formatted);
+                bodyXml += `    <text align="left" width="${width}" height="${height}" em="${em}">${escaped}&#10;</text>\n`;
+              }
+            }
+          } else {
+            const align = cmd.align || 'left';
+            const isDouble = cmd.size === 'double';
+            const width = isDouble ? '2' : '1';
+            const height = isDouble ? '2' : '1';
+            const em = cmd.bold ? 'true' : 'false';
+            const escaped = escapeXml(cmd.value);
+            bodyXml += `    <text align="${align}" width="${width}" height="${height}" em="${em}">${escaped}&#10;</text>\n`;
+          }
+          break;
+        }
+
+        case 'image': {
+          const maxDots = is58mm ? 256 : 384;
+          const img = rasterizeImage(cmd.data, maxDots);
+          if (img) {
+            const align = is58mm ? 'left' : (cmd.align || 'center');
+            const base64Raster = Buffer.from(img.data).toString('base64');
+            bodyXml += `    <image width="${img.width}" height="${img.height}" align="${align}">${base64Raster}</image>\n`;
+          }
           break;
         }
 

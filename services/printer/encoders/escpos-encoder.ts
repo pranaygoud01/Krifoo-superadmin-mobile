@@ -1,6 +1,7 @@
 import { CommandEncoder } from './encoder.types';
 import { ReceiptCommand } from '../receipt-document';
 import { PosPrinterConfig } from '../../pos-config.service';
+import { rasterizeImage } from './image-rasterizer';
 
 export const EscPosEncoder: CommandEncoder<Uint8Array> = {
   contentType: 'application/octet-stream',
@@ -83,17 +84,109 @@ export const EscPosEncoder: CommandEncoder<Uint8Array> = {
       }
     };
 
+    const wrapLine = (text: string, maxWidth: number): string[] => {
+      if (!text) return [''];
+      if (text.length <= maxWidth) return [text];
+      const words = text.split(' ');
+      const lines: string[] = [];
+      let current = '';
+
+      for (const word of words) {
+        if (!current) {
+          current = word;
+        } else if ((current + ' ' + word).length <= maxWidth) {
+          current += ' ' + word;
+        } else {
+          lines.push(current);
+          current = word;
+        }
+      }
+      if (current) {
+        lines.push(current);
+      }
+      return lines;
+    };
+
     for (const cmd of doc) {
       switch (cmd.type) {
         case 'text':
-          setAlign(cmd.align);
-          setBold(cmd.bold);
-          setItalic(cmd.italic);
-          setFont(cmd.font);
-          setSize(cmd.size);
-          pushText(cmd.value);
-          buffer.push(0x0a); // LF
+          if (is58mm) {
+            // Constrain ALL content within 58mm (32 column) boundary.
+            // On 80mm physical paper, hardware alignment (ESC a 1 / ESC a 2) would center/right-align
+            // across the 80mm print head (48 columns). To keep the remaining ~22mm blank,
+            // we keep hardware alignment strictly LEFT and software-pad within 32 columns.
+            setAlign('left');
+            setBold(cmd.bold);
+            setItalic(cmd.italic);
+            setFont(cmd.font);
+
+            // Double size takes 2 columns per character. 58mm width can only hold 16 chars.
+            // If the text exceeds 16 chars, downgrade to normal size so it never exceeds 32 columns.
+            const wantsDouble = cmd.size === 'double';
+            const canBeDouble = wantsDouble && cmd.value.length <= 16;
+            const lineCapacity = canBeDouble ? 16 : 32;
+
+            setSize(canBeDouble ? 'double' : (cmd.size === 'small' ? 'small' : 'normal'));
+
+            const rawLines = cmd.value.split('\n');
+            for (const rLine of rawLines) {
+              const wrapped = wrapLine(rLine, lineCapacity);
+              for (const line of wrapped) {
+                let formatted = line;
+                if (cmd.align === 'center') {
+                  const pad = Math.max(0, Math.floor((lineCapacity - line.length) / 2));
+                  formatted = ' '.repeat(pad) + line;
+                } else if (cmd.align === 'right') {
+                  const pad = Math.max(0, lineCapacity - line.length);
+                  formatted = ' '.repeat(pad) + line;
+                }
+                pushText(formatted);
+                buffer.push(0x0a); // LF
+              }
+            }
+          } else {
+            // 80mm template behavior is 100% UNCHANGED
+            setAlign(cmd.align);
+            setBold(cmd.bold);
+            setItalic(cmd.italic);
+            setFont(cmd.font);
+            setSize(cmd.size);
+            pushText(cmd.value);
+            buffer.push(0x0a); // LF
+          }
           break;
+
+        case 'image': {
+          const maxDots = is58mm ? 256 : 384;
+          const img = rasterizeImage(cmd.data, maxDots);
+          if (img) {
+            const xL = img.widthBytes & 0xff;
+            const xH = (img.widthBytes >> 8) & 0xff;
+            const yL = img.height & 0xff;
+            const yH = (img.height >> 8) & 0xff;
+
+            if (is58mm) {
+              // 58mm paper has 384 dots printable width.
+              // Center the image inside 384 dots using GS L (Left Margin)
+              const leftMarginDots = Math.max(0, Math.floor((384 - img.width) / 2));
+              buffer.push(0x1d, 0x4c, leftMarginDots & 0xff, (leftMarginDots >> 8) & 0xff);
+            } else {
+              setAlign(cmd.align || 'center');
+            }
+
+            // GS v 0 0 xL xH yL yH d1...dk (Print raster bit image)
+            buffer.push(0x1d, 0x76, 0x30, 0x00, xL, xH, yL, yH);
+            for (let i = 0; i < img.data.length; i++) {
+              buffer.push(img.data[i]);
+            }
+            buffer.push(0x0a);
+
+            if (is58mm) {
+              buffer.push(0x1d, 0x4c, 0x00, 0x00); // Reset GS L margin
+            }
+          }
+          break;
+        }
 
         case 'spacing':
           if (cmd.mode === 'compact') {
@@ -142,7 +235,13 @@ export const EscPosEncoder: CommandEncoder<Uint8Array> = {
           const pL = storeLen % 256;
           const pH = Math.floor(storeLen / 256);
 
-          setAlign('center');
+          if (is58mm) {
+            setAlign('left');
+            // Offset slightly to center inside 58mm width (384 dots)
+            buffer.push(0x1d, 0x4c, 0x30, 0x00); // GS L 48 0
+          } else {
+            setAlign('center');
+          }
           // Select model
           buffer.push(0x1d, 0x28, 0x6b, 0x04, 0x00, 0x31, 0x41, 0x32, 0x00);
           // Set size (module size 6)
@@ -157,17 +256,28 @@ export const EscPosEncoder: CommandEncoder<Uint8Array> = {
           // Print the stored symbol
           buffer.push(0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x51, 0x30);
           buffer.push(0x0a);
+          if (is58mm) {
+            buffer.push(0x1d, 0x4c, 0x00, 0x00); // Reset margin
+          }
           break;
 
         case 'barcode':
           // GS k CODE128
-          setAlign('center');
+          if (is58mm) {
+            setAlign('left');
+            buffer.push(0x1d, 0x4c, 0x30, 0x00); // GS L 48 0
+          } else {
+            setAlign('center');
+          }
           const bcData = cmd.data;
           buffer.push(0x1d, 0x6b, 73, bcData.length);
           for (let i = 0; i < bcData.length; i++) {
             buffer.push(bcData.charCodeAt(i));
           }
           buffer.push(0x0a);
+          if (is58mm) {
+            buffer.push(0x1d, 0x4c, 0x00, 0x00); // Reset margin
+          }
           break;
       }
     }
