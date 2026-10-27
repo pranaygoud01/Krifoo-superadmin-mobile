@@ -13,6 +13,7 @@ import { UserAccount } from '../types';
 import { Colors } from '../constants/colors';
 import { StatusBadge } from './StatusBadge';
 import { X, User, Mail, Phone, Calendar, Shield, Trash2, Bike, MapPin } from 'lucide-react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface UserDetailModalProps {
   visible: boolean;
@@ -31,17 +32,34 @@ export const UserDetailModal: React.FC<UserDetailModalProps> = ({
 }) => {
   const { width: windowWidth } = useWindowDimensions();
   const isTablet = windowWidth >= 768;
+  const insets = useSafeAreaInsets();
 
   if (!user) return null;
 
   return (
-    <Modal visible={visible} animationType={isTablet ? 'fade' : 'slide'} transparent={true} onRequestClose={onClose}>
+    <Modal
+      visible={visible}
+      animationType={isTablet ? 'fade' : 'slide'}
+      transparent={true}
+      statusBarTranslucent={true}
+      onRequestClose={onClose}
+    >
       <View style={[styles.modalOverlay, isTablet && styles.modalOverlayTablet]}>
-        <View style={[styles.modalContent, isTablet && styles.modalContentTablet]}>
+        <View
+          style={[
+            styles.modalContent,
+            isTablet && styles.modalContentTablet,
+            { paddingBottom: isTablet ? 20 : Math.max(insets.bottom, 20) },
+          ]}
+        >
           {/* Header */}
           <View style={styles.header}>
             <Text style={styles.headerTitle}>User Account Details</Text>
-            <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
+            <TouchableOpacity
+              onPress={onClose}
+              style={styles.closeBtn}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
               <X size={20} color={Colors.textMuted} />
             </TouchableOpacity>
           </View>
@@ -324,6 +342,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
+    minHeight: 48,
     gap: 8,
     paddingVertical: 14,
     borderRadius: 12,

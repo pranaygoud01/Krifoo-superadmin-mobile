@@ -121,6 +121,7 @@ export const Header: React.FC<HeaderProps> = ({
               style={styles.backButton}
               onPress={handleBack}
               activeOpacity={0.7}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
               <ArrowLeft size={20} color={Colors.text} />
             </TouchableOpacity>
@@ -191,6 +192,7 @@ export const Header: React.FC<HeaderProps> = ({
                   style={styles.actionIconButton}
                   onPress={handleNotificationPress}
                   activeOpacity={0.7}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 >
                   <View>
                     <Bell size={20} color={Colors.text} strokeWidth={1.8} />

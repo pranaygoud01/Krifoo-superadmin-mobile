@@ -225,6 +225,67 @@ export async function discoverEpsonPrinters(): Promise<
     console.warn('[Epson SDK] Network scan error:', e);
   }
 
+  // 4. Discover via react-native-ble-plx (BLE GATT on iOS and Android)
+  try {
+    const BleModule = require('react-native-ble-plx');
+    if (BleModule && BleModule.BleManager) {
+      const manager = new BleModule.BleManager();
+      const bleScanPromise = new Promise<void>((resolve) => {
+        let timer: any = null;
+        try {
+          manager.startDeviceScan(null, { allowDuplicates: false }, (error: any, device: any) => {
+            if (error) {
+              console.warn('[BleScan] Device scan error:', error);
+              if (timer) clearTimeout(timer);
+              try {
+                manager.destroy();
+              } catch {}
+              resolve();
+              return;
+            }
+            if (
+              device &&
+              (device.name || device.localName) &&
+              !isLikelyAudioDevice(device.name || device.localName)
+            ) {
+              const devName = device.name || device.localName;
+              const devId = device.id;
+              if (
+                !discovered.some(
+                  (d) => d.target === devId || d.macAddress === devId || d.id === devId
+                )
+              ) {
+                discovered.push({
+                  id: devId,
+                  name: devName,
+                  connectionType: 'bluetooth' as const,
+                  target: devId,
+                  macAddress: devId,
+                });
+              }
+            }
+          });
+        } catch (scanErr) {
+          console.warn('[BleScan] startDeviceScan threw:', scanErr);
+          resolve();
+          return;
+        }
+
+        timer = setTimeout(() => {
+          try {
+            manager.stopDeviceScan();
+            manager.destroy();
+          } catch {}
+          resolve();
+        }, 3200);
+      });
+
+      await bleScanPromise;
+    }
+  } catch (e) {
+    console.warn('[BleScan] BLE scan unavailable or failed:', e);
+  }
+
   if (discovered.length === 0 && isBtDisabled) {
     const err: any = new Error('Bluetooth is disabled');
     err.code = 'BLUETOOTH_DISABLED';

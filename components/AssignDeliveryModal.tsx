@@ -13,6 +13,7 @@ import { Order, UserAccount } from '../types';
 import { Colors } from '../constants/colors';
 import { userService } from '../services/user.service';
 import { X, Bike, Check, Phone } from 'lucide-react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface AssignDeliveryModalProps {
   visible: boolean;
@@ -29,6 +30,7 @@ export const AssignDeliveryModal: React.FC<AssignDeliveryModalProps> = ({
 }) => {
   const { width: windowWidth } = useWindowDimensions();
   const isTablet = windowWidth >= 768;
+  const insets = useSafeAreaInsets();
 
   const [partners, setPartners] = useState<UserAccount[]>([]);
   const [loading, setLoading] = useState(false);
@@ -71,15 +73,31 @@ export const AssignDeliveryModal: React.FC<AssignDeliveryModalProps> = ({
   if (!order) return null;
 
   return (
-    <Modal visible={visible} animationType={isTablet ? 'fade' : 'slide'} transparent={true} onRequestClose={onClose}>
+    <Modal
+      visible={visible}
+      animationType={isTablet ? 'fade' : 'slide'}
+      transparent={true}
+      statusBarTranslucent={true}
+      onRequestClose={onClose}
+    >
       <View style={[styles.modalOverlay, isTablet && styles.modalOverlayTablet]}>
-        <View style={[styles.modalContent, isTablet && styles.modalContentTablet]}>
+        <View
+          style={[
+            styles.modalContent,
+            isTablet && styles.modalContentTablet,
+            { paddingBottom: isTablet ? 20 : Math.max(insets.bottom, 20) },
+          ]}
+        >
           <View style={styles.header}>
             <View style={styles.titleRow}>
               <Bike size={20} color={Colors.primary} />
               <Text style={styles.headerTitle}>Assign Delivery Partner</Text>
             </View>
-            <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
+            <TouchableOpacity
+              onPress={onClose}
+              style={styles.closeBtn}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
               <X size={20} color={Colors.textMuted} />
             </TouchableOpacity>
           </View>
@@ -297,6 +315,8 @@ const styles = StyleSheet.create({
   confirmBtn: {
     backgroundColor: Colors.primary,
     paddingVertical: 14,
+    minHeight: 48,
+    justifyContent: 'center',
     borderRadius: 12,
     alignItems: 'center',
   },

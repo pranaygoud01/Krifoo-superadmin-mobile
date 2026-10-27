@@ -3,7 +3,7 @@
     "name": "Krifoo Admin",
     "slug": "krifoo-admin",
     "owner": "krifoos-app",
-    "version": "1.0.10",
+    "version": "1.0.12",
     "orientation": "default",
     "icon": "./assets/logo.png",
     "scheme": "krifooadmin",
@@ -57,6 +57,17 @@
     "plugins": [
       "./plugins/withDeviceCompatibility",
       "expo-router",
+      [
+        "react-native-ble-plx",
+        {
+          "isBackgroundEnabled": false,
+          "modes": [
+            "peripheral",
+            "central"
+          ],
+          "bluetoothAlwaysPermission": "Allow Krifoo Admin to connect to Bluetooth thermal printers."
+        }
+      ],
       [
         "expo-notifications",
         {

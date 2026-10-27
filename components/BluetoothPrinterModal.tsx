@@ -16,7 +16,7 @@ import {
   Platform,
   Linking,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors } from '../constants/colors';
 import {
   Printer,
@@ -62,6 +62,11 @@ export const BluetoothPrinterModal: React.FC<BluetoothPrinterModalProps> = ({
   onClose,
   onSelectPrinter,
 }) => {
+  const insets = useSafeAreaInsets();
+  const topInset = Math.max(
+    insets.top,
+    Platform.OS === 'android' ? (StatusBar.currentHeight || 24) : 24
+  );
   const { width: windowWidth } = useWindowDimensions();
   const isTablet = windowWidth >= 768;
 
@@ -182,11 +187,8 @@ export const BluetoothPrinterModal: React.FC<BluetoothPrinterModalProps> = ({
   const handlePairSelected = (device: DiscoveredPrinterDevice) => {
     setSelectedDeviceId(device.id);
     setConnectingDeviceId(device.id);
-    setTimeout(() => {
-      onSelectPrinter(device);
-      setConnectingDeviceId(null);
-      onClose();
-    }, 450);
+    onSelectPrinter(device);
+    onClose();
   };
 
   const handleSaveManual = () => {
@@ -257,8 +259,18 @@ export const BluetoothPrinterModal: React.FC<BluetoothPrinterModalProps> = ({
       statusBarTranslucent={true}
       onRequestClose={onClose}
     >
-      <SafeAreaView style={styles.fullScreenSafeArea} edges={['top', 'bottom', 'left', 'right']}>
-        <StatusBar barStyle="dark-content" />
+      <View
+        style={[
+          styles.fullScreenSafeArea,
+          {
+            paddingTop: topInset,
+            paddingBottom: Math.max(insets.bottom, 12),
+            paddingLeft: insets.left,
+            paddingRight: insets.right,
+          },
+        ]}
+      >
+        <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" translucent={true} />
 
         {/* ============================================================= */}
         {/* FULL SCREEN UBER EATS TOP NAVIGATION BAR                     */}
@@ -510,6 +522,36 @@ export const BluetoothPrinterModal: React.FC<BluetoothPrinterModalProps> = ({
                             : 'Follow these 3 quick steps to connect your Bluetooth or wireless thermal printer:'}
                         </Text>
 
+                        {Platform.OS === 'ios' && (
+                          <View
+                            style={{
+                              backgroundColor: '#FEF3C7',
+                              borderWidth: 1,
+                              borderColor: '#FDE68A',
+                              borderRadius: 12,
+                              padding: 12,
+                              marginVertical: 12,
+                              flexDirection: 'row',
+                              gap: 10,
+                              alignItems: 'flex-start',
+                              width: '100%',
+                            }}
+                          >
+                            <AlertCircle size={18} color="#B45309" style={{ marginTop: 2 }} />
+                            <View style={{ flex: 1 }}>
+                              <Text style={{ fontSize: 13, fontWeight: '700', color: '#92400E', marginBottom: 2 }}>
+                                iPad / iOS Bluetooth Notice
+                              </Text>
+                              <Text style={{ fontSize: 12, color: '#B45309', lineHeight: 17 }}>
+                                Apple blocks standard Bluetooth (SPP) on iPad/iPhone unless the printer has an official Apple MFi hardware chip. Standard thermal printers (POS-58, BKT04, Munbyn, Xprinter) only pair over Bluetooth on Android.
+                              </Text>
+                              <Text style={{ fontSize: 12, fontWeight: '700', color: '#065F46', marginTop: 6 }}>
+                                👉 Recommended for iPad: Connect your printer via Network IP (Wi-Fi / Ethernet) or AirPrint.
+                              </Text>
+                            </View>
+                          </View>
+                        )}
+
                         {!searchQuery && (
                           <View style={styles.quickStepsBox}>
                             <View style={styles.quickStepItem}>
@@ -741,7 +783,7 @@ export const BluetoothPrinterModal: React.FC<BluetoothPrinterModalProps> = ({
             )}
           </View>
         </View>
-      </SafeAreaView>
+      </View>
     </Modal>
   );
 };

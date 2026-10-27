@@ -391,7 +391,7 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
                   const rawDomain = (order.sourceDomain || '').trim();
                   const restExt = typeof order.restaurantId === 'object' ? (order.restaurantId as any)?.externalWebsiteSettings : undefined;
                   const restCustomDomain = (restExt?.customDomain || restExt?.domain || '').trim();
-                  const restSubdomain = restExt?.subdomain ? `${restExt.subdomain}.krifoo.com` : '';
+                  const restSubdomain = restExt?.subdomain ? `${restExt.subdomain}.krifoo.co.uk` : '';
                   const fallbackExtDomain = restCustomDomain || restSubdomain;
 
                   const isMarketplace = rawDomain.toLowerCase().includes('krifoo.co.uk') || (!rawDomain && source === 'krifoo');

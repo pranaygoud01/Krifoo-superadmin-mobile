@@ -15,6 +15,7 @@ import { Restaurant, VerificationStatus } from '../types';
 import { Colors } from '../constants/colors';
 import { StatusBadge } from './StatusBadge';
 import { X, FileText, CheckCircle, XCircle, Clock, Printer } from 'lucide-react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getBrandName, getPosPrinterConfig } from '../services/pos-config.service';
 
 interface RestaurantDetailModalProps {
@@ -32,6 +33,7 @@ export const RestaurantDetailModal: React.FC<RestaurantDetailModalProps> = ({
 }) => {
   const { width: windowWidth } = useWindowDimensions();
   const isTablet = windowWidth >= 768;
+  const insets = useSafeAreaInsets();
 
   const [remarks, setRemarks] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -59,13 +61,23 @@ export const RestaurantDetailModal: React.FC<RestaurantDetailModalProps> = ({
     : restaurant.address || 'N/A';
 
   return (
-    <Modal visible={visible} animationType={isTablet ? 'fade' : 'slide'} transparent={true} onRequestClose={onClose}>
+    <Modal
+      visible={visible}
+      animationType={isTablet ? 'fade' : 'slide'}
+      transparent={true}
+      statusBarTranslucent={true}
+      onRequestClose={onClose}
+    >
       <View style={[styles.modalOverlay, isTablet && styles.modalOverlayTablet]}>
         <View style={[styles.modalContent, isTablet && styles.modalContentTablet]}>
           {/* Header */}
           <View style={styles.header}>
             <Text style={styles.headerTitle}>Restaurant Verification</Text>
-            <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
+            <TouchableOpacity
+              onPress={onClose}
+              style={styles.closeBtn}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
               <X size={20} color={Colors.textMuted} />
             </TouchableOpacity>
           </View>
@@ -165,7 +177,7 @@ export const RestaurantDetailModal: React.FC<RestaurantDetailModalProps> = ({
           </ScrollView>
 
           {/* Action Footer */}
-          <View style={styles.footerActions}>
+          <View style={[styles.footerActions, { paddingBottom: isTablet ? 16 : Math.max(insets.bottom, 16) }]}>
             <TouchableOpacity
               disabled={submitting}
               style={[styles.actionBtn, styles.approveBtn]}
@@ -385,6 +397,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
+    minHeight: 48,
     gap: 6,
     paddingVertical: 12,
     borderRadius: 10,

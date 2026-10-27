@@ -10,7 +10,9 @@ import {
   Switch,
   Platform,
   Linking,
+  useWindowDimensions,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { Header } from '../components/Header';
 import { Colors } from '../constants/colors';
@@ -43,6 +45,7 @@ import {
   Scissors,
   FileCheck,
   Wrench,
+  ArrowRight,
 } from 'lucide-react-native';
 import {
   printSampleThermalReceipt,
@@ -77,6 +80,9 @@ import {
 
 export default function PrinterSettingsScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
+  const isTablet = width >= 768;
   const { showToast } = useToast();
   const params = useLocalSearchParams<{ restaurantId?: string }>();
   const restaurantId = params.restaurantId;
@@ -610,7 +616,19 @@ export default function PrinterSettingsScreen() {
     <View style={styles.container}>
       <Header title="Receipt Printing" showBackButton={true} />
 
-      <ScrollView contentContainerStyle={styles.scrollBody} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={[
+          styles.scrollBody,
+          {
+            paddingHorizontal: isTablet ? 24 : 16,
+            maxWidth: 840,
+            alignSelf: 'center',
+            width: '100%',
+            paddingBottom: Math.max(insets.bottom + 24, 48),
+          },
+        ]}
+        showsVerticalScrollIndicator={false}
+      >
         {/* ========================================================================= */}
         {/* STATION MASTER SWITCH                                                     */}
         {/* ========================================================================= */}
@@ -647,7 +665,7 @@ export default function PrinterSettingsScreen() {
                     style={[
                       styles.heroStatusDot,
                       isConfigured
-                        ? isTestingPrint
+                        ? isTestingPrint || posConfig.autoPrint === false
                           ? styles.statusDotAmber
                           : styles.statusDotGreen
                         : styles.statusDotMuted,
@@ -657,13 +675,13 @@ export default function PrinterSettingsScreen() {
                     {isConfigured
                       ? isTestingPrint
                         ? 'SENDING TEST PRINT...'
-                        : 'CONNECTED & READY'
+                        : posConfig.autoPrint === false
+                          ? 'SAVED (OFFLINE / NOT CONNECTED)'
+                          : 'CONNECTED & READY'
                       : 'NO PRINTER CONNECTED'}
                   </Text>
                 </View>
-                {isConfigured && (
-                  <Text style={styles.heroStationLabel}>PRIMARY POS PRINTER</Text>
-                )}
+
               </View>
 
               {/* Printer Details */}
@@ -1270,6 +1288,163 @@ export default function PrinterSettingsScreen() {
 
               <View style={styles.faqItemSeparator} />
 
+              {/* Accordion: iPad / iOS Network IP Printing Guide */}
+              <TouchableOpacity
+                style={styles.faqItem}
+                onPress={() => setExpandedFaq(expandedFaq === 'ipad_ios' ? null : 'ipad_ios')}
+                activeOpacity={0.7}
+              >
+                <View style={styles.faqQuestionRow}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, marginRight: 8, flexWrap: 'wrap' }}>
+
+                    <Text style={styles.faqQuestionText}>How to connect iPad / iPhone with Network IP?</Text>
+
+                  </View>
+                  {expandedFaq === 'ipad_ios' ? (
+                    <ChevronUp size={16} color="#64748B" />
+                  ) : (
+                    <ChevronDown size={16} color="#94A3B8" />
+                  )}
+                </View>
+                {expandedFaq === 'ipad_ios' && (
+                  <View style={styles.faqAnswerBox}>
+                    <Text style={[styles.faqAnswerText, { marginBottom: 12 }]}>
+                      Network IP (Wi-Fi or Ethernet LAN) is the <Text style={{ fontWeight: '700', color: '#0F172A' }}>industry standard for iPad POS systems</Text> (Square, Toast, Lightspeed).
+                    </Text>
+
+                    {/* Step-by-Step Cards */}
+                    <View style={styles.guideStepContainer}>
+                      {/* Step 1 */}
+                      <View style={styles.guideStepCard}>
+                        <View style={styles.guideStepNumCircle}>
+                          <Text style={styles.guideStepNumText}>1</Text>
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.guideStepHeading}>Connect Printer & iPad to the Same Wi-Fi</Text>
+                          <Text style={styles.guideStepDetail}>
+                            Plug an <Text style={{ fontWeight: '600', color: '#0F172A' }}>Ethernet (LAN) cable</Text> from the back of your thermal printer (Epson TM-m30II/III, Star, Munbyn) into your Wi-Fi router (or connect printer to Wi-Fi). Make sure your iPad is connected to that <Text style={{ fontWeight: '600', color: '#0F172A' }}>same Wi-Fi network</Text>.
+                          </Text>
+                        </View>
+                      </View>
+
+                      {/* Step 2 */}
+                      <View style={styles.guideStepCard}>
+                        <View style={styles.guideStepNumCircle}>
+                          <Text style={styles.guideStepNumText}>2</Text>
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.guideStepHeading}>Print Printer's Self-Test IP Slip</Text>
+                          <Text style={styles.guideStepDetail}>
+                            Turn the printer power switch <Text style={{ fontWeight: '700', color: '#0F172A' }}>OFF</Text>. Press & hold the <Text style={{ fontWeight: '700', color: '#0F172A' }}>FEED</Text> button on the printer while switching power <Text style={{ fontWeight: '700', color: '#0F172A' }}>ON</Text>. Keep holding for 3 seconds until it prints a slip. Look for the line showing <Text style={{ fontWeight: '700', color: '#059669' }}>IP Address: 192.168.X.X</Text>.
+                          </Text>
+                        </View>
+                      </View>
+
+                      {/* Step 3 */}
+                      <View style={styles.guideStepCard}>
+                        <View style={styles.guideStepNumCircle}>
+                          <Text style={styles.guideStepNumText}>3</Text>
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.guideStepHeading}>Enter IP in Setup Wizard</Text>
+                          <Text style={styles.guideStepDetail}>
+                            Tap <Text style={{ fontWeight: '600', color: '#0F172A' }}>Setup Wizard</Text> below and select <Text style={{ fontWeight: '600', color: '#059669' }}>Network IP (Wi-Fi / Ethernet)</Text>. Enter the IP from Step 2.{'\n'}
+                            • <Text style={{ fontWeight: '600', color: '#0F172A' }}>Epson (TM-m30II, TM-m30III, TM-T88)</Text>: Set Port to <Text style={{ fontWeight: '700', color: '#059669' }}>8008</Text> (ePOS) or 9100.{'\n'}
+                            • <Text style={{ fontWeight: '600', color: '#0F172A' }}>Star / Munbyn / Xprinter / Other</Text>: Set Port to <Text style={{ fontWeight: '700', color: '#059669' }}>9100</Text> (Raw ESC/POS).
+                          </Text>
+                        </View>
+                      </View>
+
+                      {/* Step 4 */}
+                      <View style={styles.guideStepCard}>
+                        <View style={styles.guideStepNumCircle}>
+                          <Text style={styles.guideStepNumText}>4</Text>
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.guideStepHeading}>Verify & Test Print</Text>
+                          <Text style={styles.guideStepDetail}>
+                            Tap <Text style={{ fontWeight: '600', color: '#059669' }}>Verify & Run Test Print</Text>. The receipt will print immediately. Then tap <Text style={{ fontWeight: '700', color: '#0F172A' }}>Save & Start Printing</Text> to route all station orders automatically!
+                          </Text>
+                        </View>
+                      </View>
+                    </View>
+
+
+                  </View>
+                )}
+              </TouchableOpacity>
+
+              <View style={styles.faqItemSeparator} />
+
+              {/* Accordion: SUNMI Built-in POS Terminals */}
+              <TouchableOpacity
+                style={styles.faqItem}
+                onPress={() => setExpandedFaq(expandedFaq === 'sunmi_pos' ? null : 'sunmi_pos')}
+                activeOpacity={0.7}
+              >
+                <View style={styles.faqQuestionRow}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, marginRight: 8, flexWrap: 'wrap' }}>
+
+                    <Text style={styles.faqQuestionText}>Using a SUNMI POS Terminal (Built-in Printer)?</Text>
+
+                  </View>
+                  {expandedFaq === 'sunmi_pos' ? (
+                    <ChevronUp size={16} color="#64748B" />
+                  ) : (
+                    <ChevronDown size={16} color="#94A3B8" />
+                  )}
+                </View>
+                {expandedFaq === 'sunmi_pos' && (
+                  <View style={styles.faqAnswerBox}>
+                    <Text style={[styles.faqAnswerText, { marginBottom: 10 }]}>
+                      SUNMI terminals (such as the <Text style={{ fontWeight: '700', color: '#0F172A' }}>V2, V2s, V3 MIX, T2, T2 mini, and D2</Text>) are all-in-one Android POS devices with an integrated high-speed thermal printer head built directly into the tablet body.
+                    </Text>
+
+                    {/* Feature 1: Zero configuration */}
+                    <View style={[styles.guideStepCard, { marginBottom: 8 }]}>
+                      <View style={[styles.guideStepNumCircle, { backgroundColor: '#C2410C' }]}>
+                        <Check size={12} color="#FFFFFF" />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.guideStepHeading}>Zero Setup Required (Plug & Play)</Text>
+                        <Text style={styles.guideStepDetail}>
+                          When Krifoo Admin runs on a SUNMI device, the app automatically detects the internal printhead via native Android AIDL. No Bluetooth pairing, Wi-Fi IP address, or cables are needed.
+                        </Text>
+                      </View>
+                    </View>
+
+                    {/* Feature 2: Paper size guidance */}
+                    <View style={[styles.guideStepCard, { marginBottom: 8 }]}>
+                      <View style={[styles.guideStepNumCircle, { backgroundColor: '#C2410C' }]}>
+                        <Text style={styles.guideStepNumText}>58</Text>
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.guideStepHeading}>Paper Roll Width Guidelines</Text>
+                        <Text style={styles.guideStepDetail}>
+                          • <Text style={{ fontWeight: '600', color: '#0F172A' }}>Handheld (V2, V2s, V3):</Text> Use 58mm compact roll (32 columns).{'\n'}
+                          • <Text style={{ fontWeight: '600', color: '#0F172A' }}>Countertop (T2, T2 mini, D2):</Text> Use 80mm wide roll (48 columns) with automatic cutter.
+                        </Text>
+                      </View>
+                    </View>
+
+                    {/* Feature 3: iPad / External Device Notice */}
+                    <View style={styles.guideStepCard}>
+                      <View style={[styles.guideStepNumCircle, { backgroundColor: '#64748B' }]}>
+                        <Info size={12} color="#FFFFFF" />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.guideStepHeading}>Can an iPad or iPhone print to a SUNMI terminal?</Text>
+                        <Text style={styles.guideStepDetail}>
+                          No. A SUNMI terminal's built-in printer is wired to that specific Android hardware. To print from an iPad, connect an external printer (like an <Text style={{ fontWeight: '600', color: '#059669' }}>Epson TM-m30II / TM-m30III</Text>) via Network IP or AirPrint.
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
+                )}
+              </TouchableOpacity>
+
+              <View style={styles.faqItemSeparator} />
+
               {/* Accordion 5: Supported Printers & Series */}
               <TouchableOpacity
                 style={styles.faqItem}
@@ -1312,9 +1487,7 @@ export default function PrinterSettingsScreen() {
                     <View style={styles.faqPrinterCategory}>
                       <View style={styles.faqCategoryHeader}>
                         <Text style={styles.faqCategoryTitle}>2. Star Micronics Series</Text>
-                        <View style={[styles.faqCategoryBadge, { backgroundColor: '#FFFBEB' }]}>
-                          <Text style={[styles.faqCategoryBadgeText, { color: '#B45309' }]}>STAR ESC/POS</Text>
-                        </View>
+
                       </View>
                       <Text style={styles.faqCategoryDesc}>
                         • <Text style={{ fontWeight: '600' }}>TSP100 / TSP143 Series:</Text> TSP143IIIBI, TSP100III Bluetooth{'\n'}
@@ -1329,9 +1502,7 @@ export default function PrinterSettingsScreen() {
                     <View style={styles.faqPrinterCategory}>
                       <View style={styles.faqCategoryHeader}>
                         <Text style={styles.faqCategoryTitle}>3. Munbyn / Xprinter / Rongta</Text>
-                        <View style={[styles.faqCategoryBadge, { backgroundColor: '#F0FDF4' }]}>
-                          <Text style={[styles.faqCategoryBadgeText, { color: '#15803D' }]}>AMAZON UK POS</Text>
-                        </View>
+
                       </View>
                       <Text style={styles.faqCategoryDesc}>
                         • <Text style={{ fontWeight: '600' }}>Xprinter 58mm & 80mm:</Text> XP-58, XP-58IIH, XP-N160I, XP-N160II, XP-C260, XP-C300, XP-Q90EC{'\n'}
@@ -1340,10 +1511,22 @@ export default function PrinterSettingsScreen() {
                       </Text>
                     </View>
 
-                    {/* 4. Generic Bluetooth ESC/POS */}
+                    {/* 4. SUNMI POS Built-in */}
                     <View style={styles.faqPrinterCategory}>
                       <View style={styles.faqCategoryHeader}>
-                        <Text style={styles.faqCategoryTitle}>4. Generic Desktop & Portable Bluetooth Printers</Text>
+                        <Text style={styles.faqCategoryTitle}>4. SUNMI POS Built-in Terminals</Text>
+
+                      </View>
+                      <Text style={styles.faqCategoryDesc}>
+                        • <Text style={{ fontWeight: '600' }}>Handheld Series:</Text> SUNMI V2, V2 Pro, V2s, V2s PLUS, V3 MIX (58mm roll){'\n'}
+                        • <Text style={{ fontWeight: '600' }}>Countertop Series:</Text> SUNMI T2, T2 mini, T2s, D2, D2s, D3, K2 Kiosk (80mm roll)
+                      </Text>
+                    </View>
+
+                    {/* 5. Generic Bluetooth ESC/POS */}
+                    <View style={styles.faqPrinterCategory}>
+                      <View style={styles.faqCategoryHeader}>
+                        <Text style={styles.faqCategoryTitle}>5. Generic Desktop & Portable Bluetooth Printers</Text>
                       </View>
                       <Text style={styles.faqCategoryDesc}>
                         • <Text style={{ fontWeight: '600' }}>POS-58 Series (58mm):</Text> POS-5802DD, POS-5805DD, MPT-II, ZJ-5802, GOOJPRT PT-210, JP-58H{'\n'}
@@ -1352,10 +1535,10 @@ export default function PrinterSettingsScreen() {
                       </Text>
                     </View>
 
-                    {/* 5. Citizen & Bixolon */}
+                    {/* 6. Citizen & Bixolon */}
                     <View style={styles.faqPrinterCategory}>
                       <View style={styles.faqCategoryHeader}>
-                        <Text style={styles.faqCategoryTitle}>5. Citizen & Bixolon</Text>
+                        <Text style={styles.faqCategoryTitle}>6. Citizen & Bixolon</Text>
                       </View>
                       <Text style={styles.faqCategoryDesc}>
                         • <Text style={{ fontWeight: '600' }}>Citizen:</Text> CT-S310II, CT-S651, CMP-20II, CMP-30II{'\n'}
@@ -1395,14 +1578,22 @@ export default function PrinterSettingsScreen() {
         onClose={() => setShowSetupWizard(false)}
         restaurantId={restaurantId}
         currentConfig={posConfig}
-        onComplete={(newCfg) => {
+        onComplete={(newCfg, isVerified = true) => {
           setPosConfig(newCfg);
           loadActiveTemplate();
-          showToast({
-            title: 'Printer Ready',
-            message: 'Your printer has been successfully configured and tested.',
-            type: 'success',
-          });
+          if (isVerified) {
+            showToast({
+              title: 'Printer Ready',
+              message: 'Your printer has been successfully connected and tested.',
+              type: 'success',
+            });
+          } else {
+            showToast({
+              title: 'Printer Saved (Offline)',
+              message: 'Configuration saved. Power ON your printer to start automatic printing.',
+              type: 'warning',
+            });
+          }
         }}
       />
     </View>
@@ -1730,7 +1921,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    height: 44,
+    height: 48,
+    minHeight: 48,
     backgroundColor: '#F0FDF4',
     borderWidth: 1,
     borderColor: '#BBF7D0',
@@ -1746,7 +1938,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 16,
-    height: 44,
+    height: 48,
+    minHeight: 48,
     backgroundColor: '#FEF2F2',
     borderWidth: 1,
     borderColor: '#FECACA',
@@ -1983,7 +2176,8 @@ const styles = StyleSheet.create({
   },
   segmentBtn: {
     flex: 1,
-    height: 40,
+    height: 44,
+    minHeight: 44,
     borderRadius: 8,
     justifyContent: 'center',
     alignItems: 'center',
@@ -2299,7 +2493,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E2E8F0',
     borderRadius: 8,
-    padding: 10,
+    padding: 6,
   },
   faqSpecsTitle: {
     fontSize: 11,
@@ -2313,6 +2507,82 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#334155',
     lineHeight: 17,
+  },
+
+  /* iPad Network IP Step-by-Step Guide styles */
+  faqCategoryBadgeIpad: {
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  faqCategoryBadgeIpadText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#065F46',
+    letterSpacing: 0.3,
+  },
+  guideStepContainer: {
+    gap: 8,
+    marginTop: 6,
+    marginBottom: 12,
+  },
+  guideStepCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 10,
+    padding: 10,
+    gap: 10,
+  },
+  guideStepNumCircle: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: '#059669',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 1,
+  },
+  guideStepNumText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  guideStepHeading: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#0F172A',
+    marginBottom: 3,
+  },
+  guideStepDetail: {
+    fontSize: 11.5,
+    color: '#475569',
+    lineHeight: 17,
+  },
+  guideLaunchWizardBtn: {
+    backgroundColor: '#059669',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    marginTop: 4,
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  guideLaunchWizardBtnText: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
 
   /* Architecture pipeline footer */

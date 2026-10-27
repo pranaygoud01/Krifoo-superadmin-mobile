@@ -121,7 +121,7 @@ export default function SettingsScreen() {
           </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.profileName}>{user?.fullName || 'Super Administrator'}</Text>
-            <Text style={styles.profileEmail}>{user?.email || 'admin@krifoo.com'}</Text>
+            <Text style={styles.profileEmail}>{user?.email || 'admin@krifoo.co.uk'}</Text>
           </View>
           <View style={styles.adminBadge}>
             <Text style={styles.adminBadgeText}>SUPER ADMIN</Text>

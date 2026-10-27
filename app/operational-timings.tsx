@@ -11,6 +11,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Header } from '../components/Header';
 import { Colors } from '../constants/colors';
 import { useAuth } from '../context/AuthContext';
@@ -92,6 +93,7 @@ export default function OperationalTimingsScreen() {
   const { showToast } = useToast();
   const { width } = useWindowDimensions();
   const isTablet = width >= 768;
+  const insets = useSafeAreaInsets();
 
   const isSuperAdmin = user?.userType === 'super_admin';
 
@@ -400,7 +402,7 @@ export default function OperationalTimingsScreen() {
 
       {/* Pinned Channels Segmented Tab Control */}
       <View style={[styles.pinnedTabBar, { paddingHorizontal: isTablet ? 24 : 16 }]}>
-        <View style={styles.tabContainer}>
+        <View style={[styles.tabContainer, isTablet && { maxWidth: 840, width: '100%', alignSelf: 'center' }]}>
           <TouchableOpacity
             style={[styles.tabBtn, activeTab === 'general' && styles.tabBtnActive]}
             onPress={() => setActiveTab('general')}
@@ -474,7 +476,13 @@ export default function OperationalTimingsScreen() {
         <ScrollView
           contentContainerStyle={[
             styles.scrollContent,
-            { paddingHorizontal: isTablet ? 24 : 16, maxWidth: 840, alignSelf: 'center', width: '100%' },
+            {
+              paddingHorizontal: isTablet ? 24 : 16,
+              maxWidth: 840,
+              alignSelf: 'center',
+              width: '100%',
+              paddingBottom: Math.max(insets.bottom + 24, 40),
+            },
           ]}
           showsVerticalScrollIndicator={false}
         >
@@ -787,6 +795,7 @@ export default function OperationalTimingsScreen() {
         visible={timePickerVisible}
         transparent={true}
         animationType="fade"
+        statusBarTranslucent={true}
         onRequestClose={() => setTimePickerVisible(false)}
       >
         <View style={styles.modalBackdrop}>
@@ -1281,6 +1290,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.primary,
     borderRadius: 14,
     paddingVertical: 15,
+    minHeight: 48,
     alignItems: 'center',
     justifyContent: 'center',
     elevation: 3,

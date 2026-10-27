@@ -187,7 +187,7 @@ export function getOrderSourceDetails(order: Order): {
   const rawDomain = (order.sourceDomain || '').trim();
   const restExt = typeof order.restaurantId === 'object' ? (order.restaurantId as any)?.externalWebsiteSettings : undefined;
   const restCustomDomain = (restExt?.customDomain || restExt?.domain || '').trim();
-  const restSubdomain = restExt?.subdomain ? `${restExt.subdomain}.krifoo.com` : '';
+  const restSubdomain = restExt?.subdomain ? `${restExt.subdomain}.krifoo.co.uk` : '';
   const fallbackExtDomain = restCustomDomain || restSubdomain;
 
   const custName = (order.customerDetails?.name || (order.customerId as any)?.fullName || '').toLowerCase();

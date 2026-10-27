@@ -228,6 +228,8 @@ const styles = StyleSheet.create({
   retryBtn: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 48,
     gap: 6,
     backgroundColor: '#0F172A',
     paddingHorizontal: 18,

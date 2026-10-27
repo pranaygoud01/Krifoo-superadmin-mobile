@@ -13,6 +13,7 @@ import {
   Platform,
   useWindowDimensions,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Header } from '../components/Header';
 import { Colors } from '../constants/colors';
 import { deliveryChargeService } from '../services/delivery-charge.service';
@@ -32,6 +33,7 @@ import {
 export default function DeliveryChargesScreen() {
   const { width } = useWindowDimensions();
   const isTablet = width >= 768;
+  const insets = useSafeAreaInsets();
   const { showToast } = useToast();
 
   const [tiers, setTiers] = useState<DeliveryChargeTier[]>([]);
@@ -173,7 +175,7 @@ export default function DeliveryChargesScreen() {
         }
       />
 
-      <View style={styles.infoBanner}>
+      <View style={[styles.infoBanner, isTablet && { maxWidth: 840, width: '100%', alignSelf: 'center' }]}>
         <Truck size={20} color={Colors.primary} />
         <View style={{ flex: 1 }}>
           <Text style={styles.infoTitle}>Platform Delivery Tiers</Text>
@@ -196,7 +198,13 @@ export default function DeliveryChargesScreen() {
           onRefresh={handleRefresh}
           contentContainerStyle={[
             styles.listContent,
-            { paddingHorizontal: isTablet ? 24 : 16, maxWidth: 840, alignSelf: 'center', width: '100%' },
+            {
+              paddingHorizontal: isTablet ? 24 : 16,
+              maxWidth: 840,
+              alignSelf: 'center',
+              width: '100%',
+              paddingBottom: Math.max(insets.bottom + 24, 40),
+            },
           ]}
           ListEmptyComponent={
             <View style={styles.emptyBox}>
@@ -228,12 +236,17 @@ export default function DeliveryChargesScreen() {
               </View>
 
               <View style={styles.cardActions}>
-                <TouchableOpacity style={styles.actionBtn} onPress={() => handleOpenEdit(item)}>
+                <TouchableOpacity
+                  style={styles.actionBtn}
+                  onPress={() => handleOpenEdit(item)}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
                   <Edit2 size={16} color={Colors.primary} />
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.actionBtn, styles.deleteBtn]}
                   onPress={() => handleDeleteTier(item)}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 >
                   <Trash2 size={16} color={Colors.danger} />
                 </TouchableOpacity>
@@ -244,7 +257,13 @@ export default function DeliveryChargesScreen() {
       )}
 
       {/* Add / Edit Tier Modal */}
-      <Modal visible={modalVisible} transparent={true} animationType="slide" onRequestClose={() => setModalVisible(false)}>
+      <Modal
+        visible={modalVisible}
+        transparent={true}
+        animationType="slide"
+        statusBarTranslucent={true}
+        onRequestClose={() => setModalVisible(false)}
+      >
         <KeyboardAvoidingView style={styles.modalBackdrop} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <View style={styles.modalBox}>
             <View style={styles.modalHeader}>
@@ -510,7 +529,8 @@ const styles = StyleSheet.create({
   },
   cancelBtn: {
     flex: 1,
-    height: 42,
+    height: 48,
+    minHeight: 48,
     justifyContent: 'center',
     alignItems: 'center',
     borderRadius: 10,
@@ -525,7 +545,8 @@ const styles = StyleSheet.create({
   },
   submitBtn: {
     flex: 2,
-    height: 42,
+    height: 48,
+    minHeight: 48,
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',

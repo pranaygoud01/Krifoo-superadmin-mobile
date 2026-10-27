@@ -1247,6 +1247,7 @@ export default function DashboardScreen() {
         visible={dateRangeModalVisible}
         transparent
         animationType="fade"
+        statusBarTranslucent={true}
         onRequestClose={() => setDateRangeModalVisible(false)}
       >
         <View style={styles.dateModalOverlay}>

@@ -17,8 +17,9 @@ import {
   Easing,
   Alert,
   PermissionsAndroid,
+  StatusBar,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors } from '../constants/colors';
 import {
   Printer,
@@ -65,7 +66,7 @@ export interface PrinterSetupWizardModalProps {
   onClose: () => void;
   restaurantId?: string;
   currentConfig: PosPrinterConfig;
-  onComplete: (newConfig: PosPrinterConfig) => void;
+  onComplete: (newConfig: PosPrinterConfig, isVerified?: boolean) => void;
 }
 
 export function PrinterSetupWizardModal({
@@ -75,11 +76,20 @@ export function PrinterSetupWizardModal({
   currentConfig,
   onComplete,
 }: PrinterSetupWizardModalProps) {
+  const insets = useSafeAreaInsets();
+  // Safe top padding ensuring status bar clearance on all iOS and Android devices
+  const topInset = Math.max(
+    insets.top,
+    Platform.OS === 'android' ? (StatusBar.currentHeight || 24) : 24
+  );
+
   // Wizard Step: 1 = Choose Type, 2 = Find & Connect, 3 = Preferences & Test
   const [step, setStep] = useState<1 | 2 | 3>(1);
 
-  // Selected connection type in wizard
-  const [selectedType, setSelectedType] = useState<PosConnectionType>(currentConfig.connectionType || 'bluetooth');
+  // Selected connection type in wizard: default to network on iOS, bluetooth on Android
+  const [selectedType, setSelectedType] = useState<PosConnectionType>(
+    currentConfig.connectionType || (Platform.OS === 'ios' ? 'network' : 'bluetooth')
+  );
 
   // Discovered devices & scanning
   const [isScanning, setIsScanning] = useState(false);
@@ -489,52 +499,57 @@ export function PrinterSetupWizardModal({
     }
   };
 
-  // Step 2: Select Discovered Device & Verify Connection
-  const handleSelectDiscoveredDevice = async (dev: { id: string; name: string; target?: string; ipAddress?: string; macAddress?: string }) => {
+  // Step 2: Select Discovered Device & Advance Immediately
+  const handleSelectDiscoveredDevice = (dev: { id: string; name: string; target?: string; ipAddress?: string; macAddress?: string }) => {
+    // Instantly update selection, stop radio scanning, and navigate to Step 3 without blocking
     setSelectedDevice(dev);
+    setIsScanning(false);
+    setConnectionStatus(null);
+    setStep(3);
+
+    // Verify Bluetooth connection asynchronously in background of Step 3
     if (selectedType === 'bluetooth') {
       setIsVerifyingConnection(true);
-      setConnectionStatus(null);
-      try {
-        const targetVal = dev.target || dev.macAddress || dev.id;
-        const macVal = dev.macAddress || (targetVal.startsWith('BT:') ? '' : targetVal);
-        const verifyConfig: PosPrinterConfig = {
-          ...currentConfig,
-          brand: dev.name.toLowerCase().includes('star') ? 'star' : 'epson',
-          connectionType: 'bluetooth',
-          target: targetVal,
-          macAddress: macVal,
-          paperWidth,
-          autoPrint,
-          copies,
-          autoCut,
-          openCashDrawer,
-        };
-        const check = await verifyPrinterConnection(verifyConfig);
-        setConnectionStatus({
-          checked: true,
-          success: check.success,
-          message: check.message,
-          rawError: (check as any).rawError || check.message,
+      const targetVal = dev.target || dev.macAddress || dev.id;
+      const macVal = dev.macAddress || (targetVal.startsWith('BT:') ? '' : targetVal);
+      const verifyConfig: PosPrinterConfig = {
+        ...currentConfig,
+        brand: dev.name.toLowerCase().includes('star') ? 'star' : 'epson',
+        connectionType: 'bluetooth',
+        target: targetVal,
+        macAddress: macVal,
+        paperWidth,
+        autoPrint,
+        copies,
+        autoCut,
+        openCashDrawer,
+      };
+
+      verifyPrinterConnection(verifyConfig)
+        .then((check) => {
+          setConnectionStatus({
+            checked: true,
+            success: check.success,
+            message: check.message,
+            rawError: (check as any).rawError || check.message,
+          });
+        })
+        .catch((err: any) => {
+          setConnectionStatus({
+            checked: true,
+            success: false,
+            message: err?.message || 'Bluetooth connection check failed',
+            rawError: err?.message,
+          });
+        })
+        .finally(() => {
+          setIsVerifyingConnection(false);
         });
-      } catch (err: any) {
-        setConnectionStatus({
-          checked: true,
-          success: false,
-          message: err?.message || 'Bluetooth connection check failed',
-          rawError: err?.message,
-        });
-      } finally {
-        setIsVerifyingConnection(false);
-        setStep(3);
-      }
-    } else {
-      setStep(3);
     }
   };
 
-  // Step 2: Save Manual Bluetooth Device & Verify
-  const handleSaveManualBt = async () => {
+  // Step 2: Save Manual Bluetooth Device & Advance Immediately
+  const handleSaveManualBt = () => {
     const target = manualBtInput.trim();
     if (!target) return;
     const dev = {
@@ -544,39 +559,44 @@ export function PrinterSetupWizardModal({
       macAddress: target.startsWith('BT:') ? undefined : target,
     };
     setSelectedDevice(dev);
-    setIsVerifyingConnection(true);
+    setIsScanning(false);
     setConnectionStatus(null);
-    try {
-      const verifyConfig: PosPrinterConfig = {
-        ...currentConfig,
-        brand: 'epson',
-        connectionType: 'bluetooth',
-        target,
-        macAddress: dev.macAddress || '',
-        paperWidth,
-        autoPrint,
-        copies,
-        autoCut,
-        openCashDrawer,
-      };
-      const check = await verifyPrinterConnection(verifyConfig);
-      setConnectionStatus({
-        checked: true,
-        success: check.success,
-        message: check.message,
-        rawError: (check as any).rawError || check.message,
+    setStep(3);
+
+    setIsVerifyingConnection(true);
+    const verifyConfig: PosPrinterConfig = {
+      ...currentConfig,
+      brand: 'epson',
+      connectionType: 'bluetooth',
+      target,
+      macAddress: dev.macAddress || '',
+      paperWidth,
+      autoPrint,
+      copies,
+      autoCut,
+      openCashDrawer,
+    };
+
+    verifyPrinterConnection(verifyConfig)
+      .then((check) => {
+        setConnectionStatus({
+          checked: true,
+          success: check.success,
+          message: check.message,
+          rawError: (check as any).rawError || check.message,
+        });
+      })
+      .catch((err: any) => {
+        setConnectionStatus({
+          checked: true,
+          success: false,
+          message: err?.message || 'Bluetooth connection check failed',
+          rawError: err?.message,
+        });
+      })
+      .finally(() => {
+        setIsVerifyingConnection(false);
       });
-    } catch (err: any) {
-      setConnectionStatus({
-        checked: true,
-        success: false,
-        message: err?.message || 'Bluetooth connection check failed',
-        rawError: err?.message,
-      });
-    } finally {
-      setIsVerifyingConnection(false);
-      setStep(3);
-    }
   };
 
   // Step 2: Save Manual Network IP
@@ -725,8 +745,20 @@ export function PrinterSetupWizardModal({
     }
   };
 
-  // Step 3: Complete Wizard and Save with Connection Confirmation
+  // Connection verification status
+  const isConnectionVerified =
+    selectedType === 'builtin' ||
+    selectedType === 'system' ||
+    (connectionStatus?.checked === true && connectionStatus.success === true);
+
+  // Step 3: Complete Wizard and Save with Verified Connection
   const handleFinishWizard = async () => {
+    if (!isConnectionVerified) {
+      // If user tries to finish before connecting, trigger connection check
+      handleVerifyCurrentConnection();
+      return;
+    }
+
     const targetVal = selectedDevice?.target || manualBtInput.trim();
     const ipVal = selectedDevice?.ipAddress || ipInput.trim();
     const portVal = parseInt(portInput, 10) || 9100;
@@ -760,59 +792,56 @@ export function PrinterSetupWizardModal({
       paperWidth,
       copies,
       autoCut,
-      autoPrint,
+      autoPrint: true,
       openCashDrawer,
     };
 
-    // If bluetooth and connection not yet confirmed, verify or prompt
-    if (selectedType === 'bluetooth' && connectionStatus?.success !== true) {
-      setIsVerifyingConnection(true);
-      try {
-        const check = await verifyPrinterConnection(finalConfig as PosPrinterConfig);
-        setIsVerifyingConnection(false);
-        if (check.success) {
-          setConnectionStatus({ checked: true, success: true, message: check.message });
-        } else {
-          const errInfo = formatPrinterConnectionError((check as any).rawError || check.message, selectedDevice?.name || targetVal);
-          setConnectionStatus({
-            checked: true,
-            success: false,
-            message: check.message,
-            rawError: (check as any).rawError || check.message,
-          });
-          Alert.alert(
-            errInfo.title,
-            `${errInfo.message}\n\n${errInfo.troubleshootingSteps.map((s) => '• ' + s).join('\n')}`,
-            [
-              { text: 'Retry Connection', onPress: () => handleVerifyCurrentConnection() },
-              { text: 'Choose Different Device', onPress: () => setStep(2) },
-              { text: 'Save Anyway', style: 'destructive', onPress: () => executeSave(finalConfig) },
-              { text: 'Cancel', style: 'cancel' },
-            ]
-          );
-          return;
-        }
-      } catch (err: any) {
-        setIsVerifyingConnection(false);
-        const errInfo = formatPrinterConnectionError(err?.message, selectedDevice?.name || targetVal);
-        Alert.alert(
-          errInfo.title,
-          `${errInfo.message}\n\n${errInfo.troubleshootingSteps.map((s) => '• ' + s).join('\n')}`,
-          [
-            { text: 'Retry Connection', onPress: () => handleVerifyCurrentConnection() },
-            { text: 'Choose Different Device', onPress: () => setStep(2) },
-            { text: 'Save Anyway', style: 'destructive', onPress: () => executeSave(finalConfig) },
-            { text: 'Cancel', style: 'cancel' },
-          ]
-        );
-        return;
-      }
-    }
-
-    await executeSave(finalConfig);
+    await executeSave(finalConfig, true);
   };
 
-  const executeSave = async (finalConfig: Partial<PosPrinterConfig>) => {
+  // Step 3: Save configuration offline without live printer connection
+  const handleSaveOffline = async () => {
+    const targetVal = selectedDevice?.target || manualBtInput.trim();
+    const ipVal = selectedDevice?.ipAddress || ipInput.trim();
+    const portVal = parseInt(portInput, 10) || 9100;
+    const brandVal: PosBrand = selectedDevice?.name?.toLowerCase().includes('star')
+      ? 'star'
+      : selectedType === 'builtin'
+        ? 'sunmi'
+        : selectedType === 'system'
+          ? 'system'
+          : 'epson';
+
+    const resolvedDeviceName =
+      selectedDevice?.name ||
+      (selectedType === 'builtin'
+        ? 'Sunmi POS Built-in Thermal Printer'
+        : selectedType === 'system'
+          ? 'System Print Spooler'
+          : selectedType === 'bluetooth'
+            ? 'Bluetooth Thermal Printer'
+            : 'Network Thermal Printer');
+
+    const offlineConfig: Partial<PosPrinterConfig> = {
+      connectionType: selectedType,
+      brand: brandVal,
+      deviceName: resolvedDeviceName,
+      printerName: resolvedDeviceName,
+      target: selectedType === 'bluetooth' ? targetVal : '',
+      macAddress: selectedType === 'bluetooth' ? (selectedDevice?.macAddress || (targetVal.startsWith('BT:') ? '' : targetVal)) : '',
+      ipAddress: selectedType === 'network' ? ipVal : '',
+      port: selectedType === 'network' ? portVal : undefined,
+      paperWidth,
+      copies,
+      autoCut,
+      autoPrint: false, // Keep auto-print off while offline to prevent printing errors on orders
+      openCashDrawer,
+    };
+
+    await executeSave(offlineConfig, false);
+  };
+
+  const executeSave = async (finalConfig: Partial<PosPrinterConfig>, isVerified: boolean = true) => {
     setIsSaving(true);
     try {
       const saved = await savePosPrinterConfig(finalConfig, restaurantId);
@@ -837,7 +866,7 @@ export function PrinterSetupWizardModal({
         console.warn('[Wizard] Template sync warning:', err);
       }
 
-      onComplete(saved);
+      onComplete(saved, isVerified);
       onClose();
     } catch (err) {
       console.warn('[Wizard] Save failed:', err);
@@ -851,42 +880,59 @@ export function PrinterSetupWizardModal({
       visible={visible}
       animationType="slide"
       presentationStyle="fullScreen"
+      statusBarTranslucent={true}
       onRequestClose={onClose}
     >
-      <SafeAreaView style={styles.safeArea} edges={['top', 'bottom', 'left', 'right']}>
+      <View
+        style={[
+          styles.safeArea,
+          {
+            paddingTop: topInset,
+            paddingBottom: Math.max(insets.bottom, 12),
+            paddingLeft: insets.left,
+            paddingRight: insets.right,
+          },
+        ]}
+      >
+        <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" translucent={true} />
+
         {/* Top Header */}
         <View style={styles.navBar}>
-          <TouchableOpacity
-            onPress={() => {
-              if (step > 1) {
-                setStep((s) => ((s - 1) as 1 | 2));
-              } else {
-                onClose();
-              }
-            }}
-            style={styles.navBackBtn}
-            activeOpacity={0.7}
-          >
-            <ArrowLeft size={22} color="#111827" />
-          </TouchableOpacity>
+          <View style={styles.navBarInner}>
+            <TouchableOpacity
+              onPress={() => {
+                if (step > 1) {
+                  setStep((s) => ((s - 1) as 1 | 2));
+                } else {
+                  onClose();
+                }
+              }}
+              style={styles.navBackBtn}
+              activeOpacity={0.7}
+            >
+              <ArrowLeft size={22} color="#111827" />
+            </TouchableOpacity>
 
-          <View style={{ flex: 1, marginLeft: 10 }}>
-            <Text style={styles.navTitle}>Printer Setup Wizard</Text>
-            <Text style={styles.navSubtitle}>
-              Step {step} of 3: {step === 1 ? 'Select Type' : step === 2 ? 'Find & Connect' : 'Preferences & Test'}
-            </Text>
+            <View style={{ flex: 1, marginLeft: 10 }}>
+              <Text style={styles.navTitle}>Printer Setup Wizard</Text>
+              <Text style={styles.navSubtitle}>
+                Step {step} of 3: {step === 1 ? 'Select Type' : step === 2 ? 'Find & Connect' : 'Preferences & Test'}
+              </Text>
+            </View>
+
+            <TouchableOpacity onPress={onClose} style={styles.navCloseBtn} activeOpacity={0.7}>
+              <X size={20} color="#111827" />
+            </TouchableOpacity>
           </View>
-
-          <TouchableOpacity onPress={onClose} style={styles.navCloseBtn} activeOpacity={0.7}>
-            <X size={20} color="#111827" />
-          </TouchableOpacity>
         </View>
 
         {/* Step Progress Bar */}
         <View style={styles.progressBarRow}>
-          <View style={[styles.progressStep, step >= 1 && styles.progressStepActive]} />
-          <View style={[styles.progressStep, step >= 2 && styles.progressStepActive]} />
-          <View style={[styles.progressStep, step >= 3 && styles.progressStepActive]} />
+          <View style={styles.progressBarInner}>
+            <View style={[styles.progressStep, step >= 1 && styles.progressStepActive]} />
+            <View style={[styles.progressStep, step >= 2 && styles.progressStepActive]} />
+            <View style={[styles.progressStep, step >= 3 && styles.progressStepActive]} />
+          </View>
         </View>
 
         <KeyboardAvoidingView
@@ -904,6 +950,7 @@ export function PrinterSetupWizardModal({
             keyboardDismissMode="on-drag"
             showsVerticalScrollIndicator={false}
           >
+            <View style={styles.maxConstraintContainer}>
           {/* ============================================================== */}
           {/* STEP 1: CHOOSE CONNECTION TYPE                                 */}
           {/* ============================================================== */}
@@ -928,12 +975,20 @@ export function PrinterSetupWizardModal({
                 <View style={{ flex: 1, marginRight: 8 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 }}>
                     <Text style={styles.cardMainTitle}>Wireless Bluetooth</Text>
-                    <View style={styles.recBadge}>
-                      <Text style={styles.recBadgeText}>RECOMMENDED</Text>
-                    </View>
+                    {Platform.OS !== 'ios' ? (
+                      <View style={styles.recBadge}>
+                        <Text style={styles.recBadgeText}>RECOMMENDED</Text>
+                      </View>
+                    ) : (
+                      <View style={[styles.recBadge, { backgroundColor: '#FEF3C7' }]}>
+                        <Text style={[styles.recBadgeText, { color: '#B45309' }]}>MFi / ANDROID ONLY</Text>
+                      </View>
+                    )}
                   </View>
                   <Text style={styles.cardSubTitle}>
-                    Epson TM-m30, Star Micronics TSP143, POS-80 & wireless mobile printers.
+                    {Platform.OS === 'ios'
+                      ? 'Requires Apple MFi certified printer (Star TSP650II BTi, Epson TM-m30II). Generic SPP printers require Android.'
+                      : 'Epson TM-m30, Star Micronics TSP143, POS-80 & wireless mobile printers.'}
                   </Text>
                 </View>
                 <ArrowRight size={20} color="#9CA3AF" />
@@ -949,9 +1004,16 @@ export function PrinterSetupWizardModal({
                   <Wifi size={24} color="#059669" />
                 </View>
                 <View style={{ flex: 1, marginRight: 8 }}>
-                  <Text style={styles.cardMainTitle}>Network IP (Wi-Fi / Ethernet)</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                    <Text style={styles.cardMainTitle}>Network IP (Wi-Fi / Ethernet)</Text>
+                    {Platform.OS === 'ios' && (
+                      <View style={[styles.recBadge, { backgroundColor: '#ECFDF5' }]}>
+                        <Text style={[styles.recBadgeText, { color: '#059669' }]}>RECOMMENDED FOR IPAD</Text>
+                      </View>
+                    )}
+                  </View>
                   <Text style={styles.cardSubTitle}>
-                    Epson ePOS or Kitchen ESC/POS printers connected to your Wi-Fi router.
+                    Epson ePOS or Kitchen ESC/POS printers connected to your Wi-Fi router (Port 9100 / 8008).
                   </Text>
                 </View>
                 <ArrowRight size={20} color="#9CA3AF" />
@@ -1006,6 +1068,57 @@ export function PrinterSetupWizardModal({
                   Make sure your printer is powered ON and paired in your tablet settings.
                 </Text>
               </View>
+
+              {Platform.OS === 'ios' && (
+                <View
+                  style={{
+                    backgroundColor: '#FEF3C7',
+                    borderWidth: 1,
+                    borderColor: '#FDE68A',
+                    borderRadius: 12,
+                    padding: 12,
+                    marginBottom: 16,
+                    flexDirection: 'row',
+                    gap: 10,
+                    alignItems: 'flex-start',
+                  }}
+                >
+                  <AlertCircle size={18} color="#B45309" style={{ marginTop: 2 }} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#92400E', marginBottom: 2 }}>
+                      iPad / iOS Bluetooth Limitation
+                    </Text>
+                    <Text style={{ fontSize: 12, color: '#B45309', lineHeight: 17 }}>
+                      Apple strictly blocks Classic Bluetooth (SPP) on iPad and iPhone. Standard retail thermal printers (POS-58, BKT04, Munbyn, Xprinter) are not supported on iOS over Bluetooth. Only Apple MFi-certified hardware can connect.
+                    </Text>
+                    <TouchableOpacity
+                      onPress={() => {
+                        setSelectedType('network');
+                        setStep(1);
+                      }}
+                      style={{
+                        marginTop: 8,
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        gap: 6,
+                        backgroundColor: '#FFFFFF',
+                        borderWidth: 1,
+                        borderColor: '#059669',
+                        paddingHorizontal: 10,
+                        paddingVertical: 6,
+                        borderRadius: 6,
+                        alignSelf: 'flex-start',
+                      }}
+                      activeOpacity={0.8}
+                    >
+                      <Wifi size={14} color="#059669" />
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: '#059669' }}>
+                        Switch to Network IP (Wi-Fi)
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
 
               {/* Scanning status */}
               <View style={styles.scanStatusRow}>
@@ -1238,8 +1351,8 @@ export function PrinterSetupWizardModal({
                     </TouchableOpacity>
                   ))}
                 </View>
-              ) : !isScanning ? (
-                /* Empty state with friendly 3 steps */
+              ) : !isScanning && !isBluetoothDisabled && hasNearbyPermission !== false ? (
+                /* Empty state shown only when Bluetooth is active but no paired printers were detected */
                 <View style={styles.wizardEmptyBox}>
                   <Printer size={36} color="#9CA3AF" style={{ marginBottom: 10 }} />
                   <Text style={styles.emptyHeader}>Printer not showing up?</Text>
@@ -1248,43 +1361,25 @@ export function PrinterSetupWizardModal({
                   </Text>
 
                   <View style={styles.stepsMiniBox}>
-                    {Platform.OS === 'android' && (
-                      <Text style={styles.stepsMiniItem}>1. Allow "Nearby devices" permission for Krifoo Admin.</Text>
-                    )}
-                    <Text style={styles.stepsMiniItem}>2. Turn printer power switch ON.</Text>
-                    <Text style={styles.stepsMiniItem}>3. Pair in tablet Bluetooth Settings (PIN 0000 or 1234).</Text>
-                    <Text style={styles.stepsMiniItem}>4. Tap "Rescan" above.</Text>
+                    {[
+                      'Turn printer power switch ON.',
+                      'Pair in tablet Bluetooth Settings (PIN is usually 0000 or 1234).',
+                      'Tap "Rescan" above to detect it.',
+                    ].map((stepText, idx) => (
+                      <Text key={idx} style={styles.stepsMiniItem}>
+                        {idx + 1}. {stepText}
+                      </Text>
+                    ))}
                   </View>
 
-                  <View style={{ flexDirection: 'row', gap: 8, width: '100%' }}>
-                    {isBluetoothDisabled ? (
-                      <TouchableOpacity
-                        onPress={requestEnableBluetooth}
-                        style={[styles.openSettingsBtn, { backgroundColor: '#FFFBEB', borderColor: '#FDE68A', flex: 1 }]}
-                        activeOpacity={0.8}
-                      >
-                        <Bluetooth size={15} color="#D97706" />
-                        <Text style={[styles.openSettingsBtnText, { color: '#B45309' }]}>Turn On Bluetooth</Text>
-                      </TouchableOpacity>
-                    ) : Platform.OS === 'android' && hasNearbyPermission === false ? (
-                      <TouchableOpacity
-                        onPress={handleGrantPermissionPress}
-                        style={[styles.openSettingsBtn, { backgroundColor: '#FEF2F2', borderColor: '#FECACA', flex: 1 }]}
-                        activeOpacity={0.8}
-                      >
-                        <ShieldAlert size={15} color="#DC2626" />
-                        <Text style={[styles.openSettingsBtnText, { color: '#DC2626' }]}>Grant Permission</Text>
-                      </TouchableOpacity>
-                    ) : null}
-                    <TouchableOpacity
-                      onPress={openBluetoothSettings}
-                      style={[styles.openSettingsBtn, { flex: 1 }]}
-                      activeOpacity={0.8}
-                    >
-                      <Bluetooth size={15} color="#2563EB" />
-                      <Text style={styles.openSettingsBtnText}>Bluetooth Settings</Text>
-                    </TouchableOpacity>
-                  </View>
+                  <TouchableOpacity
+                    onPress={openBluetoothSettings}
+                    style={[styles.openSettingsBtn, { width: '100%', justifyContent: 'center' }]}
+                    activeOpacity={0.8}
+                  >
+                    <Bluetooth size={15} color="#2563EB" />
+                    <Text style={styles.openSettingsBtnText}>Open Bluetooth Settings</Text>
+                  </TouchableOpacity>
                 </View>
               ) : null}
 
@@ -1452,7 +1547,7 @@ export function PrinterSetupWizardModal({
                           activeOpacity={0.8}
                         >
                           <ArrowLeft size={14} color="#374151" />
-                          <Text style={styles.changePrinterBtnText}>Choose Different Printer</Text>
+                          <Text style={styles.changePrinterBtnText}>Choose Different</Text>
                         </TouchableOpacity>
 
                         <TouchableOpacity
@@ -1471,6 +1566,17 @@ export function PrinterSetupWizardModal({
                           )}
                         </TouchableOpacity>
                       </View>
+
+                      {Platform.OS === 'android' && selectedType === 'bluetooth' && (
+                        <TouchableOpacity
+                          style={styles.openSettingsBtn}
+                          onPress={openBluetoothSettings}
+                          activeOpacity={0.8}
+                        >
+                          <ExternalLink size={14} color="#1D4ED8" />
+                          <Text style={styles.openSettingsBtnText}>Pair in Android Bluetooth Settings</Text>
+                        </TouchableOpacity>
+                      )}
                     </View>
                   );
                 })()
@@ -1763,27 +1869,78 @@ export function PrinterSetupWizardModal({
                 )}
               </View>
 
-              {/* Complete Setup Action */}
-              <TouchableOpacity
-                style={styles.completeWizardBtn}
-                onPress={handleFinishWizard}
-                disabled={isSaving}
-                activeOpacity={0.8}
-              >
-                {isSaving ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
+              {/* Complete Setup Action Area */}
+              <View style={styles.wizardFooterActions}>
+                {isConnectionVerified ? (
+                  <View>
+                    <TouchableOpacity
+                      style={styles.completeWizardBtn}
+                      onPress={handleFinishWizard}
+                      disabled={isSaving || isVerifyingConnection}
+                      activeOpacity={0.8}
+                    >
+                      {isSaving ? (
+                        <ActivityIndicator size="small" color="#FFFFFF" />
+                      ) : (
+                        <>
+                          <Check size={18} color="#FFFFFF" />
+                          <Text style={styles.completeWizardBtnText}>Save & Start Printing</Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+                    <Text style={styles.footerVerifiedHint}>
+                      ✓ Hardware link confirmed • Ready for automatic receipt printing
+                    </Text>
+                  </View>
                 ) : (
-                  <>
-                    <Check size={18} color="#FFFFFF" />
-                    <Text style={styles.completeWizardBtnText}>Save & Start Printing</Text>
-                  </>
+                  <View style={styles.unverifiedActionsBox}>
+                    {/* Primary Action: Retry Link & Verify */}
+                    <TouchableOpacity
+                      style={styles.retryPrimaryActionBtn}
+                      onPress={handleVerifyCurrentConnection}
+                      disabled={isVerifyingConnection || isSaving}
+                      activeOpacity={0.8}
+                    >
+                      {isVerifyingConnection ? (
+                        <>
+                          <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 8 }} />
+                          <Text style={styles.retryPrimaryActionBtnText}>Verifying Connection...</Text>
+                        </>
+                      ) : (
+                        <>
+                          <RefreshCw size={16} color="#FFFFFF" style={{ marginRight: 8 }} />
+                          <Text style={styles.retryPrimaryActionBtnText}>Connect & Verify Printer</Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+
+                    {/* Secondary Action: Save Configuration Offline without Error Dialogs */}
+                    <TouchableOpacity
+                      style={styles.saveOfflineBtn}
+                      onPress={handleSaveOffline}
+                      disabled={isSaving || isVerifyingConnection}
+                      activeOpacity={0.7}
+                    >
+                      {isSaving ? (
+                        <ActivityIndicator size="small" color="#64748B" />
+                      ) : (
+                        <Text style={styles.saveOfflineBtnText}>
+                          Save Settings for Later (Printer Offline)
+                        </Text>
+                      )}
+                    </TouchableOpacity>
+                    <Text style={styles.footerOfflineHint}>
+                      Printer will be saved. Automatic printing remains paused until the printer is connected.
+                    </Text>
+                  </View>
                 )}
-              </TouchableOpacity>
+              </View>
             </View>
           )}
-        </ScrollView>
+            </View>
+          </ScrollView>
         </KeyboardAvoidingView>
-      </SafeAreaView>
+      </View>
     </Modal>
   );
 }
@@ -1791,16 +1948,37 @@ export function PrinterSetupWizardModal({
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#F9FAFB',
+    backgroundColor: '#FFFFFF',
   },
   navBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingVertical: 12,
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#E5E7EB',
+  },
+  navBarInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    width: '100%',
+    maxWidth: 820,
+    alignSelf: 'center',
+  },
+  progressBarRow: {
+    backgroundColor: '#E5E7EB',
+    height: 4,
+  },
+  progressBarInner: {
+    flexDirection: 'row',
+    height: 4,
+    width: '100%',
+    maxWidth: 820,
+    alignSelf: 'center',
+  },
+  maxConstraintContainer: {
+    width: '100%',
+    maxWidth: 820,
+    alignSelf: 'center',
   },
   navBackBtn: {
     width: 36,
@@ -1828,11 +2006,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  progressBarRow: {
-    flexDirection: 'row',
-    height: 4,
-    backgroundColor: '#E5E7EB',
-  },
   progressStep: {
     flex: 1,
     backgroundColor: '#E5E7EB',
@@ -1842,6 +2015,7 @@ const styles = StyleSheet.create({
   },
   contentScroll: {
     flex: 1,
+    backgroundColor: '#F9FAFB',
   },
   contentContainer: {
     padding: 16,
@@ -2689,20 +2863,80 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 
-  /* Complete Wizard */
+  /* Wizard Footer Actions */
+  wizardFooterActions: {
+    marginTop: 4,
+    marginBottom: 20,
+  },
   completeWizardBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    backgroundColor: '#000000',
-    borderRadius: 10,
+    backgroundColor: '#059669', // Emerald success green
+    borderRadius: 12,
     paddingVertical: 14,
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 4,
   },
   completeWizardBtnText: {
     color: '#FFFFFF',
-    fontSize: 14,
+    fontSize: 14.5,
     fontWeight: '800',
+  },
+  footerVerifiedHint: {
+    textAlign: 'center',
+    fontSize: 11.5,
+    color: '#059669',
+    fontWeight: '600',
+    marginTop: 8,
+  },
+  unverifiedActionsBox: {
+    width: '100%',
+  },
+  retryPrimaryActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#0F172A', // Slate 900 primary
+    borderRadius: 12,
+    paddingVertical: 14,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  retryPrimaryActionBtnText: {
+    color: '#FFFFFF',
+    fontSize: 14.5,
+    fontWeight: '700',
+  },
+  saveOfflineBtn: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    paddingVertical: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 10,
+  },
+  saveOfflineBtnText: {
+    color: '#475569',
+    fontSize: 13.5,
+    fontWeight: '700',
+  },
+  footerOfflineHint: {
+    textAlign: 'center',
+    fontSize: 11,
+    color: '#64748B',
+    lineHeight: 16,
+    marginTop: 8,
+    paddingHorizontal: 8,
   },
 
   /* Nearby Devices Permission Card */

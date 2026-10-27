@@ -152,15 +152,29 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     connect();
 
-    // Live Order Polling & Sync Loop (Syncs orders from website server / DB every 6s)
+    // Live Order Polling & Sync Loop (Intelligent fallback when WebSocket is inactive or on reconnect)
     let orderSyncInterval: any = null;
     const knownOrderIds = new Set<string>();
     let isFirstPoll = true;
     let isSyncing = false;
+    let lastPollTime = 0;
 
-    async function checkForNewOrders() {
+    async function checkForNewOrders(force = false) {
       if (!active || !user || isSyncing) return;
+
+      const now = Date.now();
+      const isWsConnected = ws && ws.readyState === WebSocket.OPEN;
+
+      // When WebSocket is connected, real-time push events handle orders instantly.
+      // We only run a gentle safety sync every 60s.
+      // When WebSocket is offline/reconnecting, fallback to checking every 25s.
+      const minInterval = isWsConnected ? 60000 : 25000;
+      if (!force && now - lastPollTime < minInterval) {
+        return;
+      }
+      lastPollTime = now;
       isSyncing = true;
+
       try {
         const res = await orderService.getAllOrders({ status: 'placed', limit: 20 });
         if (res.success && res.data) {
@@ -210,16 +224,16 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }
     }
 
-    // Run initial sync check and then every 6 seconds
-    checkForNewOrders();
-    orderSyncInterval = setInterval(checkForNewOrders, 6000);
+    // Run initial sync check on mount, then check at a relaxed 15s cadence (which respects minInterval)
+    checkForNewOrders(true);
+    orderSyncInterval = setInterval(() => checkForNewOrders(false), 15000);
 
-    // Auto-reconnect when app returns from background
+    // Auto-reconnect and immediate sync when app returns from background
     const appStateSub = AppState.addEventListener('change', (nextAppState) => {
       if (nextAppState === 'active' && active && user) {
         console.log('[Socket] App came to foreground. Reconnecting & syncing...');
         connect();
-        checkForNewOrders();
+        checkForNewOrders(true);
       }
     });
 
@@ -246,7 +260,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }
       appStateSub.remove();
     };
-  }, [user]);
+  }, [user?._id || user?.id, typeof user?.restaurantId === 'string' ? user?.restaurantId : user?.restaurantId?._id]);
 
   return (
     <SocketContext.Provider value={{ socket: socketRef.current }}>

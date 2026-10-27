@@ -1031,7 +1031,7 @@ export default function ReceiptCustomizationScreen() {
         updateContent((c) => ({
           ...c,
           showQrCode: true,
-          qrCodeData: c.qrCodeData || 'https://krifoo.com',
+          qrCodeData: c.qrCodeData || 'https://krifoo.co.uk',
           qrCodeLabel: c.qrCodeLabel || 'Scan to view menu & order',
         }));
         setSelectedCanvaId('qr_code');
