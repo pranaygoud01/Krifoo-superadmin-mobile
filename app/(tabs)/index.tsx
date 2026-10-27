@@ -7,10 +7,10 @@ import {
   RefreshControl,
   TouchableOpacity,
   DeviceEventEmitter,
-  Image,
   useWindowDimensions,
   Modal,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { Header } from '../../components/Header';
 import { StatCard } from '../../components/StatCard';
@@ -776,6 +776,7 @@ export default function DashboardScreen() {
                 <Image
                   source={require('../../assets/kpi-gross-sales.png')}
                   style={[styles.kpiBgIllustration, { width: superIllustrationSize, height: superIllustrationSize }]}
+                  contentFit="contain"
                 />
                 <View style={styles.kpiContentContainer}>
                   <View style={styles.kpiTopRow}>
@@ -813,6 +814,7 @@ export default function DashboardScreen() {
                 <Image
                   source={require('../../assets/kpi-online-card.png')}
                   style={[styles.kpiBgIllustration, { width: superIllustrationSize, height: superIllustrationSize }]}
+                  contentFit="contain"
                 />
                 <View style={styles.kpiContentContainer}>
                   <View style={styles.kpiTopRow}>
@@ -850,6 +852,7 @@ export default function DashboardScreen() {
                 <Image
                   source={require('../../assets/store.png')}
                   style={[styles.kpiBgIllustration, { width: superIllustrationSize, height: superIllustrationSize }]}
+                  contentFit="contain"
                 />
                 <View style={styles.kpiContentContainer}>
                   <View style={styles.kpiTopRow}>
@@ -887,6 +890,7 @@ export default function DashboardScreen() {
                 <Image
                   source={require('../../assets/kpi-total-orders.png')}
                   style={[styles.kpiBgIllustration, { width: superIllustrationSize, height: superIllustrationSize }]}
+                  contentFit="contain"
                 />
                 <View style={styles.kpiContentContainer}>
                   <View style={styles.kpiTopRow}>
@@ -1071,6 +1075,7 @@ export default function DashboardScreen() {
                     <Image
                       source={require('../../assets/reservation.png')}
                       style={[styles.gridIllustration, isSmallScreen && { width: 44, height: 44, bottom: -4, right: -4 }]}
+                      contentFit="contain"
                     />
                   </TouchableOpacity>
 
@@ -1092,6 +1097,7 @@ export default function DashboardScreen() {
                     <Image
                       source={require('../../assets/dining-table.png')}
                       style={[styles.gridIllustration, isSmallScreen && { width: 44, height: 44, bottom: -4, right: -4 }]}
+                      contentFit="contain"
                     />
                   </TouchableOpacity>
                 </View>
@@ -1113,6 +1119,7 @@ export default function DashboardScreen() {
                     <Image
                       source={require('../../assets/fleet.png')}
                       style={[styles.gridIllustration, isSmallScreen && { width: 44, height: 44, bottom: -4, right: -4 }]}
+                      contentFit="contain"
                     />
                   </TouchableOpacity>
 
@@ -1132,6 +1139,7 @@ export default function DashboardScreen() {
                     <Image
                       source={require('../../assets/publicity.png')}
                       style={[styles.gridIllustration, isSmallScreen && { width: 44, height: 44, bottom: -4, right: -4 }]}
+                      contentFit="contain"
                     />
                   </TouchableOpacity>
                 </View>

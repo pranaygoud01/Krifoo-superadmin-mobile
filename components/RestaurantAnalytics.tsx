@@ -8,10 +8,10 @@ import {
   ActivityIndicator,
   Share,
   Dimensions,
-  Image,
   useWindowDimensions,
   Modal,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { Colors } from '../constants/colors';
 import { Order } from '../types';
 import { orderService } from '../services/order.service';
@@ -738,6 +738,7 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
           <Image
             source={require('../assets/kpi-gross-sales.png')}
             style={[styles.kpiBgIllustration, { width: illustrationSize, height: illustrationSize }]}
+            contentFit="contain"
           />
 
           <View style={styles.kpiContentContainer}>
@@ -776,6 +777,7 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
           <Image
             source={require('../assets/kpi-total-orders.png')}
             style={[styles.kpiBgIllustration, { width: illustrationSize, height: illustrationSize }]}
+            contentFit="contain"
           />
 
           <View style={styles.kpiContentContainer}>
@@ -814,6 +816,7 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
           <Image
             source={require('../assets/kpi-cash-orders.png')}
             style={[styles.kpiBgIllustration, { width: illustrationSize, height: illustrationSize }]}
+            contentFit="contain"
           />
 
           <View style={styles.kpiContentContainer}>
@@ -852,6 +855,7 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
           <Image
             source={require('../assets/kpi-online-card.png')}
             style={[styles.kpiBgIllustration, { width: illustrationSize, height: illustrationSize }]}
+            contentFit="contain"
           />
 
           <View style={styles.kpiContentContainer}>
@@ -890,6 +894,7 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
           <Image
             source={require('../assets/kpi-avg-value.png')}
             style={[styles.kpiBgIllustration, { width: illustrationSize, height: illustrationSize }]}
+            contentFit="contain"
           />
 
           <View style={styles.kpiContentContainer}>
@@ -928,6 +933,7 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
           <Image
             source={require('../assets/kpi-fulfillment-rate.png')}
             style={[styles.kpiBgIllustration, { width: illustrationSize, height: illustrationSize }]}
+            contentFit="contain"
           />
 
           <View style={styles.kpiContentContainer}>
