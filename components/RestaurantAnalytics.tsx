@@ -664,13 +664,7 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
             )}
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={[styles.iconButton, styles.exportButton]}
-            onPress={handleShareReport}
-            activeOpacity={0.7}
-          >
-            <Share2 size={15} color="#FF5C39" />
-          </TouchableOpacity>
+
         </View>
       </View>
 

@@ -1117,59 +1117,9 @@ export default function PrinterSettingsScreen() {
             {/* ===================================================================== */}
             {/* 5. TESTING & TROUBLESHOOTING                                          */}
             {/* ===================================================================== */}
-            <View style={styles.sectionHeaderRow}>
-              <Text style={styles.sectionTitle}>TESTING & TROUBLESHOOTING</Text>
-              {/* <Text style={styles.sectionSubtitle}>Hardware diagnostics and issue resolution</Text> */}
-            </View>
-
-            {/* Hardware Diagnostics Card */}
-            <View style={styles.groupedListCard}>
-              {/* Test 1: Test Print Receipt */}
-              <TouchableOpacity
-                style={styles.listRowTouchable}
-                onPress={handleTestPrint}
-                disabled={isTestingPrint}
-                activeOpacity={0.7}
-              >
-                <View style={[styles.listRowIconTile, { backgroundColor: '#F0FDF4' }]}>
-                  {isTestingPrint ? (
-                    <ActivityIndicator size="small" color="#059669" />
-                  ) : (
-                      <Printer size={20} color="#059669" />
-                  )}
-                </View>
-                <View style={styles.listRowTextContainer}>
-                  <Text style={styles.listRowTitle}>Test print receipt</Text>
-                  <Text style={styles.listRowSubtitle}>Send a sample customer order to verify live printing</Text>
-                </View>
-                <ChevronRight size={18} color="#94A3B8" />
-              </TouchableOpacity>
-
-              <View style={styles.listRowSeparator} />
 
 
 
-              {/* Test 3: Test Cash Drawer */}
-              <TouchableOpacity
-                style={styles.listRowTouchable}
-                onPress={handleOpenCashDrawerTest}
-                disabled={isTestingDrawer}
-                activeOpacity={0.7}
-              >
-                <View style={[styles.listRowIconTile, { backgroundColor: '#F8FAFC' }]}>
-                  {isTestingDrawer ? (
-                    <ActivityIndicator size="small" color="#475569" />
-                  ) : (
-                      <DollarSign size={20} color="#475569" />
-                  )}
-                </View>
-                <View style={styles.listRowTextContainer}>
-                  <Text style={styles.listRowTitle}>Test cash drawer</Text>
-                  <Text style={styles.listRowSubtitle}>Send drawer pulse without printing paper</Text>
-                </View>
-                <ChevronRight size={18} color="#94A3B8" />
-              </TouchableOpacity>
-            </View>
 
             {/* Troubleshooting Accordions (Progressive Disclosure) */}
             <View style={styles.faqCard}>

@@ -16,19 +16,22 @@ export class TcpSocketTransport implements PrinterTransport {
     const dataBytes =
       typeof payload === 'string' ? new TextEncoder().encode(payload) : payload;
 
-    // Check if react-native-tcp-socket is available in the current environment
+    // Check if react-native-tcp-socket native module is compiled into this build
     let TcpSocket: any;
+    let hasNativeModule = false;
     try {
+      const { NativeModules } = require('react-native');
+      hasNativeModule = Boolean(NativeModules?.TcpSockets || NativeModules?.TcpSocketModule);
       TcpSocket = require('react-native-tcp-socket').default || require('react-native-tcp-socket');
     } catch {
       TcpSocket = null;
     }
 
-    if (!TcpSocket || typeof TcpSocket.createConnection !== 'function') {
+    if (!TcpSocket || typeof TcpSocket.createConnection !== 'function' || !hasNativeModule) {
       return {
         ok: false,
         kind: 'unreachable',
-        detail: 'Native TCP Socket module (react-native-tcp-socket) is not available in this build.',
+        detail: 'Native TCP Socket module is not compiled into this development build APK yet. Please rebuild with `npx expo run:android` or use Bluetooth.',
       };
     }
 

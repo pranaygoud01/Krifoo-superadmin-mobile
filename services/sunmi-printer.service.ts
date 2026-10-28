@@ -3,7 +3,7 @@ import * as RN from 'react-native';
 import { Order } from '../types';
 import { getActiveReceiptTemplate, ReceiptTemplate, getCachedStoreProfile, formatRestaurantAddress } from './receipt-customization.service';
 import { getOrderScheduleInfo, getSanitizedOrderNotes } from './printer/receipt-document';
-import { getPosPrinterConfig } from './pos-config.service';
+import { getPosPrinterConfig, PosPrinterConfig } from './pos-config.service';
 
 export enum AlignValue {
   LEFT = 0,
@@ -14,7 +14,7 @@ export enum AlignValue {
 let _cachedSunmiModule: any = null;
 let _cachedIsSunmi: boolean | null = null;
 
-function getSunmiModule(): any {
+export function getSunmiModule(): any {
   if (_cachedSunmiModule) return _cachedSunmiModule;
   if (Platform.OS !== 'android') return null;
 
@@ -123,7 +123,8 @@ function formatOrderDate(dateString?: string, scheduledText?: string | null): { 
  */
 export async function printSunmiOrderReceipt(
   order: Partial<Order> & any,
-  customTemplate?: ReceiptTemplate
+  customTemplate?: ReceiptTemplate,
+  configOverride?: Partial<PosPrinterConfig>
 ): Promise<boolean> {
   const sunmi = getSunmiModule();
   if (!sunmi || typeof sunmi.printerInit !== 'function') {
@@ -145,23 +146,32 @@ export async function printSunmiOrderReceipt(
       if (typeof sunmi.getPrinterPaper === 'function') {
         const rawPaper = await sunmi.getPrinterPaper();
         if (typeof rawPaper === 'string') {
-          if (rawPaper.includes('58')) hardwarePaper = '58mm';
-          else if (rawPaper.includes('80')) hardwarePaper = '80mm';
+          if (rawPaper.includes('80')) hardwarePaper = '80mm';
+          else if (rawPaper.includes('58')) hardwarePaper = '58mm';
         }
       }
     } catch {
       // ignore
     }
 
-    // Determine target paper roll width:
-    // 1. If physical hardware is fixed to 58mm (handheld V2, etc.), force 58mm to prevent clipping
-    // 2. If user specifically configured POS printer hardware setting, respect posConfig.paperWidth
-    // 3. Otherwise use the active receipt template layout paper width
-    const targetPaperWidth: '58mm' | '80mm' = hardwarePaper === '58mm'
-      ? '58mm'
-      : posConfig?.paperWidth
-      ? posConfig.paperWidth
-      : template?.layout?.paperWidth || '58mm';
+    // Determine target paper roll width dynamically:
+    // Priority order:
+    // 1. Explicitly passed customTemplate layout paperWidth (e.g. from Template Customizer / test print)
+    // 2. Caller configOverride paperWidth
+    // 3. Active template layout paperWidth
+    // 4. POS printer station setting (posConfig.paperWidth from Printer Settings)
+    // 5. Detected physical hardware paper specification
+    // 6. Default '58mm'
+    const targetPaperWidth: '58mm' | '80mm' =
+      customTemplate?.layout?.paperWidth
+        ? customTemplate.layout.paperWidth
+        : configOverride?.paperWidth
+        ? configOverride.paperWidth
+        : template?.layout?.paperWidth
+        ? template.layout.paperWidth
+        : posConfig?.paperWidth
+        ? posConfig.paperWidth
+        : (hardwarePaper || '58mm');
 
     const is58mm = targetPaperWidth === '58mm';
     const dividerLine = is58mm ? '--------------------------------\n' : '------------------------------------------------\n';

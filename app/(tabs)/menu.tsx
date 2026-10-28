@@ -362,10 +362,224 @@ export default function MenuScreen() {
     setSelectedSort('default');
   };
 
+  const renderMenuItemCard = (item: MenuItem) => {
+    const itemName = item.itemName || item.name || 'Unnamed Item';
+    const itemPrice = item.basePrice ?? item.price ?? 0;
+    const itemCategory = item.categories?.[0]?.categoryName || item.category || 'General';
+    const imageUrl = item.displayImageUrl || item.displayImage;
+    const discount = item.discountPercentage || 0;
+    const discountedPrice = discount > 0 ? itemPrice * (1 - discount / 100) : itemPrice;
+
+    return (
+      <TouchableOpacity
+        key={item._id}
+        style={[styles.menuCard, isTablet && styles.menuCardTablet]}
+        onPress={() => !isSuperAdmin && openEditPage(item)}
+        activeOpacity={0.92}
+      >
+        {/* Top Section */}
+        <View style={styles.menuCardTop}>
+          <View style={styles.thumbWrapper}>
+            {imageUrl ? (
+              <Image source={{ uri: imageUrl }} style={styles.itemThumbnail} resizeMode="cover" />
+            ) : (
+              <View style={styles.placeholderThumbnail}>
+                <Utensils size={24} color={Colors.textSubtle} />
+              </View>
+            )}
+
+            {/* Dietary Corner Indicator */}
+            {item.itemType ? (
+              <View
+                style={[
+                  styles.dietaryCornerDot,
+                  {
+                    borderColor:
+                      item.itemType === 'veg'
+                        ? '#16A34A'
+                        : item.itemType === 'egg'
+                          ? '#D97706'
+                          : '#DC2626',
+                  },
+                ]}
+              >
+                <View
+                  style={[
+                    styles.dietaryInnerDot,
+                    {
+                      backgroundColor:
+                        item.itemType === 'veg'
+                          ? '#16A34A'
+                          : item.itemType === 'egg'
+                            ? '#D97706'
+                            : '#DC2626',
+                    },
+                  ]}
+                />
+              </View>
+            ) : null}
+          </View>
+
+          <View style={styles.cardMainInfo}>
+            <View style={styles.titleRow}>
+              <Text style={styles.itemName} numberOfLines={1}>
+                {itemName}
+              </Text>
+            </View>
+
+            <Text style={styles.itemCategory}>{itemCategory}</Text>
+
+            <View style={styles.priceRow}>
+              <Text style={styles.itemPrice}>£{Number(discountedPrice).toFixed(2)}</Text>
+              {discount > 0 && (
+                <Text style={styles.originalPrice}>£{Number(itemPrice).toFixed(2)}</Text>
+              )}
+              {discount > 0 && (
+                <View style={styles.discountPill}>
+                  <Text style={styles.discountPillText}>{discount}% OFF</Text>
+                </View>
+              )}
+            </View>
+          </View>
+
+          {/* Switch and status indicator */}
+          <TouchableOpacity
+            style={styles.switchWrapper}
+            onPress={(e) => {
+              e.stopPropagation();
+              requestToggleAvailability(item);
+            }}
+            activeOpacity={0.8}
+          >
+            <View
+              style={[
+                styles.statusBadgePill,
+                item.isAvailable ? styles.statusBadgeGreen : styles.statusBadgeGray,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.statusBadgeText,
+                  item.isAvailable ? styles.statusTextGreen : styles.statusTextGray,
+                ]}
+              >
+                {item.isAvailable ? 'ONLINE' : 'OFFLINE'}
+              </Text>
+            </View>
+            <Switch
+              value={!!item.isAvailable}
+              onValueChange={() => requestToggleAvailability(item)}
+              trackColor={{ true: '#10B981', false: '#E2E8F0' }}
+              thumbColor={item.isAvailable ? '#FFFFFF' : '#94A3B8'}
+              style={{ transform: [{ scaleX: 0.8 }, { scaleY: 0.8 }], marginTop: 2 }}
+            />
+          </TouchableOpacity>
+        </View>
+
+        {/* Description snippet */}
+        {item.description ? (
+          <Text style={styles.itemDesc} numberOfLines={2}>
+            {item.description}
+          </Text>
+        ) : null}
+
+        {/* Tags & Badges */}
+        <View style={styles.tagRow}>
+          {item.isBestseller && (
+            <View style={[styles.miniBadge, { backgroundColor: '#FEF3C7', borderColor: '#FDE68A', borderWidth: 1 }]}>
+              <Sparkles size={10} color="#D97706" style={{ marginRight: 3 }} />
+              <Text style={[styles.miniBadgeText, { color: '#B45309' }]}>Bestseller</Text>
+            </View>
+          )}
+          {item.isBuyOneGetOne && (
+            <View style={[styles.miniBadge, { backgroundColor: '#EDE9FE', borderColor: '#DDD6FE', borderWidth: 1 }]}>
+              <Text style={[styles.miniBadgeText, { color: '#6D28D9' }]}>BOGO Free</Text>
+            </View>
+          )}
+          {item.offerTag ? (
+            <View style={[styles.miniBadge, { backgroundColor: '#FEE2E2', borderColor: '#FECACA', borderWidth: 1 }]}>
+              <Tag size={10} color="#DC2626" style={{ marginRight: 3 }} />
+              <Text style={[styles.miniBadgeText, { color: '#B91C1C' }]}>{item.offerTag}</Text>
+            </View>
+          ) : null}
+          {item.tags?.slice(0, 3).map((tag, tIdx) => (
+            <View key={tIdx} style={styles.tagPill}>
+              <Text style={styles.tagPillText}>#{tag}</Text>
+            </View>
+          ))}
+          {item.variantGroups && item.variantGroups.length > 0 && (
+            <View style={[styles.miniBadge, { backgroundColor: '#F1F5F9', borderColor: '#E2E8F0', borderWidth: 1 }]}>
+              <Layers size={9} color="#475569" style={{ marginRight: 3 }} />
+              <Text style={[styles.miniBadgeText, { color: '#475569' }]}>
+                {item.variantGroups.length} Variant{item.variantGroups.length > 1 ? 's' : ''}
+              </Text>
+            </View>
+          )}
+        </View>
+
+        {/* Card Footer Divider & Actions */}
+        <View style={styles.cardFooter}>
+          <View style={styles.channelsInfo}>
+            {item.availableForDelivery !== false && (
+              <View style={styles.channelBadge}>
+                <Truck size={11} color="#475569" />
+                <Text style={styles.channelBadgeText}>Delivery</Text>
+              </View>
+            )}
+            {item.availableForEatIn !== false && (
+              <View style={styles.channelBadge}>
+                <Store size={11} color="#475569" />
+                <Text style={styles.channelBadgeText}>Dine-in</Text>
+              </View>
+            )}
+            {item.availableForCollection !== false && (
+              <View style={styles.channelBadge}>
+                <ShoppingBag size={11} color="#475569" />
+                <Text style={styles.channelBadgeText}>Pickup</Text>
+              </View>
+            )}
+          </View>
+
+          {!isSuperAdmin && (
+            <View style={styles.cardActions}>
+              <TouchableOpacity
+                style={styles.actionBtnEdit}
+                onPress={(e) => {
+                  e.stopPropagation();
+                  openEditPage(item);
+                }}
+                activeOpacity={0.7}
+              >
+                <Edit2 size={13} color="#0F172A" />
+                <Text style={styles.actionBtnEditText}>Edit</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+      </TouchableOpacity>
+    );
+  };
+
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      {/* 1. Page Header */}
-      <View style={styles.pageHeader}>
+      <ScrollView
+        style={styles.mainScroll}
+        contentContainerStyle={styles.mainScrollContent}
+        stickyHeaderIndices={[1]}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor="#FF5C39"
+            colors={['#FF5C39']}
+          />
+        }
+      >
+        {/* CHILD 0: Top Scrollable Section (Header, Notice, KPI Bar) */}
+        <View style={styles.topScrollableSection}>
+          {/* 1. Page Header */}
+          <View style={styles.pageHeader}>
         <View>
           <View style={styles.pageTitleRow}>
             <Text style={styles.pageTitle}>Menu Management</Text>
@@ -406,103 +620,106 @@ export default function MenuScreen() {
         </View>
       )}
 
-      {/* 3. Catalog KPI Quick Pulse Bar */}
-      <View style={styles.kpiContainer}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.kpiScroll}>
-          <TouchableOpacity
-            style={[styles.kpiCard, typeFilter === 'all' && styles.kpiCardActive]}
-            onPress={() => setTypeFilter('all')}
-            activeOpacity={0.8}
-          >
-            <Text style={[styles.kpiNumber, typeFilter === 'all' && styles.kpiNumberActive]}>{stats.total}</Text>
-            <Text style={[styles.kpiLabel, typeFilter === 'all' && styles.kpiLabelActive]}>Total Dishes</Text>
-          </TouchableOpacity>
+          {/* 3. Catalog KPI Quick Pulse Bar */}
+          <View style={styles.kpiContainer}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.kpiScroll}>
+              <TouchableOpacity
+                style={[styles.kpiCard, typeFilter === 'all' && styles.kpiCardActive]}
+                onPress={() => setTypeFilter('all')}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.kpiNumber, typeFilter === 'all' && styles.kpiNumberActive]}>{stats.total}</Text>
+                <Text style={[styles.kpiLabel, typeFilter === 'all' && styles.kpiLabelActive]}>Total Dishes</Text>
+              </TouchableOpacity>
 
-          <TouchableOpacity
-            style={[styles.kpiCard, typeFilter === 'active' && styles.kpiCardActive]}
-            onPress={() => setTypeFilter(typeFilter === 'active' ? 'all' : 'active')}
-            activeOpacity={0.8}
-          >
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-              <View style={[styles.kpiDot, { backgroundColor: '#10B981' }]} />
-              <Text style={[styles.kpiNumber, typeFilter === 'active' && styles.kpiNumberActive]}>{stats.online}</Text>
-            </View>
-            <Text style={[styles.kpiLabel, typeFilter === 'active' && styles.kpiLabelActive]}>Online</Text>
-          </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.kpiCard, typeFilter === 'active' && styles.kpiCardActive]}
+                onPress={() => setTypeFilter(typeFilter === 'active' ? 'all' : 'active')}
+                activeOpacity={0.8}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                  <View style={[styles.kpiDot, { backgroundColor: '#10B981' }]} />
+                  <Text style={[styles.kpiNumber, typeFilter === 'active' && styles.kpiNumberActive]}>{stats.online}</Text>
+                </View>
+                <Text style={[styles.kpiLabel, typeFilter === 'active' && styles.kpiLabelActive]}>Online</Text>
+              </TouchableOpacity>
 
-          <TouchableOpacity
-            style={[styles.kpiCard, typeFilter === 'inactive' && styles.kpiCardActive]}
-            onPress={() => setTypeFilter(typeFilter === 'inactive' ? 'all' : 'inactive')}
-            activeOpacity={0.8}
-          >
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-              <View style={[styles.kpiDot, { backgroundColor: '#94A3B8' }]} />
-              <Text style={[styles.kpiNumber, typeFilter === 'inactive' && styles.kpiNumberActive]}>{stats.offline}</Text>
-            </View>
-            <Text style={[styles.kpiLabel, typeFilter === 'inactive' && styles.kpiLabelActive]}>Offline</Text>
-          </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.kpiCard, typeFilter === 'inactive' && styles.kpiCardActive]}
+                onPress={() => setTypeFilter(typeFilter === 'inactive' ? 'all' : 'inactive')}
+                activeOpacity={0.8}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                  <View style={[styles.kpiDot, { backgroundColor: '#94A3B8' }]} />
+                  <Text style={[styles.kpiNumber, typeFilter === 'inactive' && styles.kpiNumberActive]}>{stats.offline}</Text>
+                </View>
+                <Text style={[styles.kpiLabel, typeFilter === 'inactive' && styles.kpiLabelActive]}>Offline</Text>
+              </TouchableOpacity>
 
-          <TouchableOpacity
-            style={[styles.kpiCard, typeFilter === 'bestseller' && styles.kpiCardActive]}
-            onPress={() => setTypeFilter(typeFilter === 'bestseller' ? 'all' : 'bestseller')}
-            activeOpacity={0.8}
-          >
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-              <Sparkles size={11} color="#D97706" />
-              <Text style={[styles.kpiNumber, typeFilter === 'bestseller' && styles.kpiNumberActive]}>{stats.bestseller}</Text>
-            </View>
-            <Text style={[styles.kpiLabel, typeFilter === 'bestseller' && styles.kpiLabelActive]}>Bestsellers</Text>
-          </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.kpiCard, typeFilter === 'bestseller' && styles.kpiCardActive]}
+                onPress={() => setTypeFilter(typeFilter === 'bestseller' ? 'all' : 'bestseller')}
+                activeOpacity={0.8}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+                  <Sparkles size={11} color="#D97706" />
+                  <Text style={[styles.kpiNumber, typeFilter === 'bestseller' && styles.kpiNumberActive]}>{stats.bestseller}</Text>
+                </View>
+                <Text style={[styles.kpiLabel, typeFilter === 'bestseller' && styles.kpiLabelActive]}>Bestsellers</Text>
+              </TouchableOpacity>
 
-          <TouchableOpacity
-            style={[styles.kpiCard, typeFilter === 'veg' && styles.kpiCardActive]}
-            onPress={() => setTypeFilter(typeFilter === 'veg' ? 'all' : 'veg')}
-            activeOpacity={0.8}
-          >
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-              <View style={[styles.kpiDot, { backgroundColor: '#16A34A' }]} />
-              <Text style={[styles.kpiNumber, typeFilter === 'veg' && styles.kpiNumberActive]}>{stats.veg}</Text>
-            </View>
-            <Text style={[styles.kpiLabel, typeFilter === 'veg' && styles.kpiLabelActive]}>Veg</Text>
-          </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.kpiCard, typeFilter === 'veg' && styles.kpiCardActive]}
+                onPress={() => setTypeFilter(typeFilter === 'veg' ? 'all' : 'veg')}
+                activeOpacity={0.8}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                  <View style={[styles.kpiDot, { backgroundColor: '#16A34A' }]} />
+                  <Text style={[styles.kpiNumber, typeFilter === 'veg' && styles.kpiNumberActive]}>{stats.veg}</Text>
+                </View>
+                <Text style={[styles.kpiLabel, typeFilter === 'veg' && styles.kpiLabelActive]}>Veg</Text>
+              </TouchableOpacity>
 
-          <TouchableOpacity
-            style={[styles.kpiCard, typeFilter === 'non_veg' && styles.kpiCardActive]}
-            onPress={() => setTypeFilter(typeFilter === 'non_veg' ? 'all' : 'non_veg')}
-            activeOpacity={0.8}
-          >
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-              <View style={[styles.kpiDot, { backgroundColor: '#DC2626' }]} />
-              <Text style={[styles.kpiNumber, typeFilter === 'non_veg' && styles.kpiNumberActive]}>{stats.nonVeg}</Text>
-            </View>
-            <Text style={[styles.kpiLabel, typeFilter === 'non_veg' && styles.kpiLabelActive]}>Non-Veg</Text>
-          </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.kpiCard, typeFilter === 'non_veg' && styles.kpiCardActive]}
+                onPress={() => setTypeFilter(typeFilter === 'non_veg' ? 'all' : 'non_veg')}
+                activeOpacity={0.8}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                  <View style={[styles.kpiDot, { backgroundColor: '#DC2626' }]} />
+                  <Text style={[styles.kpiNumber, typeFilter === 'non_veg' && styles.kpiNumberActive]}>{stats.nonVeg}</Text>
+                </View>
+                <Text style={[styles.kpiLabel, typeFilter === 'non_veg' && styles.kpiLabelActive]}>Non-Veg</Text>
+              </TouchableOpacity>
 
-          <TouchableOpacity
-            style={[styles.kpiCard, typeFilter === 'discount' && styles.kpiCardActive]}
-            onPress={() => setTypeFilter(typeFilter === 'discount' ? 'all' : 'discount')}
-            activeOpacity={0.8}
-          >
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-              <Percent size={11} color="#DC2626" />
-              <Text style={[styles.kpiNumber, typeFilter === 'discount' && styles.kpiNumberActive]}>{stats.discount}</Text>
-            </View>
-            <Text style={[styles.kpiLabel, typeFilter === 'discount' && styles.kpiLabelActive]}>On Discount</Text>
-          </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.kpiCard, typeFilter === 'discount' && styles.kpiCardActive]}
+                onPress={() => setTypeFilter(typeFilter === 'discount' ? 'all' : 'discount')}
+                activeOpacity={0.8}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+                  <Percent size={11} color="#DC2626" />
+                  <Text style={[styles.kpiNumber, typeFilter === 'discount' && styles.kpiNumberActive]}>{stats.discount}</Text>
+                </View>
+                <Text style={[styles.kpiLabel, typeFilter === 'discount' && styles.kpiLabelActive]}>On Discount</Text>
+              </TouchableOpacity>
 
-          <TouchableOpacity
-            style={[styles.kpiCard, typeFilter === 'bogo' && styles.kpiCardActive]}
-            onPress={() => setTypeFilter(typeFilter === 'bogo' ? 'all' : 'bogo')}
-            activeOpacity={0.8}
-          >
-            <Text style={[styles.kpiNumber, typeFilter === 'bogo' && styles.kpiNumberActive]}>{stats.bogo}</Text>
-            <Text style={[styles.kpiLabel, typeFilter === 'bogo' && styles.kpiLabelActive]}>BOGO Free</Text>
-          </TouchableOpacity>
-        </ScrollView>
-      </View>
+              <TouchableOpacity
+                style={[styles.kpiCard, typeFilter === 'bogo' && styles.kpiCardActive]}
+                onPress={() => setTypeFilter(typeFilter === 'bogo' ? 'all' : 'bogo')}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.kpiNumber, typeFilter === 'bogo' && styles.kpiNumberActive]}>{stats.bogo}</Text>
+                <Text style={[styles.kpiLabel, typeFilter === 'bogo' && styles.kpiLabelActive]}>BOGO Free</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
 
-      {/* 4. Search and Filter Modal Button Row */}
-      <View style={styles.controlsRow}>
+        {/* CHILD 1: Sticky Search & Filters Section */}
+        <View style={styles.stickyHeaderSection}>
+          {/* 4. Search and Filter Modal Button Row */}
+          <View style={styles.controlsRow}>
         <View style={styles.searchBox}>
           <Search size={15} color={Colors.textSubtle} />
           <TextInput
@@ -616,9 +833,11 @@ export default function MenuScreen() {
           </TouchableOpacity>
         </View>
       )}
+        </View>
 
-      {/* 7. Menu Item Feed */}
-      {loading ? (
+        {/* CHILD 2: Menu Item Feed / Loading / Error / Empty States */}
+        <View style={styles.feedContainer}>
+          {loading ? (
         <ScrollView contentContainerStyle={styles.tabItemsList} showsVerticalScrollIndicator={false}>
           {[1, 2, 3, 4].map((i) => (
             <View key={i} style={[styles.menuCard, { opacity: 0.95 }]}>
@@ -668,219 +887,12 @@ export default function MenuScreen() {
             )}
         </View>
       ) : (
-        <FlatList
-          key={isTablet ? 'menu-tablet-grid' : 'menu-phone-list'}
-          numColumns={isTablet ? 2 : 1}
-          data={filteredItems}
-          keyExtractor={(item) => item._id}
-          contentContainerStyle={[styles.tabItemsList, isTablet && styles.tabItemsListTablet]}
-          columnWrapperStyle={isTablet ? styles.menuColumnWrapper : undefined}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={onRefresh}
-              tintColor="#FF5C39"
-              colors={['#FF5C39']}
-            />
-          }
-          renderItem={({ item }) => {
-            const itemName = item.itemName || item.name || 'Unnamed Item';
-            const itemPrice = item.basePrice ?? item.price ?? 0;
-            const itemCategory = item.categories?.[0]?.categoryName || item.category || 'General';
-            const imageUrl = item.displayImageUrl || item.displayImage;
-            const discount = item.discountPercentage || 0;
-            const discountedPrice = discount > 0 ? itemPrice * (1 - discount / 100) : itemPrice;
-
-            return (
-              <TouchableOpacity
-                style={[styles.menuCard, isTablet && styles.menuCardTablet]}
-                onPress={() => !isSuperAdmin && openEditPage(item)}
-                activeOpacity={0.92}
-              >
-                {/* Top Section */}
-                <View style={styles.menuCardTop}>
-                  <View style={styles.thumbWrapper}>
-                    {imageUrl ? (
-                      <Image source={{ uri: imageUrl }} style={styles.itemThumbnail} resizeMode="cover" />
-                    ) : (
-                      <View style={styles.placeholderThumbnail}>
-                        <Utensils size={24} color={Colors.textSubtle} />
-                      </View>
-                    )}
-
-                    {/* Dietary Corner Indicator */}
-                    {item.itemType ? (
-                      <View
-                        style={[
-                          styles.dietaryCornerDot,
-                          {
-                            borderColor:
-                              item.itemType === 'veg'
-                                ? '#16A34A'
-                                : item.itemType === 'egg'
-                                  ? '#D97706'
-                                  : '#DC2626',
-                          },
-                        ]}
-                      >
-                        <View
-                          style={[
-                            styles.dietaryInnerDot,
-                            {
-                              backgroundColor:
-                                item.itemType === 'veg'
-                                  ? '#16A34A'
-                                  : item.itemType === 'egg'
-                                    ? '#D97706'
-                                    : '#DC2626',
-                            },
-                          ]}
-                        />
-                      </View>
-                    ) : null}
-                  </View>
-
-                  <View style={styles.cardMainInfo}>
-                    <View style={styles.titleRow}>
-                      <Text style={styles.itemName} numberOfLines={1}>
-                        {itemName}
-                      </Text>
-                    </View>
-
-                    <Text style={styles.itemCategory}>{itemCategory}</Text>
-
-                    <View style={styles.priceRow}>
-                      <Text style={styles.itemPrice}>£{Number(discountedPrice).toFixed(2)}</Text>
-                      {discount > 0 && (
-                        <Text style={styles.originalPrice}>£{Number(itemPrice).toFixed(2)}</Text>
-                      )}
-                      {discount > 0 && (
-                        <View style={styles.discountPill}>
-                          <Text style={styles.discountPillText}>{discount}% OFF</Text>
-                        </View>
-                      )}
-                    </View>
-                  </View>
-
-                  {/* Switch and status indicator */}
-                  <TouchableOpacity
-                    style={styles.switchWrapper}
-                    onPress={(e) => {
-                      e.stopPropagation();
-                      requestToggleAvailability(item);
-                    }}
-                    activeOpacity={0.8}
-                  >
-                    <View
-                      style={[
-                        styles.statusBadgePill,
-                        item.isAvailable ? styles.statusBadgeGreen : styles.statusBadgeGray,
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.statusBadgeText,
-                          item.isAvailable ? styles.statusTextGreen : styles.statusTextGray,
-                        ]}
-                      >
-                        {item.isAvailable ? 'ONLINE' : 'OFFLINE'}
-                      </Text>
-                    </View>
-                    <Switch
-                      value={!!item.isAvailable}
-                      onValueChange={() => requestToggleAvailability(item)}
-                      trackColor={{ true: '#10B981', false: '#E2E8F0' }}
-                      thumbColor={item.isAvailable ? '#FFFFFF' : '#94A3B8'}
-                      style={{ transform: [{ scaleX: 0.8 }, { scaleY: 0.8 }], marginTop: 2 }}
-                    />
-                  </TouchableOpacity>
-                </View>
-
-                {/* Description snippet */}
-                {item.description ? (
-                  <Text style={styles.itemDesc} numberOfLines={2}>
-                    {item.description}
-                  </Text>
-                ) : null}
-
-                {/* Tags & Badges */}
-                <View style={styles.tagRow}>
-                  {item.isBestseller && (
-                    <View style={[styles.miniBadge, { backgroundColor: '#FEF3C7', borderColor: '#FDE68A', borderWidth: 1 }]}>
-                      <Sparkles size={10} color="#D97706" style={{ marginRight: 3 }} />
-                      <Text style={[styles.miniBadgeText, { color: '#B45309' }]}>Bestseller</Text>
-                    </View>
-                  )}
-                  {item.isBuyOneGetOne && (
-                    <View style={[styles.miniBadge, { backgroundColor: '#EDE9FE', borderColor: '#DDD6FE', borderWidth: 1 }]}>
-                      <Text style={[styles.miniBadgeText, { color: '#6D28D9' }]}>BOGO Free</Text>
-                    </View>
-                  )}
-                  {item.offerTag ? (
-                    <View style={[styles.miniBadge, { backgroundColor: '#FEE2E2', borderColor: '#FECACA', borderWidth: 1 }]}>
-                      <Tag size={10} color="#DC2626" style={{ marginRight: 3 }} />
-                      <Text style={[styles.miniBadgeText, { color: '#B91C1C' }]}>{item.offerTag}</Text>
-                    </View>
-                  ) : null}
-                  {item.tags?.slice(0, 3).map((tag, tIdx) => (
-                    <View key={tIdx} style={styles.tagPill}>
-                      <Text style={styles.tagPillText}>#{tag}</Text>
-                    </View>
-                  ))}
-                  {item.variantGroups && item.variantGroups.length > 0 && (
-                    <View style={[styles.miniBadge, { backgroundColor: '#F1F5F9', borderColor: '#E2E8F0', borderWidth: 1 }]}>
-                      <Layers size={9} color="#475569" style={{ marginRight: 3 }} />
-                      <Text style={[styles.miniBadgeText, { color: '#475569' }]}>
-                        {item.variantGroups.length} Variant{item.variantGroups.length > 1 ? 's' : ''}
-                      </Text>
-                    </View>
-                  )}
-                </View>
-
-                {/* Card Footer Divider & Actions */}
-                <View style={styles.cardFooter}>
-                  <View style={styles.channelsInfo}>
-                    {item.availableForDelivery !== false && (
-                      <View style={styles.channelBadge}>
-                        <Truck size={11} color="#475569" />
-                        <Text style={styles.channelBadgeText}>Delivery</Text>
-                      </View>
-                    )}
-                    {item.availableForEatIn !== false && (
-                      <View style={styles.channelBadge}>
-                        <Store size={11} color="#475569" />
-                        <Text style={styles.channelBadgeText}>Dine-in</Text>
-                      </View>
-                    )}
-                    {item.availableForCollection !== false && (
-                      <View style={styles.channelBadge}>
-                        <ShoppingBag size={11} color="#475569" />
-                        <Text style={styles.channelBadgeText}>Pickup</Text>
-                      </View>
-                    )}
-                  </View>
-
-                  {!isSuperAdmin && (
-                    <View style={styles.cardActions}>
-                      <TouchableOpacity
-                        style={styles.actionBtnEdit}
-                        onPress={(e) => {
-                          e.stopPropagation();
-                          openEditPage(item);
-                        }}
-                        activeOpacity={0.7}
-                      >
-                        <Edit2 size={13} color="#0F172A" />
-                        <Text style={styles.actionBtnEditText}>Edit</Text>
-                      </TouchableOpacity>
-                    </View>
-                  )}
-                </View>
-              </TouchableOpacity>
-            );
-          }}
-        />
+        <View style={[styles.tabItemsList, isTablet && styles.tabItemsListTabletGrid]}>
+          {filteredItems.map(renderMenuItemCard)}
+        </View>
       )}
+    </View>
+  </ScrollView>
 
       {/* Floating Add Item FAB */}
       {!isSuperAdmin && (
@@ -1472,6 +1484,29 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#FF5C39',
   },
+  mainScroll: {
+    flex: 1,
+    backgroundColor: '#F8F9FA',
+  },
+  mainScrollContent: {
+    flexGrow: 1,
+    paddingBottom: 30,
+  },
+  topScrollableSection: {
+    backgroundColor: '#FFFFFF',
+  },
+  stickyHeaderSection: {
+    backgroundColor: '#FFFFFF',
+    zIndex: 100,
+    elevation: 4,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 3,
+  },
+  feedContainer: {
+    flex: 1,
+  },
   tabItemsList: {
     padding: 16,
     gap: 12,
@@ -1482,6 +1517,15 @@ const styles = StyleSheet.create({
     maxWidth: 1200,
     width: '100%',
     alignSelf: 'center',
+    gap: 14,
+  },
+  tabItemsListTabletGrid: {
+    paddingHorizontal: 20,
+    maxWidth: 1200,
+    width: '100%',
+    alignSelf: 'center',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 14,
   },
   menuColumnWrapper: {
@@ -1534,7 +1578,7 @@ const styles = StyleSheet.create({
     elevation: 1.5,
   },
   menuCardTablet: {
-    flex: 1,
+    width: '48.8%',
     marginBottom: 0,
   },
   menuCardTop: {

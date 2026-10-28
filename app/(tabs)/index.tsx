@@ -638,9 +638,7 @@ export default function DashboardScreen() {
                     )}
                   </View>
                   <Text style={styles.quickDockLabel} numberOfLines={1}>Riders</Text>
-                  {/* {deliveryPartnersCount > 0 && (
-                    <Text style={styles.quickDockSubCount}>{deliveryPartnersCount} Partners</Text>
-                  )} */}
+
                 </TouchableOpacity>
 
                 <TouchableOpacity
@@ -677,20 +675,7 @@ export default function DashboardScreen() {
                   <Text style={[styles.pipelineCount, { color: '#1E40AF' }]}>{liveInTransitCount}</Text>
                   <Text style={styles.pipelineLabel}>In Transit</Text>
                 </View>
-                {/* <TouchableOpacity
-                  style={[styles.pipelineChip, { backgroundColor: '#F5F3FF', borderColor: '#DDD6FE' }]}
-                  onPress={() =>
-                    router.push({
-                      pathname: '/(tabs)/users',
-                      params: { role: 'delivery_partner' },
-                    })
-                  }
-                  activeOpacity={0.8}
-                >
-                  <Bike size={15} color="#7C3AED" />
-                  <Text style={[styles.pipelineCount, { color: '#6D28D9' }]}>{deliveryPartnersCount}</Text>
-                  <Text style={styles.pipelineLabel}>Riders</Text>
-                </TouchableOpacity> */}
+
                 <View style={[styles.pipelineChip, { backgroundColor: '#ECFDF5', borderColor: '#A7F3D0' }]}>
                   <Check size={15} color="#059669" />
                   <Text style={[styles.pipelineCount, { color: '#065F46' }]}>{liveDeliveredTodayCount}</Text>
@@ -1183,7 +1168,7 @@ export default function DashboardScreen() {
               </View>
             ) : (
               <View style={[styles.recentOrdersList, isTablet && styles.recentOrdersListTablet]}>
-                  {orders.slice(0, 5).map((order) => {
+                      {orders.slice(0, 4).map((order) => {
                     const restName =
                       typeof order.restaurantId === 'object'
                         ? order.restaurantId?.restaurantName || 'Restaurant'

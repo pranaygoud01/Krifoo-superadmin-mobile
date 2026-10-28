@@ -162,12 +162,13 @@ export function profileFromConfig(config: PosPrinterConfig): PrinterProfile | nu
       if (!ip) {
         return null; // Missing required IP
       }
-      // Epson or generic port 8008/80 uses ePOS XML HTTP service
-      if (config.brand === 'epson' || config.port === 8008 || config.port === 80) {
+      // Port 8008 or 80 is reserved exclusively for Epson ePOS HTTP XML service.
+      // Port 9100 (standard raw socket) is used for ESC/POS binary printing on Bonkaso, Xprinter, Star, and Epson RAW.
+      if (config.port === 8008 || config.port === 80) {
         return {
           connectionType: 'network_epos',
           ipAddress: ip,
-          port: config.port || 8008,
+          port: config.port,
           deviceName,
         };
       }

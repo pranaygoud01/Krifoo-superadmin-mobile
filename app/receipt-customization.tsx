@@ -2362,16 +2362,6 @@ export default function ReceiptCustomizationScreen() {
             </View>
           </View>
 
-          <View style={styles.topHeaderRight}>
-            <TouchableOpacity
-              onPress={() => setShowResetConfirm(true)}
-              style={styles.resetHeaderBtn}
-              activeOpacity={0.7}
-            >
-              <RotateCcw size={13} color="#475569" />
-              <Text style={styles.resetHeaderBtnText}>Reset to Default</Text>
-            </TouchableOpacity>
-          </View>
         </View>
 
         <ScrollView
@@ -2404,14 +2394,7 @@ export default function ReceiptCustomizationScreen() {
                     Primary layout for automatic & manual receipt prints
                   </Text>
                 </View>
-                <View style={styles.activeSwitchWrap}>
-                  <Switch
-                    value={true}
-                    disabled={true}
-                    trackColor={{ false: '#CBD5E1', true: '#A7F3D0' }}
-                    thumbColor="#10B981"
-                  />
-                </View>
+
               </View>
 
               {/* Hero Metadata Tags Row */}
@@ -2532,25 +2515,12 @@ export default function ReceiptCustomizationScreen() {
                       activeOpacity={0.8}
                     >
                       <Sliders size={13} color="#FFFFFF" />
-                      <Text style={styles.cardCustomizePrimaryText}>Customize Layout</Text>
+                      <Text style={styles.cardCustomizePrimaryText}>Customize </Text>
                       <ChevronRight size={13} color="#FFFFFF" />
                     </TouchableOpacity>
 
                     {/* Secondary Actions Group */}
                     <View style={styles.cardSecondaryActions}>
-                      {/* Test Print */}
-                      <TouchableOpacity
-                        style={styles.cardIconBtn}
-                        onPress={(e) => handleCardTestPrint(tpl, e)}
-                        disabled={isPrintingThis}
-                        activeOpacity={0.7}
-                      >
-                        {isPrintingThis ? (
-                          <ActivityIndicator size="small" color="#0F172A" />
-                        ) : (
-                          <Printer size={15} color="#334155" />
-                        )}
-                      </TouchableOpacity>
 
                       {/* Set Active Switch / Button */}
                       <TouchableOpacity
@@ -4200,7 +4170,7 @@ const styles = StyleSheet.create({
   cardSecondaryActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 4,
     marginLeft: 'auto',
   },
   cardIconBtn: {

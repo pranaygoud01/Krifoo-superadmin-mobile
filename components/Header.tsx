@@ -1,13 +1,15 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert, Image } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Alert, Image, DeviceEventEmitter } from 'react-native';
 import { useRouter, useSegments } from 'expo-router';
 import { ArrowLeft, Bell, Settings, User } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Colors } from '../constants/colors';
 import { orderService } from '../services/order.service';
 import { restaurantService } from '../services/restaurant.service';
+import { restaurantOwnerService } from '../services/restaurant-owner.service';
 import { useAuth } from '../context/AuthContext';
 import { useFontSize } from '../context/FontSizeContext';
+import { computeUnreadCount, NOTIFICATIONS_BADGE_EVENT } from '../services/notification-tracker.service';
 
 interface HeaderProps {
   title: string;
@@ -15,6 +17,7 @@ interface HeaderProps {
   rightElement?: React.ReactNode;
   rightAction?: React.ReactNode;
   showBackButton?: boolean;
+  restaurantLogo?: string;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -23,12 +26,80 @@ export const Header: React.FC<HeaderProps> = ({
   rightElement,
   rightAction,
   showBackButton,
+  restaurantLogo: propRestaurantLogo,
 }) => {
   const router = useRouter();
   const segments = useSegments();
   const { user } = useAuth();
   const isSuperAdmin = user?.userType === 'super_admin';
   const [unreadCount, setUnreadCount] = React.useState<number>(0);
+
+  // Resolve restaurant logo from user object or props
+  const extractUserLogo = React.useCallback((): string | null => {
+    if (isSuperAdmin) return null;
+    if (propRestaurantLogo) return propRestaurantLogo;
+    if (user?.logoUrl) return user.logoUrl;
+    if (user?.restaurantLogo) return user.restaurantLogo;
+    if (user?.imageUrl) return user.imageUrl;
+    if (user?.logo) return user.logo;
+    if (typeof user?.restaurantId === 'object' && user?.restaurantId) {
+      const rest = user.restaurantId;
+      if (rest.logoUrl) return rest.logoUrl;
+      if (rest.imageUrl) return rest.imageUrl;
+      if (rest.logo) return rest.logo;
+      if (rest.externalWebsiteSettings?.logoUrl) return rest.externalWebsiteSettings.logoUrl;
+    }
+    if (user?.externalWebsiteSettings?.logoUrl) return user.externalWebsiteSettings.logoUrl;
+    if (user?.restaurant?.logoUrl) return user.restaurant.logoUrl;
+    if (user?.restaurant?.imageUrl) return user.restaurant.imageUrl;
+    return null;
+  }, [isSuperAdmin, propRestaurantLogo, user]);
+
+  const [storeLogoUrl, setStoreLogoUrl] = React.useState<string | null>(extractUserLogo());
+  const [imageError, setImageError] = React.useState<boolean>(false);
+
+  // Fetch store logo if not present on user object
+  React.useEffect(() => {
+    if (isSuperAdmin) {
+      setStoreLogoUrl(null);
+      setImageError(false);
+      return;
+    }
+
+    const immediateLogo = extractUserLogo();
+    if (immediateLogo) {
+      setStoreLogoUrl(immediateLogo);
+      setImageError(false);
+      return;
+    }
+
+    let isMounted = true;
+    restaurantOwnerService
+      .getRestaurantProfile()
+      .then((res) => {
+        if (!isMounted) return;
+        if (res.success && res.data) {
+          const r = res.data;
+          const remoteLogo =
+            r.logoUrl ||
+            r.externalWebsiteSettings?.logoUrl ||
+            r.imageUrl ||
+            r.logo ||
+            r.image;
+          if (remoteLogo) {
+            setStoreLogoUrl(remoteLogo);
+            setImageError(false);
+          }
+        }
+      })
+      .catch(() => {
+        // Silently fall back to default app logo
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [isSuperAdmin, extractUserLogo]);
 
   const getRestaurantName = () => {
     if (user?.restaurantName) return user.restaurantName;
@@ -44,7 +115,7 @@ export const Header: React.FC<HeaderProps> = ({
     return undefined;
   };
 
-  // Fetch pending applications and active orders to compute live badge count
+  // Fetch pending applications and active orders to compute live badge count, respecting seen/read state
   React.useEffect(() => {
     let isMounted = true;
     const fetchBadgeCount = async () => {
@@ -54,13 +125,10 @@ export const Header: React.FC<HeaderProps> = ({
           restaurantService.getRestaurants({ limit: 1000 }).catch(() => ({ success: false, data: [] })),
         ]);
 
-        let count = 0;
-        if (restRes.success && restRes.data) {
-          count += restRes.data.filter((r) => r.verificationStatus === 'pending').length;
-        }
-        if (orderRes.success && orderRes.data) {
-          count += orderRes.data.filter((o) => o.status === 'placed' || o.status === 'preparing').length;
-        }
+        const count = await computeUnreadCount(
+          orderRes.success && Array.isArray(orderRes.data) ? orderRes.data : [],
+          restRes.success && Array.isArray(restRes.data) ? restRes.data : []
+        );
 
         if (isMounted) {
           setUnreadCount(count);
@@ -71,8 +139,19 @@ export const Header: React.FC<HeaderProps> = ({
     };
 
     fetchBadgeCount();
+
+    // Listen for live badge updates when notifications are seen or marked read
+    const badgeSub = DeviceEventEmitter.addListener(NOTIFICATIONS_BADGE_EVENT, (customCount?: number) => {
+      if (typeof customCount === 'number') {
+        if (isMounted) setUnreadCount(customCount);
+      } else {
+        fetchBadgeCount();
+      }
+    });
+
     return () => {
       isMounted = false;
+      badgeSub.remove();
     };
   }, []);
 
@@ -129,11 +208,20 @@ export const Header: React.FC<HeaderProps> = ({
           <View style={styles.titleContainer}>
             {title === 'Krifoo Admin' ? (
               <View style={styles.profileSection}>
-                <Image
-                  source={require('../assets/logo.png')}
-                  style={styles.headerLogo}
-                  resizeMode="contain"
-                />
+                {!isSuperAdmin && storeLogoUrl && !imageError ? (
+                  <Image
+                    source={{ uri: storeLogoUrl }}
+                    style={[styles.headerLogo, styles.headerRestaurantLogo]}
+                    resizeMode="cover"
+                    onError={() => setImageError(true)}
+                  />
+                ) : (
+                  <Image
+                    source={require('../assets/logo.png')}
+                    style={styles.headerLogo}
+                    resizeMode="contain"
+                  />
+                )}
                 <View style={styles.greetingTextContainer}>
                   <Text style={styles.greetingText}>
                     {isSuperAdmin
@@ -269,6 +357,12 @@ const styles = StyleSheet.create({
   headerLogo: {
     width: 36,
     height: 36,
+  },
+  headerRestaurantLogo: {
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: Colors.cardBorder,
+    backgroundColor: Colors.cardSurface,
   },
   greetingTextContainer: {
     justifyContent: 'center',
