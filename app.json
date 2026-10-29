@@ -14,6 +14,9 @@
       "resizeMode": "contain",
       "backgroundColor": "#FF5C39"
     },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.krifoo.admin",
@@ -21,7 +24,10 @@
         "ITSAppUsesNonExemptEncryption": false,
         "NSBluetoothAlwaysUsageDescription": "This app requires Bluetooth access to discover and print receipt orders on thermal receipt printers.",
         "NSBluetoothPeripheralUsageDescription": "This app requires Bluetooth access to connect to thermal receipt printers.",
-        "NSLocalNetworkUsageDescription": "This app requires Local Network access to discover and print receipts on network printers (Epson TM-m30III)."
+        "NSLocalNetworkUsageDescription": "This app requires Local Network access to discover and print receipts on network printers (Epson TM-m30III).",
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true
+        }
       }
     },
     "android": {
@@ -86,7 +92,7 @@
             "minSdkVersion": 24,
             "usesCleartextTraffic": true,
             "enableProguardInReleaseBuilds": true,
-            "extraProguardRules": "-keep class com.swmansion.reanimated.** { *; }\n-keep class com.facebook.react.turbomodule.** { *; }\n-keep class com.swmansion.rnscreens.** { *; }\n-keep class com.swmansion.gesturehandler.** { *; }\n-keep class com.swmansion.worklets.** { *; }\n-keep class com.sunmi.** { *; }\n-dontwarn com.sunmi.**\n-keep class woyou.aidlservice.jiuiv5.** { *; }\n-dontwarn woyou.aidlservice.jiuiv5.**\n-keep class com.un1v3r.** { *; }\n-dontwarn com.un1v3r.**\n-keep class com.tencent.mmkv.** { *; }\n-dontwarn com.tencent.mmkv.**\n-keep class com.horcrux.svg.** { *; }\n-keep class expo.modules.** { *; }\n-keep class com.google.firebase.** { *; }"
+            "extraProguardRules": "-keep class com.swmansion.reanimated.** { *; }\n-keep class com.facebook.react.turbomodule.** { *; }\n-keep class com.swmansion.rnscreens.** { *; }\n-keep class com.swmansion.gesturehandler.** { *; }\n-keep class com.swmansion.worklets.** { *; }\n-keep class com.sunmi.** { *; }\n-dontwarn com.sunmi.**\n-keep class woyou.aidlservice.jiuiv5.** { *; }\n-dontwarn woyou.aidlservice.jiuiv5.**\n-keep class com.un1v3r.** { *; }\n-dontwarn com.un1v3r.**\n-keep class com.tencent.mmkv.** { *; }\n-dontwarn com.tencent.mmkv.**\n-keep class com.horcrux.svg.** { *; }\n-keep class expo.modules.** { *; }\n-keep class com.google.firebase.** { *; }\n-keep class com.facebook.fresco.** { *; }\n-keep class com.facebook.imagepipeline.** { *; }\n-keep class com.facebook.drawee.** { *; }\n-keep class com.facebook.react.views.image.** { *; }\n-dontwarn com.facebook.imagepipeline.**\n-dontwarn com.facebook.drawee.**\n-keep class com.bumptech.glide.** { *; }\n-dontwarn com.bumptech.glide.**\n-keep class expo.modules.image.** { *; }"
           },
           "ios": {
             "deploymentTarget": "16.4"
