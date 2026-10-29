@@ -614,7 +614,21 @@ export default function PrinterSettingsScreen() {
 
   return (
     <View style={styles.container}>
-      <Header title="Receipt Printing" showBackButton={true} />
+      <Header
+        title="Receipt Printing"
+        showBackButton={true}
+        rightAction={
+          <TouchableOpacity
+            style={styles.guideHeaderBtn}
+            onPress={() => router.push('/printer-guide')}
+            activeOpacity={0.75}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <HelpCircle size={24} color="#000000ff" />
+
+          </TouchableOpacity>
+        }
+      />
 
       <ScrollView
         contentContainerStyle={[
@@ -2545,5 +2559,18 @@ const styles = StyleSheet.create({
 
   btnDisabled: {
     opacity: 0.6,
+  },
+  guideHeaderBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    marginRight: 6,
+  },
+  guideHeaderBtnText: {
+    fontSize: 12,
+    fontFamily: 'InterTight_600SemiBold',
+    color: '#059669',
+    marginLeft: 4,
   },
 });

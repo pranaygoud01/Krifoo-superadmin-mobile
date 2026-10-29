@@ -43,7 +43,9 @@ import {
   ShieldAlert,
   ShieldCheck,
   AlertCircle,
+  HelpCircle,
 } from 'lucide-react-native';
+import { useRouter } from 'expo-router';
 import {
   discoverEpsonPrinters,
   testEpsonPrinter,
@@ -76,6 +78,7 @@ export function PrinterSetupWizardModal({
   currentConfig,
   onComplete,
 }: PrinterSetupWizardModalProps) {
+  const router = useRouter();
   const insets = useSafeAreaInsets();
   // Safe top padding ensuring status bar clearance on all iOS and Android devices
   const topInset = Math.max(
@@ -959,6 +962,19 @@ export function PrinterSetupWizardModal({
                 Step {step} of 3: {step === 1 ? 'Select Type' : step === 2 ? 'Find & Connect' : 'Preferences & Test'}
               </Text>
             </View>
+
+            <TouchableOpacity
+              onPress={() => {
+                onClose();
+                router.push('/printer-guide');
+              }}
+              style={styles.navHelpBtn}
+              activeOpacity={0.7}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <HelpCircle size={24} color="#000000ff" />
+
+            </TouchableOpacity>
 
             <TouchableOpacity onPress={onClose} style={styles.navCloseBtn} activeOpacity={0.7}>
               <X size={20} color="#111827" />
@@ -2072,6 +2088,17 @@ const styles = StyleSheet.create({
     backgroundColor: '#F3F4F6',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  navHelpBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginRight: 10,
+  },
+  navHelpBtnText: {
+    fontSize: 12,
+    fontFamily: 'InterTight_600SemiBold',
+    color: '#059669',
+    marginLeft: 4,
   },
   progressStep: {
     flex: 1,

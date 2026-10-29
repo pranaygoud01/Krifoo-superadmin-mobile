@@ -125,6 +125,7 @@ export default function RootLayout() {
                 <Stack.Screen name="sound-settings" options={{ animation: 'slide_from_right' }} />
                 <Stack.Screen name="payout-settings" options={{ animation: 'slide_from_right' }} />
                 <Stack.Screen name="printer-settings" options={{ animation: 'slide_from_right' }} />
+                <Stack.Screen name="printer-guide" options={{ animation: 'slide_from_right' }} />
                 <Stack.Screen name="receipt-customization" options={{ animation: 'slide_from_right' }} />
                 <Stack.Screen name="external-website-settings" options={{ animation: 'slide_from_right' }} />
                 <Stack.Screen name="categories" options={{ animation: 'slide_from_right' }} />
