@@ -119,7 +119,7 @@ export function classifyRawByteResult(result: TransportResult): PrintResult {
     return {
       success: false,
       reason: 'timeout',
-      detail: result.detail || 'Connection to printer timed out.',
+      detail: result.detail || 'Connection to printer timed out. Check that the printer is powered ON, on the same Wi-Fi network, and mobile data is disabled.',
     };
   }
 
@@ -134,6 +134,6 @@ export function classifyRawByteResult(result: TransportResult): PrintResult {
   return {
     success: false,
     reason: 'unreachable',
-    detail: result.detail || 'Failed to transmit payload to printer.',
+    detail: result.detail || 'Could not communicate with printer. Ensure it is powered ON, paper is loaded, and network cable is connected.',
   };
 }

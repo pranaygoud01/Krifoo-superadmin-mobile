@@ -604,12 +604,50 @@ export function PrinterSetupWizardModal({
     const ip = ipInput.trim();
     if (!ip) return;
     const port = parseInt(portInput, 10) || 9100;
-    setSelectedDevice({
+    const dev = {
       id: `net_${ip}_${port}`,
       name: `Network Printer (${ip}:${port})`,
       ipAddress: ip,
-    });
+    };
+    setSelectedDevice(dev);
+    setConnectionStatus(null);
     setStep(3);
+
+    // Verify Network connection asynchronously in background of Step 3
+    setIsVerifyingConnection(true);
+    const verifyConfig: PosPrinterConfig = {
+      ...currentConfig,
+      brand: 'epson',
+      connectionType: 'network',
+      ipAddress: ip,
+      port,
+      paperWidth,
+      autoPrint,
+      copies,
+      autoCut,
+      openCashDrawer,
+    };
+
+    verifyPrinterConnection(verifyConfig)
+      .then((check) => {
+        setConnectionStatus({
+          checked: true,
+          success: check.success,
+          message: check.message,
+          rawError: (check as any).rawError || check.message,
+        });
+      })
+      .catch((err: any) => {
+        setConnectionStatus({
+          checked: true,
+          success: false,
+          message: err?.message || 'Network connection check failed',
+          rawError: err?.message,
+        });
+      })
+      .finally(() => {
+        setIsVerifyingConnection(false);
+      });
   };
 
   // Step 3: Select Receipt Template from Dropdown
@@ -641,14 +679,16 @@ export function PrinterSetupWizardModal({
     try {
       const targetVal = selectedDevice?.target || manualBtInput.trim();
       const macVal = selectedDevice?.macAddress || (targetVal.startsWith('BT:') ? '' : targetVal);
+      const ipVal = selectedDevice?.ipAddress || ipInput.trim();
+      const portVal = parseInt(portInput, 10) || 9100;
       const verifyConfig: PosPrinterConfig = {
         ...currentConfig,
         brand: selectedDevice?.name?.toLowerCase().includes('star') ? 'star' : 'epson',
         connectionType: selectedType,
-        target: targetVal,
-        macAddress: macVal,
-        ipAddress: selectedDevice?.ipAddress || ipInput.trim(),
-        port: parseInt(portInput, 10) || 9100,
+        target: selectedType === 'bluetooth' ? targetVal : '',
+        macAddress: selectedType === 'bluetooth' ? macVal : '',
+        ipAddress: selectedType === 'network' ? ipVal : '',
+        port: selectedType === 'network' ? portVal : undefined,
         paperWidth,
         autoPrint,
         copies,
@@ -1491,11 +1531,14 @@ export function PrinterSetupWizardModal({
           {step === 3 && (
             <View>
               {/* Connected / Connection Status Card */}
-              {selectedType === 'bluetooth' && connectionStatus?.checked && !connectionStatus.success ? (
+                  {(selectedType === 'bluetooth' || selectedType === 'network') &&
+                    connectionStatus?.checked &&
+                    !connectionStatus.success ? (
                 (() => {
                   const errInfo = formatPrinterConnectionError(
                     connectionStatus.rawError || connectionStatus.message,
-                    selectedDevice?.name
+                    selectedDevice?.name || (selectedType === 'network' ? `${ipInput.trim()}:${portInput}` : undefined),
+                    selectedType
                   );
                   return (
                     <View style={styles.errorHeroCard}>
@@ -1506,7 +1549,7 @@ export function PrinterSetupWizardModal({
                         </View>
                         <View style={{ flex: 1, marginLeft: 10 }}>
                           <Text style={styles.errorHeroDeviceTitle} numberOfLines={1}>
-                            {selectedDevice?.name || 'Selected Device'}
+                            {selectedDevice?.name || (selectedType === 'network' ? `Network Printer (${ipInput.trim()}:${portInput})` : 'Selected Device')}
                           </Text>
                           <Text style={styles.errorHeroCategory}>
                             {errInfo.title}
@@ -1547,7 +1590,9 @@ export function PrinterSetupWizardModal({
                           activeOpacity={0.8}
                         >
                           <ArrowLeft size={14} color="#374151" />
-                          <Text style={styles.changePrinterBtnText}>Choose Different</Text>
+                          <Text style={styles.changePrinterBtnText}>
+                            {selectedType === 'network' ? 'Edit IP' : 'Choose Different'}
+                          </Text>
                         </TouchableOpacity>
 
                         <TouchableOpacity
@@ -1577,6 +1622,23 @@ export function PrinterSetupWizardModal({
                           <Text style={styles.openSettingsBtnText}>Pair in Android Bluetooth Settings</Text>
                         </TouchableOpacity>
                       )}
+
+                      {Platform.OS === 'android' && selectedType === 'network' && (
+                        <TouchableOpacity
+                          style={styles.openSettingsBtn}
+                          onPress={async () => {
+                            try {
+                              await Linking.sendIntent('android.settings.WIFI_SETTINGS');
+                            } catch {
+                              await Linking.openSettings();
+                            }
+                          }}
+                          activeOpacity={0.8}
+                        >
+                          <ExternalLink size={14} color="#1D4ED8" />
+                          <Text style={styles.openSettingsBtnText}>Open Wi-Fi Settings</Text>
+                        </TouchableOpacity>
+                      )}
                     </View>
                   );
                 })()
@@ -1584,38 +1646,43 @@ export function PrinterSetupWizardModal({
                 <View
                   style={[
                     styles.connectedDeviceHero,
-                    selectedType === 'bluetooth' && isVerifyingConnection && styles.connectedDeviceHeroChecking,
+                          (selectedType === 'bluetooth' || selectedType === 'network') &&
+                          isVerifyingConnection &&
+                          styles.connectedDeviceHeroChecking,
                   ]}
                 >
                   <View style={styles.connectedDeviceHeroTop}>
-                    {selectedType === 'bluetooth' ? (
-                      isVerifyingConnection ? (
-                        <ActivityIndicator size="small" color="#2563EB" />
-                      ) : connectionStatus?.checked && connectionStatus.success ? (
-                        <CheckCircle2 size={24} color="#059669" />
-                      ) : (
-                        <Bluetooth size={24} color="#2563EB" />
-                      )
+                          {isVerifyingConnection ? (
+                            <ActivityIndicator size="small" color="#2563EB" />
+                          ) : connectionStatus?.checked && connectionStatus.success ? (
+                            <CheckCircle2 size={24} color="#059669" />
+                            ) : selectedType === 'bluetooth' ? (
+                              <Bluetooth size={24} color="#2563EB" />
+                              ) : selectedType === 'network' ? (
+                                <Wifi size={24} color="#2563EB" />
                     ) : (
                       <CheckCircle2 size={24} color="#059669" />
                     )}
                     <View style={{ flex: 1, marginLeft: 10 }}>
                       <Text style={styles.heroDeviceTitle}>
-                        {selectedDevice?.name || 'Thermal POS Printer'}
+                              {selectedDevice?.name ||
+                                (selectedType === 'network'
+                                  ? `Network Printer (${ipInput.trim()}:${portInput})`
+                                  : 'Thermal POS Printer')}
                       </Text>
                       <Text style={styles.heroDeviceSubtitle}>
-                        {selectedType === 'bluetooth'
-                          ? isVerifyingConnection
-                            ? 'Checking Bluetooth connection handshake...'
-                            : connectionStatus?.checked && connectionStatus.success
-                              ? 'Bluetooth Link Confirmed • Ready to Print'
-                              : 'Bluetooth Device Selected • Ready for setup & test print'
-                          : `${selectedType.toUpperCase()} • Ready for setup & test print`}
+                              {isVerifyingConnection
+                                ? selectedType === 'network'
+                                  ? `Testing network link to ${ipInput.trim()}:${portInput}...`
+                                  : 'Checking Bluetooth connection handshake...'
+                                : connectionStatus?.checked && connectionStatus.success
+                                  ? `${selectedType === 'network' ? 'Network' : 'Bluetooth'} Link Confirmed • Ready to Print`
+                                  : `${selectedType.toUpperCase()} Device Selected • Ready for setup & test print`}
                       </Text>
                     </View>
 
-                    {/* Re-verify Button for Bluetooth */}
-                    {selectedType === 'bluetooth' && (
+                          {/* Re-verify Button for Bluetooth & Network */}
+                          {(selectedType === 'bluetooth' || selectedType === 'network') && (
                       <TouchableOpacity
                         style={styles.recheckBtn}
                         onPress={handleVerifyCurrentConnection}
@@ -2350,6 +2417,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 8,
+    marginTop: 4,
   },
   openSettingsBtnText: {
     fontSize: 12,

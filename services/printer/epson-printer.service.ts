@@ -1,5 +1,5 @@
 import { Order } from '../../types';
-import { PosPrinterConfig, profileFromConfig } from '../pos-config.service';
+import { PosPrinterConfig, PosConnectionType, profileFromConfig } from '../pos-config.service';
 import { EpsonEposModule } from '../../src/modules/epson-epos';
 import { buildReceiptDocument, buildDrawerKickDocument, buildCustomizedReceiptDocument } from './receipt-document';
 import { EposXmlEncoder } from './encoders/epos-xml-encoder';
@@ -63,7 +63,11 @@ export function isLikelyAudioDevice(name: string): boolean {
   return NON_PRINTER_AUDIO_KEYWORDS.some((kw) => n.includes(kw));
 }
 
-export function formatPrinterConnectionError(rawError: string, deviceName?: string): FormattedPrinterError {
+export function formatPrinterConnectionError(
+  rawError: string,
+  deviceName?: string,
+  connectionType?: PosConnectionType
+): FormattedPrinterError {
   const name = (deviceName || '').trim();
   const lowerErr = (rawError || '').toLowerCase();
 
@@ -78,6 +82,76 @@ export function formatPrinterConnectionError(rawError: string, deviceName?: stri
         'If your thermal printer is not listed, make sure its power switch is ON and it is paired in your tablet Bluetooth settings (PIN: 0000 or 1234).',
       ],
       isLikelyNonPrinter: true,
+    };
+  }
+
+  // Detect whether this target is a Network / Wi-Fi / Ethernet printer
+  const isNetwork =
+    connectionType === 'network' ||
+    name.toLowerCase().includes('network') ||
+    lowerErr.includes('tcp') ||
+    lowerErr.includes('192.168.') ||
+    lowerErr.includes('10.') ||
+    lowerErr.includes('172.') ||
+    lowerErr.includes('9100') ||
+    lowerErr.includes('8008') ||
+    name.includes(':') ||
+    (!name.toLowerCase().includes('bt') &&
+      !name.toLowerCase().includes('bluetooth') &&
+      !lowerErr.includes('bluetooth') &&
+      (lowerErr.includes('timeout') || lowerErr.includes('timed out') || lowerErr.includes('refused')));
+
+  if (isNetwork) {
+    if (lowerErr.includes('native tcp socket module is not compiled')) {
+      return {
+        title: 'Development Build Update Required',
+        message: 'The native TCP Socket library is not yet compiled into this APK build.',
+        troubleshootingSteps: [
+          'Run `npx expo run:android` to compile native TCP socket support into your development build.',
+          'Alternatively, switch to Bluetooth connection if printing right away.',
+        ],
+        isLikelyNonPrinter: false,
+      };
+    }
+
+    if (lowerErr.includes('timeout') || lowerErr.includes('timed out')) {
+      return {
+        title: 'Network Printer Timed Out',
+        message: `Could not reach network printer at "${name || 'configured IP'}". The connection timed out.`,
+        troubleshootingSteps: [
+          'Ensure the printer power switch is ON and the paper roll is loaded.',
+          'Verify your tablet/phone is connected to the SAME Wi-Fi network as the printer router.',
+          'Turn OFF Mobile Data (Cellular Data) temporarily — Android/iOS often routes local LAN connections to mobile data instead of Wi-Fi.',
+          'Check that the Ethernet LAN cable is firmly plugged into both printer and router (look for LED light on the printer Ethernet port).',
+          'Confirm the printer IP address (e.g. 192.168.1.200) matches the self-test slip (hold FEED button while turning power ON).',
+        ],
+        isLikelyNonPrinter: false,
+      };
+    }
+
+    if (lowerErr.includes('refused') || lowerErr.includes('econnrefused')) {
+      return {
+        title: 'Printer Port Busy or Refused',
+        message: `Printer at "${name || 'configured IP'}" refused connection on port 9100.`,
+        troubleshootingSteps: [
+          'Thermal network printers only accept one active connection at a time. Ensure no other phone, PC, or POS app is currently connected.',
+          'Turn the printer power switch OFF for 5 seconds and turn it back ON to reset the network port.',
+          'Confirm port 9100 is selected (standard ESC/POS raw port).',
+        ],
+        isLikelyNonPrinter: false,
+      };
+    }
+
+    return {
+      title: 'Network Printer Unreachable',
+      message: `Unable to establish communication with printer at "${name || 'configured IP'}".`,
+      troubleshootingSteps: [
+        'Check that the printer is powered ON and has paper loaded.',
+        'Verify your tablet/phone is on the SAME Wi-Fi network as the printer router.',
+        'Turn OFF Mobile Data (Cellular Data) on your tablet/phone.',
+        'Confirm the IP address matches your printer self-test slip.',
+      ],
+      isLikelyNonPrinter: false,
     };
   }
 
@@ -600,7 +674,13 @@ export async function verifyPrinterConnection(
       };
     } else {
       const failDetail = (result as any).detail || (result as any).reason || 'Printer did not respond';
-      const formatted = formatPrinterConnectionError(failDetail, config.target || printer.model);
+      const formatted = formatPrinterConnectionError(
+        failDetail,
+        config.connectionType === 'network'
+          ? (config.ipAddress ? `${config.ipAddress}:${config.port || 9100}` : printer.model)
+          : (config.target || printer.model),
+        config.connectionType
+      );
       return {
         success: false,
         message: `${formatted.title}: ${formatted.message}`,
@@ -609,7 +689,13 @@ export async function verifyPrinterConnection(
     }
   } catch (err: any) {
     const raw = err?.message || 'Failed to communicate with printer.';
-    const formatted = formatPrinterConnectionError(raw, config.target);
+    const formatted = formatPrinterConnectionError(
+      raw,
+      config.connectionType === 'network'
+        ? (config.ipAddress ? `${config.ipAddress}:${config.port || 9100}` : undefined)
+        : config.target,
+      config.connectionType
+    );
     return {
       success: false,
       message: `${formatted.title}: ${formatted.message}`,

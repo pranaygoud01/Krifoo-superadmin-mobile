@@ -1331,7 +1331,6 @@ export default function ReceiptCustomizationScreen() {
 
     const availableToRestore: { key: string; label: string; icon: any }[] = [];
 
-    if (!content.showLogo) availableToRestore.push({ key: 'logo', label: '+ Logo', icon: ImageIcon });
     if (!content.customHeaderTitle) availableToRestore.push({ key: 'header_title', label: '+ Header Title', icon: Type });
     if (!content.showRestaurantName) availableToRestore.push({ key: 'restaurant_name', label: '+ Restaurant Name', icon: Store });
     if (!content.headerMessage) availableToRestore.push({ key: 'header_message', label: '+ Tagline', icon: Edit3 });
@@ -1727,44 +1726,6 @@ export default function ReceiptCustomizationScreen() {
           >
             {/* Header Section */}
             <View style={{ alignItems: layout.alignment.header === 'left' ? 'flex-start' : layout.alignment.header === 'right' ? 'flex-end' : 'center' }}>
-              {/* Logo */}
-              {content.showLogo && (
-                renderCanvaBox(
-                  'logo',
-                  'Logo Image',
-                  content.logoUrl ? (
-                    <TouchableOpacity
-                      onPress={() => {
-                        setLogoUrlInput(content.logoUrl || '');
-                        setShowLogoModal(true);
-                      }}
-                      activeOpacity={0.8}
-                    >
-                      <Image
-                        source={{ uri: content.logoUrl }}
-                        style={[
-                          styles.paperLogo,
-                          content.logoShape === 'circle' && { width: 56, height: 56, borderRadius: 28, overflow: 'hidden' },
-                          content.logoShape === 'rounded' && { borderRadius: 8, overflow: 'hidden' },
-                        ]}
-                        resizeMode={content.logoShape === 'circle' ? 'cover' : 'contain'}
-                      />
-                    </TouchableOpacity>
-                  ) : (
-                    <TouchableOpacity
-                      onPress={() => {
-                        setLogoUrlInput('');
-                        setShowLogoModal(true);
-                      }}
-                      style={styles.paperLogoPlaceholder}
-                      activeOpacity={0.8}
-                    >
-                      <Upload size={14} color="#64748B" />
-                      <Text style={styles.paperLogoPlaceholderText}>+ Upload Logo</Text>
-                    </TouchableOpacity>
-                  )
-                )
-              )}
 
               {/* Custom Header Title */}
               {content.customHeaderTitle ? (

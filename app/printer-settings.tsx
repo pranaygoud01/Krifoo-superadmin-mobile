@@ -898,11 +898,6 @@ export default function PrinterSettingsScreen() {
                   </View>
                 ) : null}
 
-                {activeTemplate?.content?.showLogo ? (
-                  <View style={styles.templateChipNeutral}>
-                    <Text style={styles.templateChipNeutralText}>Store Logo</Text>
-                  </View>
-                ) : null}
 
                 {activeTemplate?.content?.showItemNotes ? (
                   <View style={styles.templateChipNeutral}>

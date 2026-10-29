@@ -19,7 +19,8 @@ export interface RasterizedImage {
  */
 export function rasterizeImage(
   base64Data: string,
-  maxPixelWidth: number = 384
+  maxPixelWidth: number = 200,
+  maxPixelHeight: number = 120
 ): RasterizedImage | null {
   try {
     if (!base64Data || typeof base64Data !== 'string') return null;
@@ -66,18 +67,18 @@ export function rasterizeImage(
       return null;
     }
 
-    // Scale to fit maxPixelWidth (must be multiple of 8 for ESC/POS raster byte rows)
+    // Scale proportionally to fit within both maxPixelWidth and maxPixelHeight
+    // targetWidth must be a multiple of 8 for ESC/POS raster byte rows
     const maxWidth = Math.max(8, Math.floor(maxPixelWidth / 8) * 8);
-    let targetWidth = width;
-    let targetHeight = height;
+    const maxHeight = Math.max(8, maxPixelHeight);
 
-    if (width > maxWidth) {
-      targetWidth = maxWidth;
-      targetHeight = Math.max(1, Math.round(height * (targetWidth / width)));
-    } else {
-      targetWidth = Math.max(8, Math.floor(width / 8) * 8);
-      targetHeight = Math.max(1, Math.round(height * (targetWidth / width)));
+    let scale = Math.min(maxWidth / width, maxHeight / height);
+    if (scale > 1) {
+      scale = 1;
     }
+
+    const targetWidth = Math.max(8, Math.floor((width * scale) / 8) * 8);
+    const targetHeight = Math.max(1, Math.round(height * (targetWidth / width)));
 
     const widthBytes = targetWidth >> 3;
     const raster = new Uint8Array(widthBytes * targetHeight);

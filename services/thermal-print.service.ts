@@ -341,7 +341,6 @@ export function generateCustomizedThermalReceiptHtml(order: Partial<Order> & any
 <body>
   <!-- Header -->
   <div class="header-sec">
-    ${content.showLogo && content.logoUrl ? `<img src="${content.logoUrl}" alt="Logo" onerror="this.style.display='none'" style="${content.logoShape === 'circle' ? 'width:72px; height:72px; border-radius:50%; object-fit:cover;' : (content.logoShape === 'rounded' ? 'max-width:110px; max-height:70px; border-radius:8px; object-fit:contain;' : 'max-width:110px; max-height:70px; object-fit:contain;')} display:block; margin:0 auto 6px auto; image-rendering:-webkit-optimize-contrast;" />` : ''}
     ${content.customHeaderTitle ? `<div style="font-weight:800; font-size:1em; letter-spacing:0.5px;">${content.customHeaderTitle.toUpperCase()}</div>` : ''}
     ${content.showRestaurantName ? `<div class="title-large">${restaurantName.toUpperCase()}</div>` : ''}
     ${content.headerMessage ? `<div class="tagline">${content.headerMessage}</div>` : ''}

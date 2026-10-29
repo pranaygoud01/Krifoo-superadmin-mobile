@@ -45,6 +45,9 @@ export class TcpSocketTransport implements PrinterTransport {
           isResolved = true;
           try {
             if (client) {
+              if (typeof client.end === 'function') {
+                client.end();
+              }
               client.destroy();
             }
           } catch {}
@@ -56,7 +59,7 @@ export class TcpSocketTransport implements PrinterTransport {
         finish({
           ok: false,
           kind: 'timeout',
-          detail: `TCP connection to ${ip}:${this.port} timed out after 6s`,
+          detail: `Connection timed out to printer at ${ip}:${this.port}. Check that the printer is ON, connected to the same Wi-Fi, and Mobile Data is turned off.`,
         });
       }, 6000);
 
@@ -84,7 +87,7 @@ export class TcpSocketTransport implements PrinterTransport {
                   setTimeout(() => {
                     clearTimeout(timer);
                     finish({ ok: true, rawResponse: 'write_ack' });
-                  }, 300);
+                  }, 250);
                 }
               });
             } catch (writeErr: any) {
@@ -98,6 +101,15 @@ export class TcpSocketTransport implements PrinterTransport {
           }
         );
 
+        client.on('timeout', () => {
+          clearTimeout(timer);
+          finish({
+            ok: false,
+            kind: 'timeout',
+            detail: `Connection timed out to printer at ${ip}:${this.port}. Check that the printer is ON, connected to the same Wi-Fi, and Mobile Data is turned off.`,
+          });
+        });
+
         client.on('error', (err: any) => {
           clearTimeout(timer);
           const errMsg = (err?.message || String(err)).toLowerCase();
@@ -110,11 +122,29 @@ export class TcpSocketTransport implements PrinterTransport {
           }
 
           if (errCode === 'ECONNREFUSED' || errMsg.includes('refused')) {
-            finish({ ok: false, kind: 'refused', detail: `Connection refused on ${ip}:${this.port}` });
+            finish({
+              ok: false,
+              kind: 'refused',
+              detail: `Connection refused by printer at ${ip}:${this.port}. Another device may be printing or the printer was recently restarted.`,
+            });
           } else if (errCode === 'ETIMEDOUT' || errMsg.includes('timeout')) {
-            finish({ ok: false, kind: 'timeout', detail: `Connection timed out to ${ip}:${this.port}` });
+            finish({
+              ok: false,
+              kind: 'timeout',
+              detail: `Connection timed out to printer at ${ip}:${this.port}. Check that the printer is ON, connected to the same Wi-Fi, and Mobile Data is turned off.`,
+            });
+          } else if (errCode === 'EHOSTUNREACH' || errMsg.includes('unreachable') || errMsg.includes('no route')) {
+            finish({
+              ok: false,
+              kind: 'unreachable',
+              detail: `Cannot reach ${ip}:${this.port}. Ensure your tablet is connected to the same Wi-Fi network as the printer.`,
+            });
           } else {
-            finish({ ok: false, kind: 'unreachable', detail: `Socket error (${errCode || 'UNKNOWN'}): ${err?.message || err}` });
+            finish({
+              ok: false,
+              kind: 'unreachable',
+              detail: `Network error connecting to ${ip}:${this.port} (${errCode || 'ERROR'}): ${err?.message || err}`,
+            });
           }
         });
 
@@ -124,7 +154,11 @@ export class TcpSocketTransport implements PrinterTransport {
           if (writeCompleted) {
             finish({ ok: true, rawResponse: 'closed_after_successful_write' });
           } else {
-            finish({ ok: false, kind: 'refused', detail: `Socket closed before write could complete` });
+            finish({
+              ok: false,
+              kind: 'refused',
+              detail: `Socket closed before print data could be transmitted to ${ip}:${this.port}`,
+            });
           }
         });
       } catch (connErr: any) {

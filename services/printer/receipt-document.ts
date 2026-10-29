@@ -657,14 +657,7 @@ export function buildCustomizedReceiptDocument(
 
   const tableNum = order.tableNumber || (isDineIn && order.notes?.match(/table\s*([0-9a-zA-Z]+)/i)?.[1]) || '';
 
-  // 1. Header Section
-  if (content.showLogo && content.logoUrl) {
-    commands.push({
-      type: 'image',
-      data: content.logoUrl,
-      align: headerAlign,
-    });
-  }
+  // 1. Header Section (Logo removed)
 
   if (content.customHeaderTitle && content.customHeaderTitle.trim()) {
     commands.push({

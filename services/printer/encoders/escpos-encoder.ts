@@ -157,33 +157,33 @@ export const EscPosEncoder: CommandEncoder<Uint8Array> = {
           break;
 
         case 'image': {
-          const maxDots = is58mm ? 256 : 384;
-          const img = rasterizeImage(cmd.data, maxDots);
+          // Professional receipt logo sizing:
+          // 80mm roll: max 192 dots wide (~24mm), max 110 dots high (~14mm)
+          // 58mm roll: max 160 dots wide (~20mm), max 90 dots high (~11mm)
+          const maxDotsW = is58mm ? 160 : 192;
+          const maxDotsH = is58mm ? 90 : 110;
+          const img = rasterizeImage(cmd.data, maxDotsW, maxDotsH);
           if (img) {
             const xL = img.widthBytes & 0xff;
             const xH = (img.widthBytes >> 8) & 0xff;
             const yL = img.height & 0xff;
             const yH = (img.height >> 8) & 0xff;
 
-            if (is58mm) {
-              // 58mm paper has 384 dots printable width.
-              // Center the image inside 384 dots using GS L (Left Margin)
-              const leftMarginDots = Math.max(0, Math.floor((384 - img.width) / 2));
-              buffer.push(0x1d, 0x4c, leftMarginDots & 0xff, (leftMarginDots >> 8) & 0xff);
-            } else {
-              setAlign(cmd.align || 'center');
-            }
+            // Center image
+            setAlign(cmd.align || 'center');
 
             // GS v 0 0 xL xH yL yH d1...dk (Print raster bit image)
             buffer.push(0x1d, 0x76, 0x30, 0x00, xL, xH, yL, yH);
             for (let i = 0; i < img.data.length; i++) {
               buffer.push(img.data[i]);
             }
-            buffer.push(0x0a);
 
-            if (is58mm) {
-              buffer.push(0x1d, 0x4c, 0x00, 0x00); // Reset GS L margin
-            }
+            // CR + LF + feed line to flush raster buffer and advance paper
+            buffer.push(0x0d, 0x0a);
+            buffer.push(0x1b, 0x64, 0x01); // ESC d 1
+
+            // Reset alignment for subsequent text elements
+            setAlign('left');
           }
           break;
         }
