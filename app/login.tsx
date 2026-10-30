@@ -8,10 +8,10 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
-  Image,
   ScrollView,
   useWindowDimensions,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { StatusBar } from 'expo-status-bar';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../context/AuthContext';
@@ -94,7 +94,7 @@ export default function LoginScreen() {
       <Image
         source={require('../assets/logo.png')}
         style={styles.watermark}
-        resizeMode="contain"
+        contentFit="contain"
       />
 
       <ScrollView
@@ -108,6 +108,7 @@ export default function LoginScreen() {
             <Image
               source={require('../assets/login_cover.jpg')}
               style={styles.coverImage}
+              contentFit="cover"
             />
             {/* Dark tint overlay */}
             <View style={styles.coverOverlay}>
@@ -122,7 +123,7 @@ export default function LoginScreen() {
               <Image
                 source={require('../assets/logo.png')}
                 style={{ width: 56, height: 56 }}
-                resizeMode="contain"
+                contentFit="contain"
               />
             </View>
           </View>

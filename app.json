@@ -3,7 +3,7 @@
     "name": "Krifoo Admin",
     "slug": "krifoo-admin",
     "owner": "krifoos-app",
-    "version": "1.0.17",
+    "version": "1.0.18",
     "orientation": "default",
     "icon": "./assets/logo.png",
     "scheme": "krifooadmin",
@@ -15,12 +15,12 @@
       "backgroundColor": "#FF5C39"
     },
     "assetBundlePatterns": [
-      "assets/**/*",
       "**/*"
     ],
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.krifoo.admin",
+      "buildNumber": "40",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "NSBluetoothAlwaysUsageDescription": "This app requires Bluetooth access to discover and print receipt orders on thermal receipt printers.",
@@ -37,7 +37,7 @@
         "backgroundColor": "#FFFFFF"
       },
       "package": "com.krifoo.admin",
-      "versionCode": 14,
+      "versionCode": 15,
       "googleServicesFile": "./google-services.json",
       "permissions": [
         "RECEIVE_BOOT_COMPLETED",
@@ -101,16 +101,7 @@
           }
         }
       ],
-      "expo-task-manager",
-      [
-        "expo-asset",
-        {
-          "assets": [
-            "./assets",
-            "./assets/images"
-          ]
-        }
-      ]
+      "expo-task-manager"
     ],
     "experiments": {
       "typedRoutes": true

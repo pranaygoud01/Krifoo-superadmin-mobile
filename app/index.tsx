@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, Image, StyleSheet, Dimensions } from 'react-native';
+import { View, Text, StyleSheet, Dimensions } from 'react-native';
+import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../context/AuthContext';
 
@@ -37,7 +38,7 @@ export default function IndexScreen() {
           <Image
             source={require('../assets/logo.png')}
             style={styles.logo}
-            resizeMode="contain"
+            contentFit="contain"
           />
         </View>
 

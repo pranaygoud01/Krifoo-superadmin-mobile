@@ -1,5 +1,6 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert, Image, DeviceEventEmitter, useWindowDimensions } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Alert, DeviceEventEmitter, useWindowDimensions } from 'react-native';
+import { Image } from 'expo-image';
 import { useRouter, useSegments } from 'expo-router';
 import { ArrowLeft, Bell, Settings, User } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -215,14 +216,14 @@ export const Header: React.FC<HeaderProps> = ({
                   <Image
                     source={{ uri: storeLogoUrl }}
                     style={[styles.headerLogo, styles.headerRestaurantLogo, isTablet && styles.headerLogoTablet]}
-                    resizeMode="cover"
+                    contentFit="cover"
                     onError={() => setImageError(true)}
                   />
                 ) : (
                   <Image
                     source={require('../assets/logo.png')}
                     style={[styles.headerLogo, isTablet && styles.headerLogoTablet]}
-                    resizeMode="contain"
+                    contentFit="contain"
                   />
                 )}
                 <View style={styles.greetingTextContainer}>
