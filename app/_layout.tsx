@@ -117,6 +117,7 @@ export default function RootLayout() {
                 <Stack.Screen name="bookings" options={{ animation: 'slide_from_right' }} />
                 <Stack.Screen name="marketing" options={{ animation: 'slide_from_right' }} />
                 <Stack.Screen name="fleet" options={{ animation: 'slide_from_right' }} />
+                <Stack.Screen name="analytics" options={{ animation: 'slide_from_right' }} />
                 <Stack.Screen name="restaurant-settings" options={{ animation: 'slide_from_right' }} />
                 <Stack.Screen name="store-profile" options={{ animation: 'slide_from_right' }} />
                 <Stack.Screen name="operation-settings" options={{ animation: 'slide_from_right' }} />

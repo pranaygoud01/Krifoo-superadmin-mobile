@@ -258,6 +258,23 @@ interface TopDishItem {
   totalRevenue: number;
 }
 
+const getStatusTheme = (id: string) => {
+  switch (id) {
+    case 'delivered':
+      return { bg: '#ECFDF5', border: '#A7F3D0', text: '#059669' };
+    case 'cancelled':
+      return { bg: '#FEF2F2', border: '#FECACA', text: '#DC2626' };
+    case 'ready_for_pickup':
+      return { bg: '#FFF7ED', border: '#FED7AA', text: '#EA580C' };
+    case 'preparing':
+      return { bg: '#EFF6FF', border: '#BFDBFE', text: '#2563EB' };
+    case 'out_for_delivery':
+      return { bg: '#F5F3FF', border: '#DDD6FE', text: '#7C3AED' };
+    default:
+      return { bg: '#F8FAFC', border: '#E2E8F0', text: '#475569' };
+  }
+};
+
 export interface AnalyticsRestaurantProps {
   initialOrders: Order[];
   ownerStats?: {
@@ -288,11 +305,16 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
   const isSmallScreen = windowWidth < 375;
   const isTablet = windowWidth >= 768;
   const numColumns = isTablet ? 3 : 2;
-  const gridGap = isSmallScreen ? 8 : 10;
-  const availableWidth = windowWidth - 32;
-  const cardWidth = Math.floor((availableWidth - (numColumns - 1) * gridGap) / numColumns);
+  const gridGap = isSmallScreen ? 8 : isTablet ? 12 : 10;
+  
+  // Calculate accurate content width considering tablet padding (28px horizontal on each side = 56px total)
+  const tabletHorizontalPadding = 56;
+  const contentWidth = isTablet
+    ? Math.min(windowWidth - tabletHorizontalPadding, 1200 - tabletHorizontalPadding)
+    : windowWidth - 32;
+  const cardWidth = Math.floor((contentWidth - (numColumns - 1) * gridGap) / numColumns);
   const illustrationSize = isSmallScreen ? 44 : isTablet ? 60 : 52;
-  const glowSize = isSmallScreen ? 60 : isTablet ? 82 : 72;
+  const glowSize = isSmallScreen ? 60 : isTablet ? 80 : 72;
 
   const [timeframe, setTimeframe] = useState<TimeframeKey>('today');
   const [chartMetric, setChartMetric] = useState<ChartMetric>('revenue');
@@ -720,8 +742,8 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
 
       {/* 1. Executive 6-KPI Ribbon Grid */}
       <View style={[styles.kpiGrid, { gap: gridGap }]}>
-        {/* Gross Sales */}
-        <View style={[styles.kpiCard, styles.kpiCardRevenue, { width: cardWidth }, isSmallScreen && { padding: 10 }]}>
+        {/* Card 1: Gross Sales */}
+        <View style={[styles.kpiCard, styles.kpiCardRevenue, { width: cardWidth }, isTablet && styles.kpiCardTablet, isSmallScreen && { padding: 10 }]}>
           <View
             style={[
               styles.kpiGlowBackdrop,
@@ -731,36 +753,36 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
           />
           <Image
             source={require('../assets/kpi-gross-sales.png')}
-            style={[styles.kpiBgIllustration, { width: illustrationSize, height: illustrationSize }]}
+            style={[styles.kpiBgIllustration, { width: illustrationSize, height: illustrationSize }, isTablet && styles.kpiBgIllustrationTablet]}
             contentFit="contain"
           />
 
           <View style={styles.kpiContentContainer}>
             <View style={styles.kpiTopRow}>
-              <View style={[styles.kpiIconBox, { backgroundColor: '#FFF7ED' }]}>
-                <TrendingUp size={isSmallScreen ? 15 : 17} color="#EA580C" />
+              <View style={[styles.kpiIconBox, isTablet && styles.kpiIconBoxTablet, { backgroundColor: '#FFF7ED' }]}>
+                <TrendingUp size={isSmallScreen ? 15 : isTablet ? 18 : 17} color="#EA580C" />
               </View>
-              <View style={[styles.kpiBadge, { backgroundColor: '#FFEDD5' }]}>
-                <Text style={[styles.kpiBadgeText, { color: '#C2410C' }]}>REVENUE</Text>
+              <View style={[styles.kpiBadge, isTablet && styles.kpiBadgeTablet, { backgroundColor: '#FFEDD5' }]}>
+                <Text style={[styles.kpiBadgeText, isTablet && styles.kpiBadgeTextTablet, { color: '#C2410C' }]}>REVENUE</Text>
               </View>
             </View>
             <Text
-              style={[styles.kpiValue, isSmallScreen && { fontSize: 14 }]}
+              style={[styles.kpiValue, isTablet && styles.kpiValueTablet, isSmallScreen && { fontSize: 14 }]}
               numberOfLines={1}
               adjustsFontSizeToFit
               minimumFontScale={0.7}
             >
               £{analytics.totalRevenue.toFixed(2)}
             </Text>
-            <Text style={styles.kpiLabel} numberOfLines={1}>Gross Sales</Text>
-            <Text style={styles.kpiSub} numberOfLines={1} ellipsizeMode="tail">
+            <Text style={[styles.kpiLabel, isTablet && styles.kpiLabelTablet]} numberOfLines={1}>Gross Sales</Text>
+            <Text style={[styles.kpiSub, isTablet && styles.kpiSubTablet]} numberOfLines={1} ellipsizeMode="tail">
               From {analytics.totalOrders - analytics.cancelledOrders} valid orders
             </Text>
           </View>
         </View>
 
-        {/* Total Orders */}
-        <View style={[styles.kpiCard, styles.kpiCardVolume, { width: cardWidth }, isSmallScreen && { padding: 10 }]}>
+        {/* Card 2: Total Orders */}
+        <View style={[styles.kpiCard, styles.kpiCardVolume, { width: cardWidth }, isTablet && styles.kpiCardTablet, isSmallScreen && { padding: 10 }]}>
           <View
             style={[
               styles.kpiGlowBackdrop,
@@ -770,114 +792,36 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
           />
           <Image
             source={require('../assets/kpi-total-orders.png')}
-            style={[styles.kpiBgIllustration, { width: illustrationSize, height: illustrationSize }]}
+            style={[styles.kpiBgIllustration, { width: illustrationSize, height: illustrationSize }, isTablet && styles.kpiBgIllustrationTablet]}
             contentFit="contain"
           />
 
           <View style={styles.kpiContentContainer}>
             <View style={styles.kpiTopRow}>
-              <View style={[styles.kpiIconBox, { backgroundColor: '#EFF6FF' }]}>
-                <ShoppingBag size={isSmallScreen ? 15 : 17} color="#2563EB" />
+              <View style={[styles.kpiIconBox, isTablet && styles.kpiIconBoxTablet, { backgroundColor: '#EFF6FF' }]}>
+                <ShoppingBag size={isSmallScreen ? 15 : isTablet ? 18 : 17} color="#2563EB" />
               </View>
-              <View style={[styles.kpiBadge, { backgroundColor: '#DBEAFE' }]}>
-                <Text style={[styles.kpiBadgeText, { color: '#1E40AF' }]}>VOLUME</Text>
+              <View style={[styles.kpiBadge, isTablet && styles.kpiBadgeTablet, { backgroundColor: '#DBEAFE' }]}>
+                <Text style={[styles.kpiBadgeText, isTablet && styles.kpiBadgeTextTablet, { color: '#1E40AF' }]}>VOLUME</Text>
               </View>
             </View>
             <Text
-              style={[styles.kpiValue, isSmallScreen && { fontSize: 14 }]}
+              style={[styles.kpiValue, isTablet && styles.kpiValueTablet, isSmallScreen && { fontSize: 14 }]}
               numberOfLines={1}
               adjustsFontSizeToFit
               minimumFontScale={0.7}
             >
               {analytics.totalOrders}
             </Text>
-            <Text style={styles.kpiLabel} numberOfLines={1}>Total Orders</Text>
-            <Text style={styles.kpiSub} numberOfLines={1} ellipsizeMode="tail">
+            <Text style={[styles.kpiLabel, isTablet && styles.kpiLabelTablet]} numberOfLines={1}>Total Orders</Text>
+            <Text style={[styles.kpiSub, isTablet && styles.kpiSubTablet]} numberOfLines={1} ellipsizeMode="tail">
               {analytics.deliveredOrders} fulfilled
             </Text>
           </View>
         </View>
 
-        {/* Cash on Delivery */}
-        <View style={[styles.kpiCard, styles.kpiCardCash, { width: cardWidth }, isSmallScreen && { padding: 10 }]}>
-          <View
-            style={[
-              styles.kpiGlowBackdrop,
-              { backgroundColor: '#D1FAE5', width: glowSize, height: glowSize, borderRadius: glowSize / 2 },
-            ]}
-            pointerEvents="none"
-          />
-          <Image
-            source={require('../assets/kpi-cash-orders.png')}
-            style={[styles.kpiBgIllustration, { width: illustrationSize, height: illustrationSize }]}
-            contentFit="contain"
-          />
-
-          <View style={styles.kpiContentContainer}>
-            <View style={styles.kpiTopRow}>
-              <View style={[styles.kpiIconBox, { backgroundColor: '#ECFDF5' }]}>
-                <Banknote size={isSmallScreen ? 15 : 17} color="#059669" />
-              </View>
-              <View style={[styles.kpiBadge, { backgroundColor: '#D1FAE5' }]}>
-                <Text style={[styles.kpiBadgeText, { color: '#065F46' }]}>{cashPct}% COD</Text>
-              </View>
-            </View>
-            <Text
-              style={[styles.kpiValue, isSmallScreen && { fontSize: 14 }]}
-              numberOfLines={1}
-              adjustsFontSizeToFit
-              minimumFontScale={0.7}
-            >
-              £{analytics.cashRevenue.toFixed(2)}
-            </Text>
-            <Text style={styles.kpiLabel} numberOfLines={1}>Cash Orders</Text>
-            <Text style={styles.kpiSub} numberOfLines={1} ellipsizeMode="tail">
-              {analytics.cashOrdersCount} cash orders
-            </Text>
-          </View>
-        </View>
-
-        {/* Online / Stripe */}
-        <View style={[styles.kpiCard, styles.kpiCardOnline, { width: cardWidth }, isSmallScreen && { padding: 10 }]}>
-          <View
-            style={[
-              styles.kpiGlowBackdrop,
-              { backgroundColor: '#E0E7FF', width: glowSize, height: glowSize, borderRadius: glowSize / 2 },
-            ]}
-            pointerEvents="none"
-          />
-          <Image
-            source={require('../assets/kpi-online-card.png')}
-            style={[styles.kpiBgIllustration, { width: illustrationSize, height: illustrationSize }]}
-            contentFit="contain"
-          />
-
-          <View style={styles.kpiContentContainer}>
-            <View style={styles.kpiTopRow}>
-              <View style={[styles.kpiIconBox, { backgroundColor: '#EEF2FF' }]}>
-                <CreditCard size={isSmallScreen ? 15 : 17} color="#4F46E5" />
-              </View>
-              <View style={[styles.kpiBadge, { backgroundColor: '#E0E7FF' }]}>
-                <Text style={[styles.kpiBadgeText, { color: '#3730A3' }]}>{onlinePct}% CARD</Text>
-              </View>
-            </View>
-            <Text
-              style={[styles.kpiValue, isSmallScreen && { fontSize: 14 }]}
-              numberOfLines={1}
-              adjustsFontSizeToFit
-              minimumFontScale={0.7}
-            >
-              £{analytics.onlineRevenue.toFixed(2)}
-            </Text>
-            <Text style={styles.kpiLabel} numberOfLines={1}>Online / Card</Text>
-            <Text style={styles.kpiSub} numberOfLines={1} ellipsizeMode="tail">
-              {analytics.onlineOrdersCount} online orders
-            </Text>
-          </View>
-        </View>
-
-        {/* Average Order Value (AOV) */}
-        <View style={[styles.kpiCard, styles.kpiCardAov, { width: cardWidth }, isSmallScreen && { padding: 10 }]}>
+        {/* Card 3: Average Order Value (AOV) */}
+        <View style={[styles.kpiCard, styles.kpiCardAov, { width: cardWidth }, isTablet && styles.kpiCardTablet, isSmallScreen && { padding: 10 }]}>
           <View
             style={[
               styles.kpiGlowBackdrop,
@@ -887,36 +831,114 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
           />
           <Image
             source={require('../assets/kpi-avg-value.png')}
-            style={[styles.kpiBgIllustration, { width: illustrationSize, height: illustrationSize }]}
+            style={[styles.kpiBgIllustration, { width: illustrationSize, height: illustrationSize }, isTablet && styles.kpiBgIllustrationTablet]}
             contentFit="contain"
           />
 
           <View style={styles.kpiContentContainer}>
             <View style={styles.kpiTopRow}>
-              <View style={[styles.kpiIconBox, { backgroundColor: '#F5F3FF' }]}>
-                <Receipt size={isSmallScreen ? 15 : 17} color="#7C3AED" />
+              <View style={[styles.kpiIconBox, isTablet && styles.kpiIconBoxTablet, { backgroundColor: '#F5F3FF' }]}>
+                <Receipt size={isSmallScreen ? 15 : isTablet ? 18 : 17} color="#7C3AED" />
               </View>
-              <View style={[styles.kpiBadge, { backgroundColor: '#EDE9FE' }]}>
-                <Text style={[styles.kpiBadgeText, { color: '#6D28D9' }]}>AOV</Text>
+              <View style={[styles.kpiBadge, isTablet && styles.kpiBadgeTablet, { backgroundColor: '#EDE9FE' }]}>
+                <Text style={[styles.kpiBadgeText, isTablet && styles.kpiBadgeTextTablet, { color: '#6D28D9' }]}>AOV</Text>
               </View>
             </View>
             <Text
-              style={[styles.kpiValue, isSmallScreen && { fontSize: 14 }]}
+              style={[styles.kpiValue, isTablet && styles.kpiValueTablet, isSmallScreen && { fontSize: 14 }]}
               numberOfLines={1}
               adjustsFontSizeToFit
               minimumFontScale={0.7}
             >
               £{analytics.averageOrderValue.toFixed(2)}
             </Text>
-            <Text style={styles.kpiLabel} numberOfLines={1}>Avg Order Value</Text>
-            <Text style={styles.kpiSub} numberOfLines={1} ellipsizeMode="tail">
+            <Text style={[styles.kpiLabel, isTablet && styles.kpiLabelTablet]} numberOfLines={1}>Avg Order Value</Text>
+            <Text style={[styles.kpiSub, isTablet && styles.kpiSubTablet]} numberOfLines={1} ellipsizeMode="tail">
               Average ticket basket size
             </Text>
           </View>
         </View>
 
-        {/* Fulfillment Rate */}
-        <View style={[styles.kpiCard, styles.kpiCardRate, { width: cardWidth }, isSmallScreen && { padding: 10 }]}>
+        {/* Card 4: Cash on Delivery */}
+        <View style={[styles.kpiCard, styles.kpiCardCash, { width: cardWidth }, isTablet && styles.kpiCardTablet, isSmallScreen && { padding: 10 }]}>
+          <View
+            style={[
+              styles.kpiGlowBackdrop,
+              { backgroundColor: '#D1FAE5', width: glowSize, height: glowSize, borderRadius: glowSize / 2 },
+            ]}
+            pointerEvents="none"
+          />
+          <Image
+            source={require('../assets/kpi-cash-orders.png')}
+            style={[styles.kpiBgIllustration, { width: illustrationSize, height: illustrationSize }, isTablet && styles.kpiBgIllustrationTablet]}
+            contentFit="contain"
+          />
+
+          <View style={styles.kpiContentContainer}>
+            <View style={styles.kpiTopRow}>
+              <View style={[styles.kpiIconBox, isTablet && styles.kpiIconBoxTablet, { backgroundColor: '#ECFDF5' }]}>
+                <Banknote size={isSmallScreen ? 15 : isTablet ? 18 : 17} color="#059669" />
+              </View>
+              <View style={[styles.kpiBadge, isTablet && styles.kpiBadgeTablet, { backgroundColor: '#D1FAE5' }]}>
+                <Text style={[styles.kpiBadgeText, isTablet && styles.kpiBadgeTextTablet, { color: '#065F46' }]}>{cashPct}% COD</Text>
+              </View>
+            </View>
+            <Text
+              style={[styles.kpiValue, isTablet && styles.kpiValueTablet, isSmallScreen && { fontSize: 14 }]}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.7}
+            >
+              £{analytics.cashRevenue.toFixed(2)}
+            </Text>
+            <Text style={[styles.kpiLabel, isTablet && styles.kpiLabelTablet]} numberOfLines={1}>Cash Orders</Text>
+            <Text style={[styles.kpiSub, isTablet && styles.kpiSubTablet]} numberOfLines={1} ellipsizeMode="tail">
+              {analytics.cashOrdersCount} cash orders
+            </Text>
+          </View>
+        </View>
+
+        {/* Card 5: Online / Stripe */}
+        <View style={[styles.kpiCard, styles.kpiCardOnline, { width: cardWidth }, isTablet && styles.kpiCardTablet, isSmallScreen && { padding: 10 }]}>
+          <View
+            style={[
+              styles.kpiGlowBackdrop,
+              { backgroundColor: '#E0E7FF', width: glowSize, height: glowSize, borderRadius: glowSize / 2 },
+            ]}
+            pointerEvents="none"
+          />
+          <Image
+            source={require('../assets/kpi-online-card.png')}
+            style={[styles.kpiBgIllustration, { width: illustrationSize, height: illustrationSize }, isTablet && styles.kpiBgIllustrationTablet]}
+            contentFit="contain"
+          />
+
+          <View style={styles.kpiContentContainer}>
+            <View style={styles.kpiTopRow}>
+              <View style={[styles.kpiIconBox, isTablet && styles.kpiIconBoxTablet, { backgroundColor: '#EEF2FF' }]}>
+                <CreditCard size={isSmallScreen ? 15 : isTablet ? 18 : 17} color="#4F46E5" />
+              </View>
+              <View style={[styles.kpiBadge, isTablet && styles.kpiBadgeTablet, { backgroundColor: '#E0E7FF' }]}>
+                <Text style={[styles.kpiBadgeText, isTablet && styles.kpiBadgeTextTablet, { color: '#3730A3' }]}>{onlinePct}% CARD</Text>
+              </View>
+            </View>
+            <Text
+              style={[styles.kpiValue, isTablet && styles.kpiValueTablet, isSmallScreen && { fontSize: 14 }]}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.7}
+            >
+              £{analytics.onlineRevenue.toFixed(2)}
+            </Text>
+            <Text style={[styles.kpiLabel, isTablet && styles.kpiLabelTablet]} numberOfLines={1}>Online / Card</Text>
+            <Text style={[styles.kpiSub, isTablet && styles.kpiSubTablet]} numberOfLines={1} ellipsizeMode="tail">
+              {analytics.onlineOrdersCount} online orders
+            </Text>
+          </View>
+        </View>
+
+        {/* Card 6: Fulfillment Rate */}
+        <View style={[styles.kpiCard, styles.kpiCardRate, { width: cardWidth }, isTablet && styles.kpiCardTablet, isSmallScreen && { padding: 10 }]}>
           <View
             style={[
               styles.kpiGlowBackdrop,
@@ -926,225 +948,225 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
           />
           <Image
             source={require('../assets/kpi-fulfillment-rate.png')}
-            style={[styles.kpiBgIllustration, { width: illustrationSize, height: illustrationSize }]}
+            style={[styles.kpiBgIllustration, { width: illustrationSize, height: illustrationSize }, isTablet && styles.kpiBgIllustrationTablet]}
             contentFit="contain"
           />
 
           <View style={styles.kpiContentContainer}>
             <View style={styles.kpiTopRow}>
-              <View style={[styles.kpiIconBox, { backgroundColor: '#F0FDFA' }]}>
-                <CheckCircle2 size={isSmallScreen ? 15 : 17} color="#0D9488" />
+              <View style={[styles.kpiIconBox, isTablet && styles.kpiIconBoxTablet, { backgroundColor: '#F0FDFA' }]}>
+                <CheckCircle2 size={isSmallScreen ? 15 : isTablet ? 18 : 17} color="#0D9488" />
               </View>
-              <View style={[styles.kpiBadge, { backgroundColor: '#CCFBF1' }]}>
-                <Text style={[styles.kpiBadgeText, { color: '#0F766E' }]}>RATE</Text>
+              <View style={[styles.kpiBadge, isTablet && styles.kpiBadgeTablet, { backgroundColor: '#CCFBF1' }]}>
+                <Text style={[styles.kpiBadgeText, isTablet && styles.kpiBadgeTextTablet, { color: '#0F766E' }]}>RATE</Text>
               </View>
             </View>
             <Text
-              style={[styles.kpiValue, isSmallScreen && { fontSize: 14 }]}
+              style={[styles.kpiValue, isTablet && styles.kpiValueTablet, isSmallScreen && { fontSize: 14 }]}
               numberOfLines={1}
               adjustsFontSizeToFit
               minimumFontScale={0.7}
             >
               {fulfillmentRate}%
             </Text>
-            <Text style={styles.kpiLabel} numberOfLines={1}>Fulfillment Rate</Text>
-            <Text style={styles.kpiSub} numberOfLines={1} ellipsizeMode="tail">
+            <Text style={[styles.kpiLabel, isTablet && styles.kpiLabelTablet]} numberOfLines={1}>Fulfillment Rate</Text>
+            <Text style={[styles.kpiSub, isTablet && styles.kpiSubTablet]} numberOfLines={1} ellipsizeMode="tail">
               {analytics.cancelledOrders} cancelled ({cancellationRate}%)
             </Text>
           </View>
         </View>
       </View>
 
-      {/* 2. Interactive Sales & Orders Trajectory Trend Chart */}
+      {/* 2. Live Status Distribution Pipeline (Moved to top) */}
       <View style={styles.cardSection}>
-        <View style={styles.chartHeaderRow}>
+        <View style={[styles.chartHeaderRow, isTablet && styles.chartHeaderRowTablet]}>
           <View>
-            <Text style={styles.cardSectionTitle}>Performance Trajectory</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
+              <View style={styles.liveDot} />
+              <Text style={styles.cardSectionTitle}>Live Status Distribution</Text>
+            </View>
             <Text style={styles.cardSectionSub}>
-              {chartMetric === 'revenue'
-                ? 'Daily revenue progress'
-                : chartMetric === 'orders'
-                  ? 'Daily volume of placed orders'
-                  : 'Cash vs Online order volume comparison'}
+              Real-time order pipeline across operational lifecycle stages
             </Text>
-          </View>
-
-          {/* Metric Segment Toggle */}
-          <View style={styles.segmentContainer}>
-            <TouchableOpacity
-              style={[styles.segmentBtn, chartMetric === 'revenue' && styles.segmentBtnActive]}
-              onPress={() => setChartMetric('revenue')}
-            >
-              <Text style={[styles.segmentBtnText, chartMetric === 'revenue' && styles.segmentBtnTextActive]}>
-                £ Revenue
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.segmentBtn, chartMetric === 'orders' && styles.segmentBtnActive]}
-              onPress={() => setChartMetric('orders')}
-            >
-              <Text style={[styles.segmentBtnText, chartMetric === 'orders' && styles.segmentBtnTextActive]}>
-                Orders
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.segmentBtn, chartMetric === 'payment' && styles.segmentBtnActive]}
-              onPress={() => setChartMetric('payment')}
-            >
-              <Text style={[styles.segmentBtnText, chartMetric === 'payment' && styles.segmentBtnTextActive]}>
-                Cash/Card
-              </Text>
-            </TouchableOpacity>
           </View>
         </View>
 
-        {/* Selected Day Tooltip / Indicator Bar */}
-        {selectedDay ? (
-          <View style={styles.tooltipBox}>
-            <View style={styles.tooltipDot} />
-            <Text style={styles.tooltipText}>
-              <Text style={{ fontWeight: '800', color: '#111827' }}>{selectedDay.date}: </Text>
-              £{selectedDay.revenue.toFixed(2)} Revenue • {selectedDay.orders} Orders ({selectedDay.cashOrders} Cash,{' '}
-              {selectedDay.onlineOrders} Card)
-            </Text>
-          </View>
-        ) : null}
-
-        {/* Bar Chart Canvas */}
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chartScrollArea}>
-          <View style={styles.chartCanvas}>
-            {chartData.map((item, index) => {
-              const isSelected = selectedDayIndex === index;
-
-              if (chartMetric === 'revenue') {
-                const heightPct = Math.max((item.revenue / maxChartValue) * 100, 8);
-                return (
-                  <TouchableOpacity
-                    key={item.date + index}
-                    style={styles.barCol}
-                    activeOpacity={0.8}
-                    onPress={() => setSelectedDayIndex(isSelected ? null : index)}
-                  >
-                    <Text style={styles.barTopVal}>£{item.revenue > 999 ? `${(item.revenue / 1000).toFixed(1)}k` : item.revenue.toFixed(0)}</Text>
-                    <View style={styles.barTrack}>
-                      <View
-                        style={[
-                          styles.barFill,
-                          { height: `${Math.min(heightPct, 100)}%`, backgroundColor: isSelected ? '#C2410C' : '#FF5C39' },
-                        ]}
-                      />
-                    </View>
-                    <Text style={[styles.barDateLabel, isSelected && styles.barDateLabelSelected]}>
-                      {item.date}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              }
-
-              if (chartMetric === 'orders') {
-                const heightPct = Math.max((item.orders / maxChartValue) * 100, 8);
-                return (
-                  <TouchableOpacity
-                    key={item.date + index}
-                    style={styles.barCol}
-                    activeOpacity={0.8}
-                    onPress={() => setSelectedDayIndex(isSelected ? null : index)}
-                  >
-                    <Text style={styles.barTopVal}>{item.orders}</Text>
-                    <View style={styles.barTrack}>
-                      <View
-                        style={[
-                          styles.barFill,
-                          { height: `${Math.min(heightPct, 100)}%`, backgroundColor: isSelected ? '#1D4ED8' : '#3B82F6' },
-                        ]}
-                      />
-                    </View>
-                    <Text style={[styles.barDateLabel, isSelected && styles.barDateLabelSelected]}>
-                      {item.date}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              }
-
-              // Payment Comparison: Dual bars for Cash vs Online
-              const cashHeight = Math.max((item.cashOrders / maxChartValue) * 100, 6);
-              const onlineHeight = Math.max((item.onlineOrders / maxChartValue) * 100, 6);
+        {isTablet ? (
+          /* Tablet: All 6 in a single horizontal row */
+          <View style={styles.lifecyclePillsRowTablet}>
+            {analytics.statusReport.map((st) => {
+              const theme = getStatusTheme(st.id);
               return (
                 <TouchableOpacity
-                  key={item.date + index}
-                  style={styles.dualBarCol}
-                  activeOpacity={0.8}
-                  onPress={() => setSelectedDayIndex(isSelected ? null : index)}
+                  key={st.id}
+                  style={[
+                    styles.lifecycleChipTop,
+                    styles.lifecycleChipTopTablet,
+                    { backgroundColor: theme.bg, borderColor: theme.border },
+                  ]}
+                  onPress={() => onNavigateOrders?.()}
+                  activeOpacity={0.7}
                 >
-                  <Text style={styles.barTopVal}>{item.orders}</Text>
-                  <View style={styles.dualBarTrack}>
-                    <View style={[styles.dualBar, { height: `${Math.min(cashHeight, 100)}%`, backgroundColor: '#10B981' }]} />
-                    <View style={[styles.dualBar, { height: `${Math.min(onlineHeight, 100)}%`, backgroundColor: '#6366F1' }]} />
-                  </View>
-                  <Text style={[styles.barDateLabel, isSelected && styles.barDateLabelSelected]}>
-                    {item.date}
+                  <Text style={[styles.lifecycleCountTop, { color: theme.text }]}>{st.count}</Text>
+                  <Text
+                    style={styles.lifecycleLabelTop}
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.8}
+                  >
+                    {st.name}
                   </Text>
                 </TouchableOpacity>
               );
             })}
           </View>
-        </ScrollView>
-
-        {/* Legend */}
-        {chartMetric === 'payment' && (
-          <View style={styles.legendRow}>
-            <View style={styles.legendItem}>
-              <View style={[styles.legendSquare, { backgroundColor: '#10B981' }]} />
-              <Text style={styles.legendText}>Cash Orders</Text>
+        ) : (
+          /* Mobile: 2 rows of 3 chips each (3x2 grid) */
+          <View style={styles.lifecyclePillsMobileGrid}>
+            <View style={styles.lifecyclePillsRowMobile}>
+              {analytics.statusReport.slice(0, 3).map((st) => {
+                const theme = getStatusTheme(st.id);
+                return (
+                  <TouchableOpacity
+                    key={st.id}
+                    style={[
+                      styles.lifecycleChipTop,
+                      { backgroundColor: theme.bg, borderColor: theme.border },
+                    ]}
+                    onPress={() => onNavigateOrders?.()}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.lifecycleCountTop, { color: theme.text }]}>{st.count}</Text>
+                    <Text
+                      style={styles.lifecycleLabelTop}
+                      numberOfLines={2}
+                    >
+                      {st.name}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
-            <View style={styles.legendItem}>
-              <View style={[styles.legendSquare, { backgroundColor: '#6366F1' }]} />
-              <Text style={styles.legendText}>Online / Card Orders</Text>
+            <View style={styles.lifecyclePillsRowMobile}>
+              {analytics.statusReport.slice(3, 6).map((st) => {
+                const theme = getStatusTheme(st.id);
+                return (
+                  <TouchableOpacity
+                    key={st.id}
+                    style={[
+                      styles.lifecycleChipTop,
+                      { backgroundColor: theme.bg, borderColor: theme.border },
+                    ]}
+                    onPress={() => onNavigateOrders?.()}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.lifecycleCountTop, { color: theme.text }]}>{st.count}</Text>
+                    <Text
+                      style={styles.lifecycleLabelTop}
+                      numberOfLines={2}
+                    >
+                      {st.name}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
           </View>
         )}
       </View>
 
-      {/* 3. Payment Method Breakdown Progress Card */}
-      <View style={styles.cardSection}>
-        <Text style={styles.cardSectionTitle}>Payment Method Share</Text>
-        <Text style={styles.cardSectionSub}>Volume and revenue ratio by payment channel</Text>
+      {/* 3 & 4. Analytics Duo Row on Tablet (Payment Split & Top Dishes) */}
+      <View style={[styles.analyticsGridRow, isTablet && styles.analyticsGridRowTablet]}>
+        {/* Payment Method Breakdown Progress Card */}
+        <View style={[styles.cardSection, isTablet && styles.analyticsCol]}>
+          <Text style={styles.cardSectionTitle}>Payment Method Share</Text>
+          <Text style={styles.cardSectionSub}>Volume and revenue ratio by payment channel</Text>
 
-        {/* Dual Progress Bar */}
-        <View style={styles.dualProgressWrapper}>
-          <View style={[styles.dualProgressFill, { flex: cashPct || 1, backgroundColor: '#10B981' }]} />
-          <View style={[styles.dualProgressFill, { flex: onlinePct || 1, backgroundColor: '#6366F1' }]} />
+          {/* Dual Progress Bar */}
+          <View style={styles.dualProgressWrapper}>
+            <View style={[styles.dualProgressFill, { flex: cashPct || 1, backgroundColor: '#10B981' }]} />
+            <View style={[styles.dualProgressFill, { flex: onlinePct || 1, backgroundColor: '#6366F1' }]} />
+          </View>
+
+          {/* Stats Row */}
+          <View style={styles.paymentDetailsRow}>
+            <View style={styles.paymentDetailBox}>
+              <View style={styles.paymentDetailTop}>
+                <View style={[styles.paymentDot, { backgroundColor: '#10B981' }]} />
+                <Text style={styles.paymentDetailTitle}>Cash on Delivery</Text>
+              </View>
+              <Text style={styles.paymentAmountText}>£{analytics.cashRevenue.toFixed(2)}</Text>
+              <Text style={styles.paymentCountSub}>
+                {analytics.cashOrdersCount} orders • {cashPct}% volume
+              </Text>
+            </View>
+
+            <View style={styles.paymentDivider} />
+
+            <View style={styles.paymentDetailBox}>
+              <View style={styles.paymentDetailTop}>
+                <View style={[styles.paymentDot, { backgroundColor: '#6366F1' }]} />
+                <Text style={styles.paymentDetailTitle}>Online / Card</Text>
+              </View>
+              <Text style={styles.paymentAmountText}>£{analytics.onlineRevenue.toFixed(2)}</Text>
+              <Text style={styles.paymentCountSub}>
+                {analytics.onlineOrdersCount} orders • {onlinePct}% volume
+              </Text>
+            </View>
+          </View>
         </View>
 
-        {/* Stats Row */}
-        <View style={styles.paymentDetailsRow}>
-          <View style={styles.paymentDetailBox}>
-            <View style={styles.paymentDetailTop}>
-              <View style={[styles.paymentDot, { backgroundColor: '#10B981' }]} />
-              <Text style={styles.paymentDetailTitle}>Cash on Delivery</Text>
+        {/* Top Performing Menu Items (Leaderboard) */}
+        <View style={[styles.cardSection, isTablet && styles.analyticsCol]}>
+          <View style={styles.leaderboardHeaderRow}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Flame size={18} color="#FF5C39" />
+              <Text style={styles.cardSectionTitle}>Top Performing Dishes</Text>
             </View>
-            <Text style={styles.paymentAmountText}>£{analytics.cashRevenue.toFixed(2)}</Text>
-            <Text style={styles.paymentCountSub}>
-              {analytics.cashOrdersCount} orders • {cashPct}% volume
-            </Text>
           </View>
 
-          <View style={styles.paymentDivider} />
-
-          <View style={styles.paymentDetailBox}>
-            <View style={styles.paymentDetailTop}>
-              <View style={[styles.paymentDot, { backgroundColor: '#6366F1' }]} />
-              <Text style={styles.paymentDetailTitle}>Online / Card</Text>
+          {topDishes.length === 0 ? (
+            <View style={styles.emptyDishesBox}>
+              <Award size={24} color="#CBD5E1" />
+              <Text style={styles.emptyDishesText}>No item performance data available for this timeframe.</Text>
             </View>
-            <Text style={styles.paymentAmountText}>£{analytics.onlineRevenue.toFixed(2)}</Text>
-            <Text style={styles.paymentCountSub}>
-              {analytics.onlineOrdersCount} orders • {onlinePct}% volume
-            </Text>
-          </View>
+          ) : (
+            <View style={styles.dishList}>
+              {topDishes.map((dish, idx) => {
+                const rankColor = idx === 0 ? '#F59E0B' : idx === 1 ? '#94A3B8' : idx === 2 ? '#B45309' : '#64748B';
+                const fillPct = Math.round((dish.totalQuantitySold / maxDishQty) * 100);
+                return (
+                  <View key={dish.itemName + idx} style={styles.dishRow}>
+                    <View style={[styles.rankCircle, { backgroundColor: rankColor + '20' }]}>
+                      <Text style={[styles.rankText, { color: rankColor }]}>#{idx + 1}</Text>
+                    </View>
+
+                    <View style={{ flex: 1, marginHorizontal: 10 }}>
+                      <View style={styles.dishNameRow}>
+                        <Text style={styles.dishName} numberOfLines={1}>
+                          {dish.itemName}
+                        </Text>
+                        <Text style={styles.dishRev}>
+                          {dish.totalRevenue > 0 ? `£${dish.totalRevenue.toFixed(2)}` : ''}
+                        </Text>
+                      </View>
+                      <View style={styles.dishBarTrack}>
+                        <View style={[styles.dishBarFill, { width: `${fillPct}%`, backgroundColor: rankColor }]} />
+                      </View>
+                    </View>
+
+                    <View style={styles.dishQtyBadge}>
+                      <Text style={styles.dishQtyText}>{dish.totalQuantitySold} sold</Text>
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+          )}
         </View>
       </View>
 
-      {/* 4. Store Performance: Orders & Fulfillment Breakdown Table */}
+      {/* Store Performance: Orders & Fulfillment Breakdown Table */}
       <View style={styles.cardSection}>
         <View style={styles.tableHeaderSection}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -1267,91 +1289,6 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
             </Text>
           </View>
         </View>
-
-        {/* Compact Lifecycle Pipeline Status Pills */}
-        <View style={styles.lifecycleRowContainer}>
-          <Text style={styles.lifecycleHeaderLabel}>Live Status Distribution</Text>
-          <View style={styles.lifecyclePillsRow}>
-            {analytics.statusReport.map((st) => {
-              const bg =
-                st.id === 'delivered'
-                  ? '#ECFDF5'
-                  : st.id === 'cancelled'
-                    ? '#FEF2F2'
-                    : st.id === 'ready_for_pickup'
-                      ? '#FFF7ED'
-                      : st.id === 'preparing'
-                        ? '#EFF6FF'
-                        : '#F9FAFB';
-              const textCol =
-                st.id === 'delivered'
-                  ? '#059669'
-                  : st.id === 'cancelled'
-                    ? '#DC2626'
-                    : st.id === 'ready_for_pickup'
-                      ? '#EA580C'
-                      : st.id === 'preparing'
-                        ? '#2563EB'
-                        : '#4B5563';
-              return (
-                <View key={st.id} style={[styles.lifecycleChipCompact, { backgroundColor: bg }]}>
-                  <Text style={[styles.lifecycleCountCompact, { color: textCol }]}>{st.count}</Text>
-                  <Text style={styles.lifecycleLabelCompact}>{st.name}</Text>
-                </View>
-              );
-            })}
-          </View>
-        </View>
-      </View>
-
-      {/* 5. Top Performing Menu Items (Leaderboard) */}
-      <View style={styles.cardSection}>
-        <View style={styles.leaderboardHeaderRow}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            <Flame size={18} color="#FF5C39" />
-            <Text style={styles.cardSectionTitle}>Top Performing Dishes</Text>
-          </View>
-          {/* <Text style={styles.cardSectionSubSmall}>Ranked by quantity sold</Text> */}
-        </View>
-
-        {topDishes.length === 0 ? (
-          <View style={styles.emptyDishesBox}>
-            <Award size={24} color="#CBD5E1" />
-            <Text style={styles.emptyDishesText}>No item performance data available for this timeframe.</Text>
-          </View>
-        ) : (
-          <View style={styles.dishList}>
-            {topDishes.map((dish, idx) => {
-              const rankColor = idx === 0 ? '#F59E0B' : idx === 1 ? '#94A3B8' : idx === 2 ? '#B45309' : '#64748B';
-              const fillPct = Math.round((dish.totalQuantitySold / maxDishQty) * 100);
-              return (
-                <View key={dish.itemName + idx} style={styles.dishRow}>
-                  <View style={[styles.rankCircle, { backgroundColor: rankColor + '20' }]}>
-                    <Text style={[styles.rankText, { color: rankColor }]}>#{idx + 1}</Text>
-                  </View>
-
-                  <View style={{ flex: 1, marginHorizontal: 10 }}>
-                    <View style={styles.dishNameRow}>
-                      <Text style={styles.dishName} numberOfLines={1}>
-                        {dish.itemName}
-                      </Text>
-                      <Text style={styles.dishRev}>
-                        {dish.totalRevenue > 0 ? `£${dish.totalRevenue.toFixed(2)}` : ''}
-                      </Text>
-                    </View>
-                    <View style={styles.dishBarTrack}>
-                      <View style={[styles.dishBarFill, { width: `${fillPct}%`, backgroundColor: rankColor }]} />
-                    </View>
-                  </View>
-
-                  <View style={styles.dishQtyBadge}>
-                    <Text style={styles.dishQtyText}>{dish.totalQuantitySold} sold</Text>
-                  </View>
-                </View>
-              );
-            })}
-          </View>
-        )}
       </View>
 
       {/* 6. Quick Action to Live Orders Board */}
@@ -1934,6 +1871,42 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
 
+  kpiCardTablet: {
+    padding: 15,
+    borderRadius: 18,
+    minHeight: 118,
+  },
+  kpiBgIllustrationTablet: {
+    bottom: -6,
+    right: -6,
+  },
+  kpiIconBoxTablet: {
+    width: 34,
+    height: 34,
+    borderRadius: 9,
+  },
+  kpiBadgeTablet: {
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  kpiBadgeTextTablet: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  kpiValueTablet: {
+    fontSize: 19,
+    letterSpacing: -0.4,
+  },
+  kpiLabelTablet: {
+    fontSize: 13,
+    marginTop: 3,
+  },
+  kpiSubTablet: {
+    fontSize: 11,
+    marginTop: 2,
+  },
+
   /* Card Section Standard */
   cardSection: {
     backgroundColor: '#FFFFFF',
@@ -1947,6 +1920,19 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.04,
     shadowRadius: 6,
     elevation: 2,
+  },
+  analyticsGridRow: {
+    marginBottom: 0,
+  },
+  analyticsGridRowTablet: {
+    flexDirection: 'row',
+    gap: 14,
+    alignItems: 'stretch',
+    marginBottom: 0,
+  },
+  analyticsCol: {
+    flex: 1,
+    marginBottom: 14,
   },
   cardSectionTitle: {
     fontSize: 15,
@@ -1969,6 +1955,12 @@ const styles = StyleSheet.create({
     flexDirection: 'column',
     gap: 8,
     marginBottom: 12,
+  },
+  chartHeaderRowTablet: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 14,
   },
   segmentContainer: {
     flexDirection: 'row',
@@ -2315,6 +2307,47 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#6B7280',
     marginTop: 1,
+  },
+  /* Top Live Status Pipeline */
+  lifecyclePillsMobileGrid: {
+    gap: 8,
+    marginTop: 10,
+  },
+  lifecyclePillsRowMobile: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  lifecyclePillsRowTablet: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 10,
+  },
+  lifecycleChipTop: {
+    flex: 1,
+    borderRadius: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    minHeight: 58,
+  },
+  lifecycleChipTopTablet: {
+    paddingVertical: 12,
+    minHeight: 66,
+  },
+  lifecycleCountTop: {
+    fontSize: 16,
+    fontWeight: '800',
+    letterSpacing: -0.3,
+  },
+  lifecycleLabelTop: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: '#64748B',
+    marginTop: 2,
+    textAlign: 'center',
+    lineHeight: 13,
   },
 
   /* Leaderboard */

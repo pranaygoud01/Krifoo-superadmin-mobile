@@ -224,4 +224,15 @@ export const orderService = {
   async getOrderDistributionReport(): Promise<{ success: boolean; data?: any; message?: string }> {
     return apiRequest('/api/orders/restaurant/reports/orders');
   },
+
+  /**
+   * Place manual POS / cash order.
+   * Calls POST /api/orders/place-cash-order
+   */
+  async createManualOrder(orderData: any): Promise<{ success: boolean; data?: any; message?: string }> {
+    return apiRequest('/api/orders/place-cash-order', {
+      method: 'POST',
+      body: orderData,
+    });
+  },
 };

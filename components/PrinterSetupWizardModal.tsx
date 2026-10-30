@@ -691,7 +691,7 @@ export function PrinterSetupWizardModal({
         target: selectedType === 'bluetooth' ? targetVal : '',
         macAddress: selectedType === 'bluetooth' ? macVal : '',
         ipAddress: selectedType === 'network' ? ipVal : '',
-        port: selectedType === 'network' ? portVal : undefined,
+        port: selectedType === 'network' ? portVal : (currentConfig.port ?? 9100),
         paperWidth,
         autoPrint,
         copies,

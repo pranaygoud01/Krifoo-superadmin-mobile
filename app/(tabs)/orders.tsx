@@ -19,7 +19,7 @@ import {
   LayoutAnimation,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { OrderDetailModal } from '../../components/OrderDetailModal';
 import { AssignDeliveryModal } from '../../components/AssignDeliveryModal';
 import { ConfirmModal } from '../../components/ConfirmModal';
@@ -1178,6 +1178,8 @@ export default function OrdersScreen() {
   const [toolbarHeight, setToolbarHeight] = useState(isTablet ? 42 : 46);
   const [isHeaderCollapsed, setIsHeaderCollapsed] = useState(false);
 
+  const routeParams = useLocalSearchParams<{ channel?: string }>();
+
   // Board view layout customization:
   // Users can customize how many status tabs / columns fit per screen (e.g. 1, 2, 3, 4, 5, 6, or 'auto').
   const [boardColumnsSetting, setBoardColumnsSetting] = useState<BoardColumnsOption>('auto');
@@ -1265,6 +1267,13 @@ export default function OrdersScreen() {
   const [paymentStatusFilter, setPaymentStatusFilter] = useState<'all' | 'paid' | 'pending'>('all');
   const [activeTab, setActiveTab] = useState<string>('all');
   const [viewMode, setViewMode] = useState<'tabs' | 'board'>('tabs');
+
+  useEffect(() => {
+    if (routeParams?.channel && ['all', 'delivery', 'pickup', 'takeaway', 'dine_in'].includes(routeParams.channel)) {
+      const channelVal = routeParams.channel === 'takeaway' ? 'pickup' : routeParams.channel;
+      setTypeFilter(channelVal);
+    }
+  }, [routeParams?.channel]);
 
   // Full length board calculation:
   // The boards length should be full length extending all the way down to the bottom

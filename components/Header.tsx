@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert, Image, DeviceEventEmitter } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Alert, Image, DeviceEventEmitter, useWindowDimensions } from 'react-native';
 import { useRouter, useSegments } from 'expo-router';
 import { ArrowLeft, Bell, Settings, User } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -33,6 +33,9 @@ export const Header: React.FC<HeaderProps> = ({
   const { user } = useAuth();
   const isSuperAdmin = user?.userType === 'super_admin';
   const [unreadCount, setUnreadCount] = React.useState<number>(0);
+
+  const { width: windowWidth } = useWindowDimensions();
+  const isTablet = windowWidth >= 768;
 
   // Resolve restaurant logo from user object or props
   const extractUserLogo = React.useCallback((): string | null => {
@@ -193,7 +196,7 @@ export const Header: React.FC<HeaderProps> = ({
 
   return (
     <SafeAreaView edges={['top']} style={styles.safeArea}>
-      <View style={styles.header}>
+      <View style={[styles.header, isTablet && styles.headerTablet]}>
         <View style={styles.leftContainer}>
           {canGoBack && (
             <TouchableOpacity
@@ -202,33 +205,33 @@ export const Header: React.FC<HeaderProps> = ({
               activeOpacity={0.7}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
-              <ArrowLeft size={20} color={Colors.text} />
+              <ArrowLeft size={isTablet ? 22 : 20} color={Colors.text} />
             </TouchableOpacity>
           )}
           <View style={styles.titleContainer}>
             {title === 'Krifoo Admin' ? (
-              <View style={styles.profileSection}>
+              <View style={[styles.profileSection, isTablet && styles.profileSectionTablet]}>
                 {!isSuperAdmin && storeLogoUrl && !imageError ? (
                   <Image
                     source={{ uri: storeLogoUrl }}
-                    style={[styles.headerLogo, styles.headerRestaurantLogo]}
+                    style={[styles.headerLogo, styles.headerRestaurantLogo, isTablet && styles.headerLogoTablet]}
                     resizeMode="cover"
                     onError={() => setImageError(true)}
                   />
                 ) : (
                   <Image
                     source={require('../assets/logo.png')}
-                    style={styles.headerLogo}
+                    style={[styles.headerLogo, isTablet && styles.headerLogoTablet]}
                     resizeMode="contain"
                   />
                 )}
                 <View style={styles.greetingTextContainer}>
-                  <Text style={styles.greetingText}>
+                  <Text style={[styles.greetingText, isTablet && styles.greetingTextTablet]}>
                     {isSuperAdmin
                       ? `Hello, ${user?.fullName?.split(' ')[0] || 'Admin'} 👋`
                       : (getRestaurantName() || 'Restaurant Partner')}
                   </Text>
-                  <Text style={styles.greetingRole}>
+                  <Text style={[styles.greetingRole, isTablet && styles.greetingRoleTablet]}>
                     {isSuperAdmin
                       ? 'Admin'
                       : (getOwnerName() || 'Restaurant Partner')}
@@ -236,7 +239,7 @@ export const Header: React.FC<HeaderProps> = ({
                 </View>
               </View>
             ) : (
-              <Text style={styles.title} numberOfLines={1}>
+              <Text style={[styles.title, isTablet && styles.titleTablet]} numberOfLines={1}>
                 {title}
               </Text>
             )}
@@ -323,6 +326,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: Colors.background,
   },
+  headerTablet: {
+    maxWidth: 1200,
+    width: '100%',
+    alignSelf: 'center',
+    paddingHorizontal: 28,
+    paddingTop: 16,
+    paddingBottom: 16,
+  },
   leftContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -349,14 +360,24 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: -0.5,
   },
+  titleTablet: {
+    fontSize: 20,
+  },
   profileSection: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
   },
+  profileSectionTablet: {
+    gap: 14,
+  },
   headerLogo: {
     width: 36,
     height: 36,
+  },
+  headerLogoTablet: {
+    width: 44,
+    height: 44,
   },
   headerRestaurantLogo: {
     borderRadius: 18,
@@ -373,10 +394,18 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: -0.3,
   },
+  greetingTextTablet: {
+    fontSize: 18,
+    letterSpacing: -0.4,
+  },
   greetingRole: {
     color: Colors.textMuted,
     fontSize: 11,
     fontWeight: '600',
+    marginTop: 2,
+  },
+  greetingRoleTablet: {
+    fontSize: 12.5,
     marginTop: 2,
   },
   rightContainer: {

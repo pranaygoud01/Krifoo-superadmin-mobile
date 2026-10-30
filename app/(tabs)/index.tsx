@@ -9,13 +9,15 @@ import {
   DeviceEventEmitter,
   useWindowDimensions,
   Modal,
+  Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { Header } from '../../components/Header';
 import { StatCard } from '../../components/StatCard';
 import { StatusBadge } from '../../components/StatusBadge';
-import { RestaurantAnalytics } from '../../components/RestaurantAnalytics';
+import { CreateOrderModal } from '../../components/CreateOrderModal';
 import { ErrorState } from '../../components/ErrorState';
 import { ApiErrorType } from '../../services/api';
 import { Colors } from '../../constants/colors';
@@ -24,6 +26,7 @@ import { orderService } from '../../services/order.service';
 import { userService } from '../../services/user.service';
 import { restaurantOwnerService } from '../../services/restaurant-owner.service';
 import { Restaurant, Order } from '../../types';
+import { printThermalReceipt, isAutoPrintEnabled } from '../../services/thermal-print.service';
 import {
   Store,
   Clock,
@@ -33,6 +36,7 @@ import {
   ArrowRight,
   TrendingUp,
   Utensils,
+  UtensilsCrossed,
   Calendar,
   Truck,
   Megaphone,
@@ -47,6 +51,128 @@ import {
   X,
 } from 'lucide-react-native';
 import { useAuth } from '../../context/AuthContext';
+
+function getOrderFulfillmentType(order: Order): 'delivery' | 'pickup' | 'takeaway' | 'dine_in' {
+  const oType = ((order.orderType || (order as any).deliveryType || '') as string).toLowerCase();
+  const domain = ((order.sourceDomain || '') as string).toLowerCase();
+  const notes = typeof order.notes === 'string' ? order.notes.toLowerCase() : '';
+  const addr1 = typeof (order.deliveryAddress as any)?.addressLine1 === 'string' ? (order.deliveryAddress as any).addressLine1.toLowerCase() : '';
+  const app = ((order as any).appName || '').toLowerCase();
+
+  if (
+    oType === 'dine_in' ||
+    oType === 'dinein' ||
+    oType === 'eatin' ||
+    oType === 'eat_in' ||
+    (order as any).tableNumber ||
+    notes.includes('eat-in') ||
+    notes.includes('dine-in') ||
+    notes.includes('dine in') ||
+    notes.includes('table') ||
+    addr1.startsWith('table')
+  ) {
+    return 'dine_in';
+  }
+
+  const custName = (order.customerDetails?.name || (order.customerId as any)?.fullName || '').toLowerCase();
+  const isTakeawayApp =
+    oType === 'takeaway' ||
+    domain.includes('swaad-takeaway') ||
+    domain.includes('swaadtakeaway') ||
+    app.includes('takeaway') ||
+    notes.includes('takeaway') ||
+    custName.includes('takeaway');
+
+  if (isTakeawayApp) return 'takeaway';
+  if (oType === 'pickup') return 'pickup';
+  return 'delivery';
+}
+
+interface OrderNextAction {
+  nextStatus: string;
+  label: string;
+  color: string;
+  bgColor: string;
+  IconComponent: any;
+}
+
+function getOrderNextAction(order: Order): OrderNextAction | null {
+  const status = (order.status || '').toLowerCase();
+  const fulfillment = getOrderFulfillmentType(order);
+
+  // 1. Placed / Pending -> Accept
+  if (status === 'placed' || status === 'pending') {
+    return {
+      nextStatus: 'preparing',
+      label: 'Accept',
+      color: '#FFFFFF',
+      bgColor: '#10B981',
+      IconComponent: Check,
+    };
+  }
+
+  // 2. Confirmed / Preparing
+  if (status === 'confirmed' || status === 'preparing') {
+    if (fulfillment === 'dine_in') {
+      return {
+        nextStatus: 'delivered',
+        label: 'Ready to Serve',
+        color: '#FFFFFF',
+        bgColor: '#7C3AED',
+        IconComponent: UtensilsCrossed,
+      };
+    }
+    if (fulfillment === 'takeaway' || fulfillment === 'pickup') {
+      return {
+        nextStatus: 'ready_for_pickup',
+        label: fulfillment === 'takeaway' ? 'Ready (Takeaway)' : 'Ready (Pickup)',
+        color: '#FFFFFF',
+        bgColor: '#FF5C39',
+        IconComponent: Check,
+      };
+    }
+    return {
+      nextStatus: 'out_for_delivery',
+      label: 'Dispatch',
+      color: '#FFFFFF',
+      bgColor: '#2563EB',
+      IconComponent: Bike,
+    };
+  }
+
+  // 3. Ready for pickup
+  if (status === 'ready_for_pickup') {
+    return {
+      nextStatus: 'delivered',
+      label: fulfillment === 'takeaway' ? 'Mark Collected' : 'Mark Delivered',
+      color: '#FFFFFF',
+      bgColor: '#10B981',
+      IconComponent: Check,
+    };
+  }
+
+  // 4. Out for delivery
+  if (status === 'out_for_delivery') {
+    return {
+      nextStatus: 'delivered',
+      label: 'Delivered',
+      color: '#FFFFFF',
+      bgColor: '#10B981',
+      IconComponent: Check,
+    };
+  }
+
+  return null;
+}
+
+const STATUS_PICKER_OPTIONS: { id: string; label: string; color: string }[] = [
+  { id: 'placed', label: 'Placed (New Order)', color: '#D97706' },
+  { id: 'preparing', label: 'In Kitchen / Preparing', color: '#7C3AED' },
+  { id: 'ready_for_pickup', label: 'Ready for Pickup / Takeaway', color: '#EA580C' },
+  { id: 'out_for_delivery', label: 'Out for Delivery', color: '#2563EB' },
+  { id: 'delivered', label: 'Delivered / Completed', color: '#059669' },
+  { id: 'cancelled', label: 'Cancelled', color: '#DC2626' },
+];
 
 export default function DashboardScreen() {
   const router = useRouter();
@@ -78,6 +204,104 @@ export default function DashboardScreen() {
     message: string;
     statusCode?: number;
   } | null>(null);
+
+  const [createOrderModalVisible, setCreateOrderModalVisible] = useState(false);
+  const [createOrderInitialChannel, setCreateOrderInitialChannel] = useState<'dine_in' | 'takeaway' | 'delivery'>('dine_in');
+
+  const [updatingOrderId, setUpdatingOrderId] = useState<string | null>(null);
+  const [statusPickerOrder, setStatusPickerOrder] = useState<Order | null>(null);
+
+  const handleUpdateOrderStatus = async (order: Order, newStatus: string) => {
+    if (!order?._id) return;
+    setUpdatingOrderId(order._id);
+    const prevOrders = orders;
+
+    // 1. Optimistic local state update
+    setOrders((current) =>
+      current.map((o) => (o._id === order._id ? { ...o, status: newStatus as any } : o))
+    );
+
+    // 2. Auto-print receipt if moving to preparing/confirmed
+    if (newStatus === 'preparing' || newStatus === 'confirmed') {
+      (async () => {
+        try {
+          const autoPrint = await isAutoPrintEnabled();
+          if (autoPrint) {
+            let orderToPrint: any = order;
+            if (!orderToPrint?.orderedItems?.length && !(orderToPrint as any)?.items?.length) {
+              const fullOrderRes = await orderService.getOrderById(order._id);
+              if (fullOrderRes.success && fullOrderRes.data) orderToPrint = fullOrderRes.data;
+            }
+            if (orderToPrint) await printThermalReceipt(orderToPrint, true);
+          }
+        } catch (printErr) {
+          console.error('[Dashboard] Auto-print failed:', printErr);
+        }
+      })();
+    }
+
+    // 3. Update server
+    try {
+      const res = await orderService.updateOrderStatus(order._id, newStatus);
+      if (res.success) {
+        if (res.data) {
+          setOrders((current) =>
+            current.map((o) => (o._id === order._id ? { ...o, ...res.data } : o))
+          );
+        }
+      } else {
+        setOrders(prevOrders);
+        Alert.alert('Status Update Failed', res.message || 'Could not update order status.');
+      }
+    } catch (err: any) {
+      setOrders(prevOrders);
+      Alert.alert('Error', err?.message || 'Network error updating order status.');
+    } finally {
+      setUpdatingOrderId(null);
+    }
+  };
+
+  // Live Counts for Order Terminal channels
+  const orderTerminalCounts = useMemo(() => {
+    let inStore = 0;
+    let takeaway = 0;
+    let delivery = 0;
+
+    orders.forEach((o) => {
+      const oType = ((o.orderType || (o as any).deliveryType || '') as string).toLowerCase();
+      const notes = typeof o.notes === 'string' ? o.notes.toLowerCase() : '';
+      const addr1 = typeof (o.deliveryAddress as any)?.addressLine1 === 'string' ? (o.deliveryAddress as any).addressLine1.toLowerCase() : '';
+
+      if (
+        oType === 'dine_in' ||
+        oType === 'dinein' ||
+        oType === 'eatin' ||
+        oType === 'eat_in' ||
+        (o as any).tableNumber ||
+        notes.includes('eat-in') ||
+        notes.includes('dine-in') ||
+        notes.includes('table') ||
+        addr1.startsWith('table')
+      ) {
+        inStore++;
+      } else if (
+        oType === 'takeaway' ||
+        oType === 'pickup' ||
+        oType === 'collection' ||
+        notes.includes('takeaway') ||
+        notes.includes('pickup')
+      ) {
+        takeaway++;
+      } else if (oType === 'delivery') {
+        delivery++;
+      } else {
+        if (o.deliveryAddress) delivery++;
+        else takeaway++;
+      }
+    });
+
+    return { inStore, takeaway, delivery };
+  }, [orders]);
 
   const loadDashboardData = async () => {
     setRefreshing(true);
@@ -529,11 +753,13 @@ export default function DashboardScreen() {
     );
   }, [restaurantTableData]);
 
+  const tabletHorizontalPadding = 56;
+  const tabletContentWidth = Math.min(windowWidth - tabletHorizontalPadding, 1200 - tabletHorizontalPadding);
   const superCardWidth = isTablet
-    ? Math.floor((windowWidth - 32 - 3 * 12) / 4)
+    ? Math.floor((tabletContentWidth - 3 * 12) / 4)
     : Math.floor((windowWidth - 32 - (isSmallScreen ? 8 : 10)) / 2);
-  const superIllustrationSize = isSmallScreen ? 44 : 52;
-  const superGlowSize = isSmallScreen ? 60 : 72;
+  const superIllustrationSize = isSmallScreen ? 44 : isTablet ? 58 : 52;
+  const superGlowSize = isSmallScreen ? 60 : isTablet ? 78 : 72;
 
   return (
     <View style={styles.container}>
@@ -553,7 +779,11 @@ export default function DashboardScreen() {
       ) : (
         <ScrollView
           style={styles.scrollBody}
-          contentContainerStyle={[{ paddingBottom: 110 }, isTablet && styles.scrollBodyTablet]}
+            contentContainerStyle={[
+              styles.scrollContent,
+              isTablet && styles.scrollBodyTablet,
+              { paddingBottom: isTablet ? 140 : 110 }
+            ]}
           showsVerticalScrollIndicator={false}
           refreshControl={
             <RefreshControl
@@ -928,7 +1158,7 @@ export default function DashboardScreen() {
 
               <View style={styles.storeTableCard}>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                  <View style={styles.tableInner}>
+                      <View style={[styles.tableInner, isTablet && styles.tableInnerTablet]}>
                     {/* Table Header */}
                     <View style={styles.tableHeaderRow}>
                       <Text style={[styles.tableHeaderCell, styles.colRestaurant, { textAlign: 'left' }]}>RESTAURANT</Text>
@@ -1039,104 +1269,260 @@ export default function DashboardScreen() {
         ) : (
           /* ================= RESTAURANT OWNER DASHBOARD ================= */
           <>
-            {/* Business Control Center Grid */}
-            <View style={[styles.controlCenterSection, isTablet && styles.controlCenterSectionTablet]}>
-                {/* <Text style={styles.sectionHeader}>Manage Store</Text> */}
+                  {/* Quick Order Terminal & Channels Section */}
+                  <View style={[styles.orderTerminalSection, isTablet && styles.orderTerminalSectionTablet]}>
+                    <View style={[styles.orderSectionHeaderRow, isTablet && styles.orderSectionHeaderRowTablet]}>
+                      <View style={styles.orderSectionTitleGroup}>
+                        <Text style={[styles.orderSectionTitle, isTablet && styles.orderSectionTitleTablet]}>
+                          Order Operations
+                        </Text>
 
-                <View style={[styles.gridContainer, isSmallScreen && { gap: 8 }, isTablet && styles.gridContainerTablet]}>
-                  <TouchableOpacity
-                    style={[styles.gridCard, isSmallScreen && { padding: 11, minHeight: 80 }]}
-                    onPress={() => router.push('/bookings')}
-                    activeOpacity={0.7}
-                  >
-                    <View style={[styles.gridCardTextContainer, isSmallScreen && { paddingRight: 32 }]}>
-                      <Text style={styles.gridTitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
-                        Reservations
-                      </Text>
-                      <Text style={styles.gridSub} numberOfLines={2} ellipsizeMode="tail">
-                        Bookings feed
-                      </Text>
+                      </View>
+                      <TouchableOpacity
+                        style={styles.quickNewOrderBtn}
+                        onPress={() => {
+                          setCreateOrderInitialChannel('dine_in');
+                          setCreateOrderModalVisible(true);
+                        }}
+                        activeOpacity={0.8}
+                      >
+                        <Plus size={13} color="#FFFFFF" />
+                        <Text style={styles.quickNewOrderBtnText}>Punch Order</Text>
+                      </TouchableOpacity>
                     </View>
-                    <Image
-                      source={require('../../assets/reservation.png')}
-                      style={[styles.gridIllustration, isSmallScreen && { width: 44, height: 44, bottom: -4, right: -4 }]}
-                      contentFit="contain"
-                    />
-                  </TouchableOpacity>
 
-                  <TouchableOpacity
-                    style={[styles.gridCard, isSmallScreen && { padding: 11, minHeight: 80 }]}
-                    onPress={() => router.push('/tables')}
-                    activeOpacity={0.7}
-                  >
-                    <View style={[styles.gridCardTextContainer, isSmallScreen && { paddingRight: 32 }]}>
-                      <Text style={styles.gridTitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
-                        Dining Tables
-                      </Text>
-                      <Text style={styles.gridSub} numberOfLines={2} ellipsizeMode="tail">
-                        {tablesCount > 0
-                          ? `${tablesCount} table${tablesCount !== 1 ? 's' : ''} • ${activeSlotsCount} slots`
-                          : 'Configure & post tables'}
-                      </Text>
-                    </View>
-                    <Image
-                      source={require('../../assets/dining-table.png')}
-                      style={[styles.gridIllustration, isSmallScreen && { width: 44, height: 44, bottom: -4, right: -4 }]}
+                    {/* 4 Cards Grid - Responsive: 4 in 1 row on iPad, 2x2 on mobile */}
+                    <View style={[styles.orderGridWrapper, isTablet && styles.orderGridWrapperTablet]}>
+                      {/* Pair 1: Create Order & Instore Orders */}
+                      <View style={[styles.gridContainer, isSmallScreen && { gap: 8 }, isTablet && styles.gridContainerTablet]}>
+                        {/* 1. Create Order Card */}
+                        <TouchableOpacity
+                          style={[styles.gridCard, isSmallScreen && { padding: 11, minHeight: 80 }, isTablet && styles.gridCardTablet, styles.createOrderCardAccent]}
+                          onPress={() => {
+                            setCreateOrderInitialChannel('dine_in');
+                            setCreateOrderModalVisible(true);
+                          }}
+                          activeOpacity={0.7}
+                        >
+                          <View style={[styles.gridCardTextContainer, isSmallScreen && { paddingRight: 32 }]}>
+                            <View style={styles.orderBadgeWrapper}>
+                              <View style={[styles.channelBadge, { backgroundColor: '#FFF0EC', borderColor: '#FED7AA' }]}>
+                                <Text style={[styles.channelBadgeText, { color: '#EA580C' }]}>+ POS NEW</Text>
+                              </View>
+                            </View>
+                            <Text style={[styles.gridTitle, isTablet && styles.gridTitleTablet]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+                              Create Order
+                            </Text>
+                            <Text style={[styles.gridSub, isTablet && styles.gridSubTablet]} numberOfLines={2} ellipsizeMode="tail">
+                              Instant POS terminal
+                            </Text>
+                          </View>
+                          <Image
+                            source={require('../../assets/online-order.png')}
+                            style={[styles.gridIllustration, isSmallScreen && { width: 44, height: 44, bottom: -4, right: -4 }, isTablet && styles.gridIllustrationTablet]}
+                            contentFit="contain"
+                          />
+                        </TouchableOpacity>
+
+                        {/* 2. Instore Orders Card */}
+                        <TouchableOpacity
+                          style={[styles.gridCard, isSmallScreen && { padding: 11, minHeight: 80 }, isTablet && styles.gridCardTablet]}
+                          onPress={() => router.push({ pathname: '/(tabs)/orders', params: { channel: 'dine_in' } })}
+                          activeOpacity={0.7}
+                        >
+                          <View style={[styles.gridCardTextContainer, isSmallScreen && { paddingRight: 32 }]}>
+                            <View style={styles.orderBadgeWrapper}>
+                              <View style={[styles.channelBadge, { backgroundColor: '#F5F3FF', borderColor: '#DDD6FE' }]}>
+                                <Text style={[styles.channelBadgeText, { color: '#7C3AED' }]}>IN-STORE</Text>
+                              </View>
+                            </View>
+                            <Text style={[styles.gridTitle, isTablet && styles.gridTitleTablet]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+                              Instore Orders
+                            </Text>
+                            <Text style={[styles.gridSub, isTablet && styles.gridSubTablet]} numberOfLines={2} ellipsizeMode="tail">
+                              {orderTerminalCounts.inStore > 0
+                                ? `${orderTerminalCounts.inStore} active • Dine-in`
+                                : 'Dine-in service'}
+                            </Text>
+                          </View>
+                          <Image
+                            source={require('../../assets/dining-table.png')}
+                            style={[styles.gridIllustration, isSmallScreen && { width: 44, height: 44, bottom: -4, right: -4 }, isTablet && styles.gridIllustrationTablet]}
+                            contentFit="contain"
+                          />
+                        </TouchableOpacity>
+                      </View>
+
+                      {/* Pair 2: Takeaway Orders & Delivery Orders */}
+                      <View style={[styles.gridContainer, isSmallScreen && { gap: 8 }, isTablet && styles.gridContainerTablet]}>
+                        {/* 3. Takeaway Orders Card */}
+                        <TouchableOpacity
+                          style={[styles.gridCard, isSmallScreen && { padding: 11, minHeight: 80 }, isTablet && styles.gridCardTablet]}
+                          onPress={() => router.push({ pathname: '/(tabs)/orders', params: { channel: 'pickup' } })}
+                          activeOpacity={0.7}
+                        >
+                          <View style={[styles.gridCardTextContainer, isSmallScreen && { paddingRight: 32 }]}>
+                            <View style={styles.orderBadgeWrapper}>
+                              <View style={[styles.channelBadge, { backgroundColor: '#FFF7ED', borderColor: '#FED7AA' }]}>
+                                <Text style={[styles.channelBadgeText, { color: '#EA580C' }]}>TAKEAWAY</Text>
+                              </View>
+                            </View>
+                            <Text style={[styles.gridTitle, isTablet && styles.gridTitleTablet]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+                              Takeaway Orders
+                            </Text>
+                            <Text style={[styles.gridSub, isTablet && styles.gridSubTablet]} numberOfLines={2} ellipsizeMode="tail">
+                              {orderTerminalCounts.takeaway > 0
+                                ? `${orderTerminalCounts.takeaway} active • Pickup`
+                                : 'Pickup & collection'}
+                            </Text>
+                          </View>
+                          <Image
+                            source={require('../../assets/food.png')}
+                            style={[styles.gridIllustration, isSmallScreen && { width: 44, height: 44, bottom: -4, right: -4 }, isTablet && styles.gridIllustrationTablet]}
+                            contentFit="contain"
+                          />
+                        </TouchableOpacity>
+
+                        {/* 4. Delivery Orders Card */}
+                        <TouchableOpacity
+                          style={[styles.gridCard, isSmallScreen && { padding: 11, minHeight: 80 }, isTablet && styles.gridCardTablet]}
+                          onPress={() => router.push({ pathname: '/(tabs)/orders', params: { channel: 'delivery' } })}
+                          activeOpacity={0.7}
+                        >
+                          <View style={[styles.gridCardTextContainer, isSmallScreen && { paddingRight: 32 }]}>
+                            <View style={styles.orderBadgeWrapper}>
+                              <View style={[styles.channelBadge, { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }]}>
+                                <Text style={[styles.channelBadgeText, { color: '#2563EB' }]}>DELIVERY</Text>
+                              </View>
+                            </View>
+                            <Text style={[styles.gridTitle, isTablet && styles.gridTitleTablet]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+                              Delivery Orders
+                            </Text>
+                            <Text style={[styles.gridSub, isTablet && styles.gridSubTablet]} numberOfLines={2} ellipsizeMode="tail">
+                              {orderTerminalCounts.delivery > 0
+                                ? `${orderTerminalCounts.delivery} active • Fleet`
+                                : 'Direct & fleet'}
+                            </Text>
+                          </View>
+                          <Image
+                            source={require('../../assets/fleet.png')}
+                            style={[styles.gridIllustration, isSmallScreen && { width: 44, height: 44, bottom: -4, right: -4 }, isTablet && styles.gridIllustrationTablet]}
                       contentFit="contain"
                     />
                   </TouchableOpacity>
                 </View>
-
-                <View style={[styles.gridContainer, isSmallScreen && { gap: 8 }, isTablet && styles.gridContainerTablet]}>
-                  <TouchableOpacity
-                    style={[styles.gridCard, isSmallScreen && { padding: 11, minHeight: 80 }]}
-                    onPress={() => router.push('/fleet')}
-                    activeOpacity={0.7}
-                  >
-                    <View style={[styles.gridCardTextContainer, isSmallScreen && { paddingRight: 32 }]}>
-                      <Text style={styles.gridTitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
-                        My Fleet
-                      </Text>
-                      <Text style={styles.gridSub} numberOfLines={2} ellipsizeMode="tail">
-                        Connect riders
-                      </Text>
                     </View>
-                    <Image
-                      source={require('../../assets/fleet.png')}
-                      style={[styles.gridIllustration, isSmallScreen && { width: 44, height: 44, bottom: -4, right: -4 }]}
-                      contentFit="contain"
-                    />
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={[styles.gridCard, isSmallScreen && { padding: 11, minHeight: 80 }]}
-                    onPress={() => router.push('/marketing')}
-                    activeOpacity={0.7}
-                  >
-                    <View style={[styles.gridCardTextContainer, isSmallScreen && { paddingRight: 32 }]}>
-                      <Text style={styles.gridTitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
-                        Campaigns
-                      </Text>
-                      <Text style={styles.gridSub} numberOfLines={2} ellipsizeMode="tail">
-                        Promo coupons
-                      </Text>
-                    </View>
-                    <Image
-                      source={require('../../assets/publicity.png')}
-                      style={[styles.gridIllustration, isSmallScreen && { width: 44, height: 44, bottom: -4, right: -4 }]}
-                      contentFit="contain"
-                    />
-                  </TouchableOpacity>
-                </View>
             </View>
 
-              {/* Restaurant Owner Full Analytics Suite */}
-              <RestaurantAnalytics
-                initialOrders={orders}
-                ownerStats={ownerStats}
-                restaurantName={user?.restaurantName || (user as any)?.name || 'Restaurant'}
-                onNavigateOrders={() => router.push('/(tabs)/orders')}
-              />
+                  {/* Quick Action Section Title */}
+                  <View style={[styles.quickActionHeaderRow, isTablet && styles.quickActionHeaderRowTablet]}>
+                    <Text style={[styles.quickActionSectionTitle, isTablet && styles.quickActionSectionTitleTablet]}>
+                      Quick Action
+                    </Text>
+                  </View>
+
+                  {/* Quick Action Capsule Bar (Bookings, Tables, Fleet, Promo, Analytics) */}
+                  <View style={[styles.quickActionBar, isTablet && styles.quickActionBarTablet]}>
+                    {/* 1. Bookings */}
+                    <TouchableOpacity
+                      style={styles.quickActionItem}
+                      onPress={() => router.push('/bookings')}
+                      activeOpacity={0.7}
+                    >
+                      <View style={[styles.quickActionCircle, { backgroundColor: '#FFF0EC', borderColor: '#FED7AA' }, isTablet && styles.quickActionCircleTablet]}>
+                        <Image
+                          source={require('../../assets/reservation.png')}
+                          style={[styles.quickActionIconImg, isTablet && styles.quickActionIconImgTablet]}
+                          contentFit="contain"
+                        />
+                      </View>
+                      <Text style={[styles.quickActionLabel, isTablet && styles.quickActionLabelTablet]} numberOfLines={1}>
+                        Bookings
+                      </Text>
+                    </TouchableOpacity>
+
+                    {/* 2. Tables */}
+                    <TouchableOpacity
+                      style={styles.quickActionItem}
+                      onPress={() => router.push('/tables')}
+                      activeOpacity={0.7}
+                    >
+                      <View style={[styles.quickActionCircle, { backgroundColor: '#F5F3FF', borderColor: '#DDD6FE' }, isTablet && styles.quickActionCircleTablet]}>
+                        {tablesCount > 0 && (
+                          <View style={styles.quickActionBadge}>
+                            <Text style={styles.quickActionBadgeText}>{tablesCount}</Text>
+                          </View>
+                        )}
+                        <Image
+                          source={require('../../assets/dining-table.png')}
+                          style={[styles.quickActionIconImg, isTablet && styles.quickActionIconImgTablet]}
+                          contentFit="contain"
+                        />
+                      </View>
+                      <Text style={[styles.quickActionLabel, isTablet && styles.quickActionLabelTablet]} numberOfLines={1}>
+                        Tables
+                      </Text>
+                    </TouchableOpacity>
+
+                    {/* 3. Fleet */}
+                    <TouchableOpacity
+                      style={styles.quickActionItem}
+                      onPress={() => router.push('/fleet')}
+                      activeOpacity={0.7}
+                    >
+                      <View style={[styles.quickActionCircle, { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }, isTablet && styles.quickActionCircleTablet]}>
+                        {deliveryPartnersCount > 0 && (
+                          <View style={styles.quickActionBadge}>
+                            <Text style={styles.quickActionBadgeText}>{deliveryPartnersCount}</Text>
+                          </View>
+                        )}
+                        <Image
+                          source={require('../../assets/fleet.png')}
+                          style={[styles.quickActionIconImg, isTablet && styles.quickActionIconImgTablet]}
+                          contentFit="contain"
+                        />
+                      </View>
+                      <Text style={[styles.quickActionLabel, isTablet && styles.quickActionLabelTablet]} numberOfLines={1}>
+                        Fleet
+                      </Text>
+                    </TouchableOpacity>
+
+                    {/* 4. Promo */}
+                    <TouchableOpacity
+                      style={styles.quickActionItem}
+                      onPress={() => router.push('/marketing')}
+                      activeOpacity={0.7}
+                    >
+                      <View style={[styles.quickActionCircle, { backgroundColor: '#ECFDF5', borderColor: '#A7F3D0' }, isTablet && styles.quickActionCircleTablet]}>
+                        <Image
+                          source={require('../../assets/publicity.png')}
+                          style={[styles.quickActionIconImg, isTablet && styles.quickActionIconImgTablet]}
+                          contentFit="contain"
+                        />
+                      </View>
+                      <Text style={[styles.quickActionLabel, isTablet && styles.quickActionLabelTablet]} numberOfLines={1}>
+                        Promo
+                      </Text>
+                    </TouchableOpacity>
+
+                    {/* 5. Analytics */}
+                    <TouchableOpacity
+                      style={styles.quickActionItem}
+                      onPress={() => router.push('/analytics')}
+                      activeOpacity={0.7}
+                    >
+                      <View style={[styles.quickActionCircle, { backgroundColor: '#EEF2FF', borderColor: '#C7D2FE' }, isTablet && styles.quickActionCircleTablet]}>
+                        <Image
+                          source={require('../../assets/kpi-gross-sales.png')}
+                          style={[styles.quickActionIconImg, isTablet && styles.quickActionIconImgTablet]}
+                          contentFit="contain"
+                        />
+                      </View>
+                      <Text style={[styles.quickActionLabel, isTablet && styles.quickActionLabelTablet]} numberOfLines={1}>
+                        Analytics
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
           </>
         )}
 
@@ -1190,6 +1576,8 @@ export default function DashboardScreen() {
                         0
                       );
 
+                    const nextAction = getOrderNextAction(order);
+
                     return (
                       <TouchableOpacity
                         key={order._id}
@@ -1214,7 +1602,47 @@ export default function DashboardScreen() {
                               {restName} • {custName}
                             </Text>
                           </View>
-                          <StatusBadge status={order.status} type="order" />
+
+                          {nextAction ? (
+                            <TouchableOpacity
+                              style={[
+                                styles.orderActionBtn,
+                                { backgroundColor: nextAction.bgColor },
+                                updatingOrderId === order._id && styles.orderActionBtnDisabled,
+                              ]}
+                              onPress={(e: any) => {
+                                e.stopPropagation?.();
+                                handleUpdateOrderStatus(order, nextAction.nextStatus);
+                              }}
+                              onLongPress={(e: any) => {
+                                e.stopPropagation?.();
+                                setStatusPickerOrder(order);
+                              }}
+                              activeOpacity={0.8}
+                              disabled={updatingOrderId === order._id}
+                              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                            >
+                              {updatingOrderId === order._id ? (
+                                <ActivityIndicator size="small" color="#FFFFFF" style={{ transform: [{ scale: 0.75 }] }} />
+                              ) : (
+                                <>
+                                  <nextAction.IconComponent size={12} color="#FFFFFF" strokeWidth={2.8} />
+                                  <Text style={styles.orderActionBtnText}>{nextAction.label}</Text>
+                                </>
+                              )}
+                            </TouchableOpacity>
+                          ) : (
+                            <TouchableOpacity
+                              activeOpacity={0.8}
+                              onPress={(e: any) => {
+                                e.stopPropagation?.();
+                                setStatusPickerOrder(order);
+                              }}
+                              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                            >
+                              <StatusBadge status={order.status} type="order" />
+                            </TouchableOpacity>
+                          )}
                         </View>
 
                         <View style={styles.recentOrderBottom}>
@@ -1385,6 +1813,93 @@ export default function DashboardScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Create Order POS Terminal Modal */}
+      <CreateOrderModal
+        visible={createOrderModalVisible}
+        onClose={() => setCreateOrderModalVisible(false)}
+        onOrderCreated={() => {
+          loadDashboardData();
+        }}
+        initialChannel={createOrderInitialChannel}
+        restaurantId={user?.restaurantId || user?._id || (user as any)?.id}
+        restaurantName={user?.restaurantName || (user as any)?.name || 'Restaurant'}
+      />
+
+      {/* Status Picker Modal */}
+      <Modal
+        visible={!!statusPickerOrder}
+        transparent
+        animationType="fade"
+        statusBarTranslucent={true}
+        onRequestClose={() => setStatusPickerOrder(null)}
+      >
+        <TouchableOpacity
+          style={styles.statusModalOverlay}
+          activeOpacity={1}
+          onPress={() => setStatusPickerOrder(null)}
+        >
+          <View
+            style={[styles.statusModalCard, isTablet && styles.statusModalCardTablet]}
+            onStartShouldSetResponder={() => true}
+          >
+            <View style={styles.statusModalHeader}>
+              <View>
+                <Text style={styles.statusModalTitle}>
+                  Update Order #{statusPickerOrder?.orderNumber || statusPickerOrder?._id?.substring(0, 8)}
+                </Text>
+                <Text style={styles.statusModalSub}>Choose a new status for this order</Text>
+              </View>
+              <TouchableOpacity
+                style={styles.statusModalCloseBtn}
+                onPress={() => setStatusPickerOrder(null)}
+                activeOpacity={0.7}
+              >
+                <X size={18} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.statusOptionsList}>
+              {STATUS_PICKER_OPTIONS.map((opt) => {
+                const isCurrent = statusPickerOrder?.status === opt.id;
+                return (
+                  <TouchableOpacity
+                    key={opt.id}
+                    style={[
+                      styles.statusOptionRow,
+                      isCurrent && styles.statusOptionRowActive,
+                    ]}
+                    onPress={() => {
+                      if (statusPickerOrder) {
+                        const target = statusPickerOrder;
+                        setStatusPickerOrder(null);
+                        handleUpdateOrderStatus(target, opt.id);
+                      }
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <View style={[styles.pickerStatusDot, { backgroundColor: opt.color }]} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.statusOptionText, isCurrent && styles.statusOptionTextActive]}>
+                        {opt.label}
+                      </Text>
+                    </View>
+                    {isCurrent && <Check size={16} color="#FF5C39" strokeWidth={2.5} />}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            <TouchableOpacity
+              style={styles.statusModalCancelBtn}
+              onPress={() => setStatusPickerOrder(null)}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.statusModalCancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </View>
   );
 }
@@ -1395,29 +1910,54 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.background,
   },
   scrollBody: {
-    padding: 16,
+    flex: 1,
+  },
+  scrollContent: {
+    paddingHorizontal: 16,
+    paddingTop: 8,
   },
   scrollBodyTablet: {
-    maxWidth: 1240,
+    maxWidth: 1200,
     width: '100%',
     alignSelf: 'center',
-    paddingHorizontal: 24,
+    paddingHorizontal: 28,
+    paddingTop: 14,
   },
   controlCenterSectionTablet: {
     flexDirection: 'row',
     gap: 14,
+    marginBottom: 20,
   },
   gridContainerTablet: {
     flex: 1,
+    gap: 14,
     marginBottom: 0,
+  },
+  gridCardTablet: {
+    minHeight: 96,
+    padding: 16,
+    borderRadius: 18,
+  },
+  gridTitleTablet: {
+    fontSize: 15,
+  },
+  gridSubTablet: {
+    fontSize: 11.5,
+    marginTop: 4,
+  },
+  gridIllustrationTablet: {
+    width: 60,
+    height: 60,
+    bottom: -4,
+    right: -4,
   },
   recentOrdersListTablet: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 12,
+    gap: 14,
   },
   recentOrderCardTablet: {
-    width: '49%',
+    width: '48.8%',
   },
   welcomeSection: {
     marginBottom: 20,
@@ -1555,6 +2095,122 @@ const styles = StyleSheet.create({
     color: Colors.text,
     fontSize: 12,
     fontWeight: '800',
+  },
+  orderActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.12,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  orderActionBtnDisabled: {
+    opacity: 0.7,
+  },
+  orderActionBtnText: {
+    color: '#FFFFFF',
+    fontSize: 11.5,
+    fontWeight: '700',
+    letterSpacing: 0.2,
+  },
+  statusModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.6)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  statusModalCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 20,
+    width: '100%',
+    maxWidth: 400,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.2,
+    shadowRadius: 20,
+    elevation: 10,
+  },
+  statusModalCardTablet: {
+    maxWidth: 440,
+  },
+  statusModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 16,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  statusModalTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  statusModalSub: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  statusModalCloseBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    backgroundColor: '#F8FAFC',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  statusOptionsList: {
+    gap: 8,
+    marginBottom: 16,
+  },
+  statusOptionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    gap: 10,
+  },
+  statusOptionRowActive: {
+    backgroundColor: '#FFF0EC',
+    borderColor: '#FF5C39',
+  },
+  pickerStatusDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  statusOptionText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#1E293B',
+  },
+  statusOptionTextActive: {
+    color: '#FF5C39',
+    fontWeight: '700',
+  },
+  statusModalCancelBtn: {
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 12,
+    backgroundColor: '#F1F5F9',
+  },
+  statusModalCancelText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#475569',
   },
   /* Super Admin Triage Banner */
   triageBanner: {
@@ -2005,9 +2661,217 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 4,
   },
+  // Order Terminal styling
+  orderTerminalSection: {
+    marginBottom: 20,
+  },
+  orderTerminalSectionTablet: {
+    marginBottom: 22,
+  },
+  orderSectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+    marginTop: 2,
+  },
+  orderSectionHeaderRowTablet: {
+    marginBottom: 12,
+  },
+  orderSectionTitleGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  orderSectionTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: Colors.text,
+    letterSpacing: -0.3,
+  },
+  orderSectionTitleTablet: {
+    fontSize: 17,
+  },
+  orderLivePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  orderLiveDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#10B981',
+  },
+  orderLiveText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#059669',
+    letterSpacing: 0.3,
+  },
+  quickNewOrderBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#FF5C39',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 10,
+    shadowColor: '#FF5C39',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  quickNewOrderBtnText: {
+    color: '#FFFFFF',
+    fontSize: 11.5,
+    fontWeight: '800',
+  },
+  orderGridWrapper: {
+    gap: 0,
+  },
+  orderGridWrapperTablet: {
+    flexDirection: 'row',
+    gap: 14,
+  },
+  orderBadgeWrapper: {
+    marginBottom: 4,
+  },
+  channelBadge: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 5,
+    borderWidth: 1,
+  },
+  channelBadgeText: {
+    fontSize: 8.5,
+    fontWeight: '800',
+    letterSpacing: 0.4,
+  },
+  createOrderCardAccent: {
+    borderColor: '#FED7AA',
+    backgroundColor: '#FFFAF8',
+  },
+  // Quick Action Capsule Bar styling (matching user sketch)
+  quickActionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+    paddingHorizontal: 2,
+    marginTop: 2,
+  },
+  quickActionHeaderRowTablet: {
+    marginBottom: 12,
+  },
+  quickActionSectionTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: Colors.text,
+    letterSpacing: -0.3,
+  },
+  quickActionSectionTitleTablet: {
+    fontSize: 17,
+  },
+  quickActionBar: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    paddingVertical: 13,
+    paddingHorizontal: 6,
+    marginBottom: 18,
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  quickActionBarTablet: {
+    paddingVertical: 18,
+    paddingHorizontal: 28,
+    borderRadius: 28,
+    marginBottom: 22,
+  },
+  quickActionItem: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 2,
+  },
+  quickActionCircle: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    position: 'relative',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    elevation: 1,
+    marginBottom: 5,
+  },
+  quickActionCircleTablet: {
+    width: 62,
+    height: 62,
+    borderRadius: 31,
+    marginBottom: 8,
+  },
+  quickActionIconImg: {
+    width: 28,
+    height: 28,
+  },
+  quickActionIconImgTablet: {
+    width: 36,
+    height: 36,
+  },
+  quickActionLabel: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: '#1E293B',
+    textAlign: 'center',
+    letterSpacing: -0.3,
+  },
+  quickActionLabelTablet: {
+    fontSize: 12.5,
+  },
+  quickActionBadge: {
+    position: 'absolute',
+    top: -2,
+    right: -2,
+    backgroundColor: '#FF5C39',
+    borderRadius: 9,
+    minWidth: 17,
+    height: 17,
+    paddingHorizontal: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
+    zIndex: 3,
+  },
+  quickActionBadgeText: {
+    fontSize: 8.5,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
   // Control center styling
   controlCenterSection: {
-    marginBottom: 24,
+    marginBottom: 20,
   },
   gridContainer: {
     flexDirection: 'row',
@@ -2186,6 +3050,10 @@ const styles = StyleSheet.create({
   },
   tableInner: {
     minWidth: 505,
+  },
+  tableInnerTablet: {
+    minWidth: '100%',
+    width: '100%',
   },
   tableHeaderRow: {
     flexDirection: 'row',
