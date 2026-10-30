@@ -15,6 +15,7 @@
       "backgroundColor": "#FF5C39"
     },
     "assetBundlePatterns": [
+      "assets/**/*",
       "**/*"
     ],
     "ios": {
@@ -36,7 +37,7 @@
         "backgroundColor": "#FFFFFF"
       },
       "package": "com.krifoo.admin",
-      "versionCode": 13,
+      "versionCode": 14,
       "googleServicesFile": "./google-services.json",
       "permissions": [
         "RECEIVE_BOOT_COMPLETED",
@@ -100,7 +101,16 @@
           }
         }
       ],
-      "expo-task-manager"
+      "expo-task-manager",
+      [
+        "expo-asset",
+        {
+          "assets": [
+            "./assets",
+            "./assets/images"
+          ]
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

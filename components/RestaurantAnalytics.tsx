@@ -752,7 +752,7 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
             pointerEvents="none"
           />
           <Image
-            source={require('../assets/kpi-gross-sales.png')}
+            source={require('../assets/kpi_gross_sales.png')}
             style={[styles.kpiBgIllustration, { width: illustrationSize, height: illustrationSize }, isTablet && styles.kpiBgIllustrationTablet]}
             contentFit="contain"
           />
@@ -791,7 +791,7 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
             pointerEvents="none"
           />
           <Image
-            source={require('../assets/kpi-total-orders.png')}
+            source={require('../assets/kpi_total_orders.png')}
             style={[styles.kpiBgIllustration, { width: illustrationSize, height: illustrationSize }, isTablet && styles.kpiBgIllustrationTablet]}
             contentFit="contain"
           />
@@ -830,7 +830,7 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
             pointerEvents="none"
           />
           <Image
-            source={require('../assets/kpi-avg-value.png')}
+            source={require('../assets/kpi_avg_value.png')}
             style={[styles.kpiBgIllustration, { width: illustrationSize, height: illustrationSize }, isTablet && styles.kpiBgIllustrationTablet]}
             contentFit="contain"
           />
@@ -869,7 +869,7 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
             pointerEvents="none"
           />
           <Image
-            source={require('../assets/kpi-cash-orders.png')}
+            source={require('../assets/kpi_cash_orders.png')}
             style={[styles.kpiBgIllustration, { width: illustrationSize, height: illustrationSize }, isTablet && styles.kpiBgIllustrationTablet]}
             contentFit="contain"
           />
@@ -908,7 +908,7 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
             pointerEvents="none"
           />
           <Image
-            source={require('../assets/kpi-online-card.png')}
+            source={require('../assets/kpi_online_card.png')}
             style={[styles.kpiBgIllustration, { width: illustrationSize, height: illustrationSize }, isTablet && styles.kpiBgIllustrationTablet]}
             contentFit="contain"
           />
@@ -947,7 +947,7 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
             pointerEvents="none"
           />
           <Image
-            source={require('../assets/kpi-fulfillment-rate.png')}
+            source={require('../assets/kpi_fulfillment_rate.png')}
             style={[styles.kpiBgIllustration, { width: illustrationSize, height: illustrationSize }, isTablet && styles.kpiBgIllustrationTablet]}
             contentFit="contain"
           />

@@ -989,7 +989,7 @@ export default function DashboardScreen() {
                   pointerEvents="none"
                 />
                 <Image
-                  source={require('../../assets/kpi-gross-sales.png')}
+                  source={require('../../assets/kpi_gross_sales.png')}
                   style={[styles.kpiBgIllustration, { width: superIllustrationSize, height: superIllustrationSize }]}
                   contentFit="contain"
                 />
@@ -1027,7 +1027,7 @@ export default function DashboardScreen() {
                   pointerEvents="none"
                 />
                 <Image
-                  source={require('../../assets/kpi-online-card.png')}
+                  source={require('../../assets/kpi_online_card.png')}
                   style={[styles.kpiBgIllustration, { width: superIllustrationSize, height: superIllustrationSize }]}
                   contentFit="contain"
                 />
@@ -1103,7 +1103,7 @@ export default function DashboardScreen() {
                   pointerEvents="none"
                 />
                 <Image
-                  source={require('../../assets/kpi-total-orders.png')}
+                  source={require('../../assets/kpi_total_orders.png')}
                   style={[styles.kpiBgIllustration, { width: superIllustrationSize, height: superIllustrationSize }]}
                   contentFit="contain"
                 />
@@ -1318,7 +1318,7 @@ export default function DashboardScreen() {
                             </Text>
                           </View>
                           <Image
-                            source={require('../../assets/online-order.png')}
+                            source={require('../../assets/online_order.png')}
                             style={[styles.gridIllustration, isSmallScreen && { width: 44, height: 44, bottom: -4, right: -4 }, isTablet && styles.gridIllustrationTablet]}
                             contentFit="contain"
                           />
@@ -1346,7 +1346,7 @@ export default function DashboardScreen() {
                             </Text>
                           </View>
                           <Image
-                            source={require('../../assets/dining-table.png')}
+                            source={require('../../assets/dining_table.png')}
                             style={[styles.gridIllustration, isSmallScreen && { width: 44, height: 44, bottom: -4, right: -4 }, isTablet && styles.gridIllustrationTablet]}
                             contentFit="contain"
                           />
@@ -1454,7 +1454,7 @@ export default function DashboardScreen() {
                           </View>
                         )}
                         <Image
-                          source={require('../../assets/dining-table.png')}
+                          source={require('../../assets/dining_table.png')}
                           style={[styles.quickActionIconImg, isTablet && styles.quickActionIconImgTablet]}
                           contentFit="contain"
                         />
@@ -1513,7 +1513,7 @@ export default function DashboardScreen() {
                     >
                       <View style={[styles.quickActionCircle, { backgroundColor: '#EEF2FF', borderColor: '#C7D2FE' }, isTablet && styles.quickActionCircleTablet]}>
                         <Image
-                          source={require('../../assets/kpi-gross-sales.png')}
+                          source={require('../../assets/kpi_gross_sales.png')}
                           style={[styles.quickActionIconImg, isTablet && styles.quickActionIconImgTablet]}
                           contentFit="contain"
                         />

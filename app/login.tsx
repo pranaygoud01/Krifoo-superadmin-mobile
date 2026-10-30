@@ -106,7 +106,7 @@ export default function LoginScreen() {
           {/* Cover Header Image */}
           <View style={styles.coverContainer}>
             <Image
-              source={require('../assets/login-cover.jpg')}
+              source={require('../assets/login_cover.jpg')}
               style={styles.coverImage}
             />
             {/* Dark tint overlay */}
