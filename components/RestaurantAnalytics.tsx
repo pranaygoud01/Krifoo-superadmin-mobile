@@ -10,8 +10,8 @@ import {
   Dimensions,
   useWindowDimensions,
   Modal,
+  Image,
 } from 'react-native';
-import { Image } from 'expo-image';
 import { Colors } from '../constants/colors';
 import { Order } from '../types';
 import { orderService } from '../services/order.service';
@@ -754,7 +754,7 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
           <Image
             source={require('../assets/kpi_gross_sales.png')}
             style={[styles.kpiBgIllustration, { width: illustrationSize, height: illustrationSize }, isTablet && styles.kpiBgIllustrationTablet]}
-            contentFit="contain"
+            resizeMode="contain"
           />
 
           <View style={styles.kpiContentContainer}>
@@ -793,7 +793,7 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
           <Image
             source={require('../assets/kpi_total_orders.png')}
             style={[styles.kpiBgIllustration, { width: illustrationSize, height: illustrationSize }, isTablet && styles.kpiBgIllustrationTablet]}
-            contentFit="contain"
+            resizeMode="contain"
           />
 
           <View style={styles.kpiContentContainer}>
@@ -832,7 +832,7 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
           <Image
             source={require('../assets/kpi_avg_value.png')}
             style={[styles.kpiBgIllustration, { width: illustrationSize, height: illustrationSize }, isTablet && styles.kpiBgIllustrationTablet]}
-            contentFit="contain"
+            resizeMode="contain"
           />
 
           <View style={styles.kpiContentContainer}>
@@ -871,7 +871,7 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
           <Image
             source={require('../assets/kpi_cash_orders.png')}
             style={[styles.kpiBgIllustration, { width: illustrationSize, height: illustrationSize }, isTablet && styles.kpiBgIllustrationTablet]}
-            contentFit="contain"
+            resizeMode="contain"
           />
 
           <View style={styles.kpiContentContainer}>
@@ -910,7 +910,7 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
           <Image
             source={require('../assets/kpi_online_card.png')}
             style={[styles.kpiBgIllustration, { width: illustrationSize, height: illustrationSize }, isTablet && styles.kpiBgIllustrationTablet]}
-            contentFit="contain"
+            resizeMode="contain"
           />
 
           <View style={styles.kpiContentContainer}>
@@ -949,7 +949,7 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
           <Image
             source={require('../assets/kpi_fulfillment_rate.png')}
             style={[styles.kpiBgIllustration, { width: illustrationSize, height: illustrationSize }, isTablet && styles.kpiBgIllustrationTablet]}
-            contentFit="contain"
+            resizeMode="contain"
           />
 
           <View style={styles.kpiContentContainer}>

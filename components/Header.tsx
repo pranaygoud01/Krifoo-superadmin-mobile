@@ -1,6 +1,14 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert, DeviceEventEmitter, useWindowDimensions } from 'react-native';
-import { Image } from 'expo-image';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  Alert,
+  DeviceEventEmitter,
+  useWindowDimensions,
+  Image,
+} from 'react-native';
 import { useRouter, useSegments } from 'expo-router';
 import { ArrowLeft, Bell, Settings, User, Store } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -217,14 +225,14 @@ export const Header: React.FC<HeaderProps> = ({
                   <Image
                     source={{ uri: storeLogoUrl }}
                     style={[styles.headerLogo, styles.headerRestaurantLogo, isTablet && styles.headerLogoTablet]}
-                    contentFit="cover"
+                    resizeMode="cover"
                     onError={() => setImageError(true)}
                   />
                 ) : !localImageError ? (
                   <Image
                     source={require('../assets/logo.png')}
                     style={[styles.headerLogo, isTablet && styles.headerLogoTablet]}
-                    contentFit="contain"
+                    resizeMode="contain"
                     onError={() => setLocalImageError(true)}
                   />
                 ) : (

@@ -11,8 +11,8 @@ import {
   Modal,
   Alert,
   ActivityIndicator,
+  Image,
 } from 'react-native';
-import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { Header } from '../../components/Header';
 import { StatCard } from '../../components/StatCard';
@@ -994,7 +994,7 @@ export default function DashboardScreen() {
                 <Image
                   source={require('../../assets/kpi_gross_sales.png')}
                   style={[styles.kpiBgIllustration, { width: superIllustrationSize, height: superIllustrationSize }]}
-                  contentFit="contain"
+                  resizeMode="contain"
                 />
                 <View style={styles.kpiContentContainer}>
                   <View style={styles.kpiTopRow}>
@@ -1032,7 +1032,7 @@ export default function DashboardScreen() {
                 <Image
                   source={require('../../assets/kpi_online_card.png')}
                   style={[styles.kpiBgIllustration, { width: superIllustrationSize, height: superIllustrationSize }]}
-                  contentFit="contain"
+                  resizeMode="contain"
                 />
                 <View style={styles.kpiContentContainer}>
                   <View style={styles.kpiTopRow}>
@@ -1070,7 +1070,7 @@ export default function DashboardScreen() {
                 <Image
                   source={require('../../assets/store.png')}
                   style={[styles.kpiBgIllustration, { width: superIllustrationSize, height: superIllustrationSize }]}
-                  contentFit="contain"
+                  resizeMode="contain"
                 />
                 <View style={styles.kpiContentContainer}>
                   <View style={styles.kpiTopRow}>
@@ -1108,7 +1108,7 @@ export default function DashboardScreen() {
                 <Image
                   source={require('../../assets/kpi_total_orders.png')}
                   style={[styles.kpiBgIllustration, { width: superIllustrationSize, height: superIllustrationSize }]}
-                  contentFit="contain"
+                  resizeMode="contain"
                 />
                 <View style={styles.kpiContentContainer}>
                   <View style={styles.kpiTopRow}>
@@ -1328,7 +1328,7 @@ export default function DashboardScreen() {
                             <Image
                               source={require('../../assets/online_order.png')}
                               style={[styles.gridIllustration, isSmallScreen && { width: 44, height: 44, bottom: -4, right: -4 }, isTablet && styles.gridIllustrationTablet]}
-                              contentFit="contain"
+                              resizeMode="contain"
                               onError={() => setImgErrors(prev => ({ ...prev, op_create: true }))}
                             />
                           )}
@@ -1363,7 +1363,7 @@ export default function DashboardScreen() {
                             <Image
                               source={require('../../assets/dining_table.png')}
                               style={[styles.gridIllustration, isSmallScreen && { width: 44, height: 44, bottom: -4, right: -4 }, isTablet && styles.gridIllustrationTablet]}
-                              contentFit="contain"
+                              resizeMode="contain"
                               onError={() => setImgErrors(prev => ({ ...prev, op_instore: true }))}
                             />
                           )}
@@ -1401,7 +1401,7 @@ export default function DashboardScreen() {
                             <Image
                               source={require('../../assets/food.png')}
                               style={[styles.gridIllustration, isSmallScreen && { width: 44, height: 44, bottom: -4, right: -4 }, isTablet && styles.gridIllustrationTablet]}
-                              contentFit="contain"
+                              resizeMode="contain"
                               onError={() => setImgErrors(prev => ({ ...prev, op_takeaway: true }))}
                             />
                           )}
@@ -1436,7 +1436,7 @@ export default function DashboardScreen() {
                       <Image
                         source={require('../../assets/fleet.png')}
                         style={[styles.gridIllustration, isSmallScreen && { width: 44, height: 44, bottom: -4, right: -4 }, isTablet && styles.gridIllustrationTablet]}
-                        contentFit="contain"
+                        resizeMode="contain"
                         onError={() => setImgErrors(prev => ({ ...prev, op_delivery: true }))}
                       />
                     )}
@@ -1467,7 +1467,7 @@ export default function DashboardScreen() {
                           <Image
                             source={require('../../assets/reservation.png')}
                             style={[styles.quickActionIconImg, isTablet && styles.quickActionIconImgTablet]}
-                            contentFit="contain"
+                            resizeMode="contain"
                             onError={() => setImgErrors(prev => ({ ...prev, qa_bookings: true }))}
                           />
                         )}
@@ -1495,7 +1495,7 @@ export default function DashboardScreen() {
                           <Image
                             source={require('../../assets/dining_table.png')}
                             style={[styles.quickActionIconImg, isTablet && styles.quickActionIconImgTablet]}
-                            contentFit="contain"
+                            resizeMode="contain"
                             onError={() => setImgErrors(prev => ({ ...prev, qa_tables: true }))}
                           />
                         )}
@@ -1523,7 +1523,7 @@ export default function DashboardScreen() {
                           <Image
                             source={require('../../assets/fleet.png')}
                             style={[styles.quickActionIconImg, isTablet && styles.quickActionIconImgTablet]}
-                            contentFit="contain"
+                            resizeMode="contain"
                             onError={() => setImgErrors(prev => ({ ...prev, qa_fleet: true }))}
                           />
                         )}
@@ -1546,7 +1546,7 @@ export default function DashboardScreen() {
                           <Image
                             source={require('../../assets/publicity.png')}
                             style={[styles.quickActionIconImg, isTablet && styles.quickActionIconImgTablet]}
-                            contentFit="contain"
+                            resizeMode="contain"
                             onError={() => setImgErrors(prev => ({ ...prev, qa_promo: true }))}
                           />
                         )}
@@ -1569,7 +1569,7 @@ export default function DashboardScreen() {
                           <Image
                             source={require('../../assets/kpi_gross_sales.png')}
                             style={[styles.quickActionIconImg, isTablet && styles.quickActionIconImgTablet]}
-                            contentFit="contain"
+                            resizeMode="contain"
                             onError={() => setImgErrors(prev => ({ ...prev, qa_analytics: true }))}
                           />
                         )}
