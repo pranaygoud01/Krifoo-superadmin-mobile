@@ -135,7 +135,7 @@ export const DEFAULT_POS_CONFIG: PosPrinterConfig = {
   port: 9100,
   macAddress: '',
   target: '',
-  paperWidth: '58mm',
+  paperWidth: '80mm',
   autoPrint: true,
   copies: 1,
   autoCut: true,

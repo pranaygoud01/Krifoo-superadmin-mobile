@@ -393,14 +393,15 @@ export function buildReceiptDocument(order: Partial<Order> & any, config?: Parti
   const tableInfo = order.tableNumber ? `TABLE ${order.tableNumber}` : '';
 
   // 1. Header & Restaurant Name
-  commands.push({ type: 'text', value: restaurantName.toUpperCase(), bold: true, align: 'center', size: 'double' });
+  commands.push({ type: 'text', value: restaurantName.toUpperCase(), bold: true, align: 'center', size: 'normal' });
+  commands.push({ type: 'text', value: 'Freshly Prepared For You', align: 'center', size: 'normal' });
   if (restaurantPhone) {
     commands.push({ type: 'text', value: `Tel: ${restaurantPhone}`, align: 'center' });
   }
   commands.push({ type: 'line' });
 
   // 2. Order Number & Status
-  commands.push({ type: 'text', value: `ORDER ${orderNum}`, bold: true, align: 'center', size: 'double' });
+  commands.push({ type: 'text', value: `ORDER ${String(orderNum).replace(/^ORD-ID-/, '')}`, bold: true, align: 'center', size: 'double' });
 
   const placedDate = order.createdAt ? new Date(order.createdAt).toLocaleString('en-GB') : new Date().toLocaleString('en-GB');
   commands.push({ type: 'text', value: `Placed: ${placedDate}`, align: 'center' });
@@ -676,7 +677,7 @@ export function buildCustomizedReceiptDocument(
       value: restaurantName.toUpperCase(),
       bold: layout.boldElements.restaurantName,
       align: headerAlign,
-      size: layout.fontSize === 'large' ? 'double' : 'normal',
+      size: 'normal',
       font,
     });
   }

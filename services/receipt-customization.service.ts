@@ -86,7 +86,7 @@ export const DEFAULT_RECEIPT_TEMPLATE: ReceiptTemplate = {
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
   layout: {
-    paperWidth: '58mm',
+    paperWidth: '80mm',
     fontSize: 'medium',
     fontFamily: 'fontA',
     lineSpacing: 'normal',
@@ -149,68 +149,6 @@ export const COMPACT_TAKEAWAY_TEMPLATE: ReceiptTemplate = {
   updatedAt: new Date().toISOString(),
   layout: {
     paperWidth: '58mm',
-    fontSize: 'small',
-    fontFamily: 'fontB',
-    lineSpacing: 'compact',
-    alignment: {
-      header: 'center',
-      items: 'left',
-      totals: 'left',
-      footer: 'center',
-    },
-    boldElements: {
-      restaurantName: true,
-      orderNumber: true,
-      totalAmount: true,
-      itemNames: false,
-      customerDetails: false,
-    },
-    italicElements: {
-      tagline: false,
-      footerMessage: false,
-    },
-  },
-  content: {
-    showLogo: false,
-    logoUrl: '',
-    showRestaurantName: true,
-    customHeaderTitle: '',
-    showAddress: false,
-    showPhone: true,
-    showTaxId: false,
-    taxIdLabel: 'Tax ID:',
-    taxIdValue: '',
-    showOrderNumber: true,
-    showTableNumber: false,
-    showServerWaiterName: false,
-    serverWaiterName: '',
-    showDateTime: true,
-    dateTimeFormat: 'time_only',
-    showCustomerInfo: true,
-    showItemNotes: true,
-    showItemTaxBreakdown: false,
-    taxPercentage: 20,
-    showDiscountLine: true,
-    showPaymentMethod: true,
-    headerMessage: '',
-    footerMessage: 'Thanks for ordering! See you soon.',
-    showQrCode: false,
-    qrCodeType: 'website',
-    qrCodeData: '',
-    qrCodeLabel: '',
-    showScheduledTime: true,
-  },
-};
-
-export const DINE_IN_INVOICE_TEMPLATE: ReceiptTemplate = {
-  id: 'dine_in_invoice',
-  name: 'Full Dine-In & Tax Invoice',
-  description: 'Detailed dining receipt with table number, waiter, VAT breakdown, and feedback QR',
-  isDefault: false,
-  createdAt: new Date().toISOString(),
-  updatedAt: new Date().toISOString(),
-  layout: {
-    paperWidth: '58mm',
     fontSize: 'medium',
     fontFamily: 'fontA',
     lineSpacing: 'normal',
@@ -228,8 +166,70 @@ export const DINE_IN_INVOICE_TEMPLATE: ReceiptTemplate = {
       customerDetails: true,
     },
     italicElements: {
-      tagline: true,
-      footerMessage: true,
+      tagline: false,
+      footerMessage: false,
+    },
+  },
+  content: {
+    showLogo: false,
+    logoUrl: '',
+    showRestaurantName: true,
+    customHeaderTitle: '',
+    showAddress: true,
+    showPhone: true,
+    showTaxId: false,
+    taxIdLabel: 'Tax ID:',
+    taxIdValue: '',
+    showOrderNumber: true,
+    showTableNumber: false,
+    showServerWaiterName: false,
+    serverWaiterName: '',
+    showDateTime: true,
+    dateTimeFormat: 'uk',
+    showCustomerInfo: true,
+    showItemNotes: true,
+    showItemTaxBreakdown: false,
+    taxPercentage: 20,
+    showDiscountLine: true,
+    showPaymentMethod: true,
+    headerMessage: 'Freshly Prepared For You',
+    footerMessage: 'Thank you for your order! Visit us again soon.',
+    showQrCode: false,
+    qrCodeType: 'website',
+    qrCodeData: '',
+    qrCodeLabel: '',
+    showScheduledTime: true,
+  },
+};
+
+export const DINE_IN_INVOICE_TEMPLATE: ReceiptTemplate = {
+  id: 'dine_in_invoice',
+  name: 'Full Dine-In & Tax Invoice',
+  description: 'Detailed dining receipt with table number, waiter, VAT breakdown, and feedback QR',
+  isDefault: false,
+  createdAt: new Date().toISOString(),
+  updatedAt: new Date().toISOString(),
+  layout: {
+    paperWidth: '80mm',
+    fontSize: 'medium',
+    fontFamily: 'fontA',
+    lineSpacing: 'normal',
+    alignment: {
+      header: 'center',
+      items: 'left',
+      totals: 'left',
+      footer: 'center',
+    },
+    boldElements: {
+      restaurantName: true,
+      orderNumber: true,
+      totalAmount: true,
+      itemNames: true,
+      customerDetails: true,
+    },
+    italicElements: {
+      tagline: false,
+      footerMessage: false,
     },
   },
   content: {
@@ -263,6 +263,38 @@ export const DINE_IN_INVOICE_TEMPLATE: ReceiptTemplate = {
     showScheduledTime: true,
   },
 };
+
+/**
+ * Ensures all receipt templates maintain the exact font size & hierarchy from the physical receipt standard:
+ * - Base font: medium (Font A)
+ * - Line spacing: normal
+ * - Prominent bold: restaurant name, order #, total amount, item names, customer details
+ */
+export function normalizeTemplateFontHierarchy(template: ReceiptTemplate): ReceiptTemplate {
+  if (!template) return normalizeTemplateFontHierarchy(DEFAULT_RECEIPT_TEMPLATE);
+  return {
+    ...template,
+    layout: {
+      ...template.layout,
+      fontSize: 'medium',
+      fontFamily: 'fontA',
+      lineSpacing: 'normal',
+      boldElements: {
+        ...(template.layout?.boldElements || {}),
+        restaurantName: true,
+        orderNumber: true,
+        totalAmount: true,
+        itemNames: true,
+        customerDetails: true,
+      },
+      italicElements: {
+        ...(template.layout?.italicElements || {}),
+        tagline: false,
+        footerMessage: false,
+      },
+    },
+  };
+}
 
 export const PRELOADED_TEMPLATES: ReceiptTemplate[] = [
   DEFAULT_RECEIPT_TEMPLATE,
@@ -337,10 +369,11 @@ export async function getAllReceiptTemplates(restaurantId?: string): Promise<Rec
     let merged = mergeTemplatesByLatest(PRELOADED_TEMPLATES, localTemplates);
     merged = mergeTemplatesByLatest(merged, globalTemplates);
 
-    return merged.length > 0 ? merged : PRELOADED_TEMPLATES;
+    const finalTemplates = merged.length > 0 ? merged : PRELOADED_TEMPLATES;
+    return finalTemplates.map(normalizeTemplateFontHierarchy);
   } catch (err) {
     console.warn('[ReceiptCustomization] Failed to load templates, returning defaults:', err);
-    return PRELOADED_TEMPLATES;
+    return PRELOADED_TEMPLATES.map(normalizeTemplateFontHierarchy);
   }
 }
 
@@ -362,11 +395,11 @@ export async function getActiveReceiptTemplate(restaurantId?: string): Promise<R
 
     if (activeId) {
       const found = templates.find((t) => t.id === activeId);
-      if (found) return found;
+      if (found) return normalizeTemplateFontHierarchy(found);
     }
 
     const defaultTpl = templates.find((t) => t.isDefault) || templates[0] || DEFAULT_RECEIPT_TEMPLATE;
-    return defaultTpl;
+    return normalizeTemplateFontHierarchy(defaultTpl);
   } catch (err) {
     console.warn('[ReceiptCustomization] Failed to load active template, using default:', err);
     return DEFAULT_RECEIPT_TEMPLATE;
@@ -385,14 +418,14 @@ export async function saveReceiptTemplate(
     const existing = await getAllReceiptTemplates(restaurantId);
 
     const now = new Date().toISOString();
-    const updatedTemplate: ReceiptTemplate = {
+    const updatedTemplate: ReceiptTemplate = normalizeTemplateFontHierarchy({
       ...template,
       updatedAt: now,
       content: {
         ...template.content,
         showScheduledTime: template.content.showScheduledTime !== false,
       },
-    };
+    });
 
     const index = existing.findIndex((t) => t.id === template.id);
     let newList: ReceiptTemplate[];
@@ -547,19 +580,19 @@ export function getCachedStoreProfile(): { restaurantName?: string; phoneNumber?
  * Realistic Mock Sample Order for Live Preview
  */
 export function getSampleOrderForPreview(
-  type: 'dine_in' | 'delivery' | 'pickup' = 'dine_in',
+  type: 'dine_in' | 'delivery' | 'pickup' = 'delivery',
   storeNameOverride?: string,
   isScheduled: boolean = false
 ): Partial<Order> & any {
-  const storeName = storeNameOverride || _cachedStoreProfile?.restaurantName || 'Restaurant Name';
-  const storePhone = _cachedStoreProfile?.phoneNumber || 'Phone Number';
-  const storeAddress = formatRestaurantAddress(_cachedStoreProfile?.address) || 'Store Address, Store City, Postcode';
+  const storeName = storeNameOverride || _cachedStoreProfile?.restaurantName || 'DEMO KITCHEN';
+  const storePhone = _cachedStoreProfile?.phoneNumber || '9876543210';
+  const storeAddress = formatRestaurantAddress(_cachedStoreProfile?.address) || 'Unit 1, G Floor, CB1 2AW, London, near Opposite central park';
 
   const scheduledTarget = type === 'delivery' ? 'Today, 18:00 - 18:30' : 'Today, 18:30';
 
   return {
     _id: '65f8a9e2d3b4c10023456789',
-    orderNumber: 'ORD-ID-12345',
+    orderNumber: '3',
     orderType: type,
     status: 'preparing',
     createdAt: new Date().toISOString(),
@@ -577,61 +610,32 @@ export function getSampleOrderForPreview(
     restaurantName: storeName,
     restaurantAddress: storeAddress,
     customerDetails: {
-      name: 'Customer Name',
-      phoneNumber: '07700 900123',
-      address: type === 'pickup' ? 'Self Pickup' : '14 Cambridge Road, CB2 1AB',
+      name: 'Testuser',
+      phoneNumber: '9876543210',
+      address: '12, 1 Whitehall, Greater London, SW1A 2DD, London, England, CB1 2AW',
     },
-    deliveryAddress: type === 'pickup'
-      ? 'Self Pickup, Store Counter'
-      : {
-          addressLine1: '14 Cambridge Road',
-          street: 'Cambridge Road',
-          city: 'Cambridge',
-          postalCode: 'CB2 1AB',
-          formattedAddress: '14 Cambridge Road, Cambridge, CB2 1AB',
-        },
-    tableNumber: type === 'dine_in' ? 'Table 7' : undefined,
-    notes: 'Please make chicken tikka extra crispy. Cutlery requested.',
-    paymentType: 'card',
-    paymentStatus: 'paid',
+    deliveryAddress: {
+      addressLine1: '12, 1 Whitehall',
+      street: 'Whitehall',
+      city: 'London',
+      postalCode: 'CB1 2AW',
+      formattedAddress: '12, 1 Whitehall, Greater London, London, SW1A 2DD, London, England, CB1 2AW',
+    },
+    tableNumber: type === 'dine_in' ? '3' : undefined,
+    paymentType: 'cash',
+    paymentStatus: 'pending',
     orderedItems: [
       {
-        name: 'Item Name',
-        quantity: 1,
-        price: 13.95,
-        customization: {
-          size: 'Regular',
-          addOns: ['Extra Naan Bread', 'Garlic Dip'],
-        },
-      },
-      {
-        name: 'Lamb Rogan Josh',
-        quantity: 1,
-        price: 15.50,
-        customization: {
-          size: 'Spicy / Medium',
-        },
-      },
-      {
-        name: 'Pilau Basmati Rice',
-        quantity: 2,
-        price: 3.50,
-      },
-      {
-        name: 'Mango Lassi (Chilled)',
-        quantity: 2,
-        price: 3.25,
+        name: 'Burger',
+        quantity: 3,
+        price: 2.99,
       },
     ],
     pricing: {
-      subtotal: 42.95,
-      deliveryFee: type === 'delivery' ? 2.50 : 0,
-      serviceFee: 1.00,
-      platformFee: 1.00,
-      tax: 7.15,
-      discount: 4.29, // 10% promo
-      tip: 2.00,
-      total: type === 'delivery' ? 44.16 : 41.66,
+      subtotal: 8.97,
+      deliveryFee: 1.49,
+      handlingCharge: 0.50,
+      total: 10.96,
     },
   };
 }

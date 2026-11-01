@@ -15,7 +15,7 @@ export const EscPosEncoder: CommandEncoder<Uint8Array> = {
     // ESC @ (Initialize)
     buffer.push(0x1b, 0x40);
     // ESC t 19 (Select character code table: CP858 Euro/Pound)
-    buffer.push(0x1b, 0x74, 19);
+    buffer.push(0x1b, 0x74, 0); // ESC t 0 (PC437 Standard Table, 0x9C = £)
 
     let currentAlign: 'left' | 'center' | 'right' = 'left';
     let currentBold = false;

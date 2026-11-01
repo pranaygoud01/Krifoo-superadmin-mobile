@@ -1078,7 +1078,7 @@ export async function printThermalReceipt(
     let template = customTemplate || (await getActiveReceiptTemplate(restId ? String(restId) : undefined));
 
     // Strictly synchronize paperWidth between template and hardware config (defaults to 58mm)
-    const effectiveWidth = template?.layout?.paperWidth || config.paperWidth || '58mm';
+    const effectiveWidth = config.paperWidth || template?.layout?.paperWidth || '80mm';
     config.paperWidth = effectiveWidth;
     if (template?.layout) {
       template.layout.paperWidth = effectiveWidth;
@@ -1492,7 +1492,7 @@ export async function printTestReceiptTemplate(
     sampleOrder.restaurantAddress = formattedAddr;
   }
 
-  const effectiveWidth = template.layout?.paperWidth || '58mm';
+  const effectiveWidth = configOverride?.paperWidth || template.layout?.paperWidth || '80mm';
   const mergedOverride: Partial<PosPrinterConfig> = {
     ...configOverride,
     paperWidth: effectiveWidth,

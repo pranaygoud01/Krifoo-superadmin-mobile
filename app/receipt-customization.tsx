@@ -2101,13 +2101,13 @@ export default function ReceiptCustomizationScreen() {
               <View style={{ width: '100%' }}>
                 <View style={styles.paperSummaryRow}>
                   <Text style={styles.paperText}>Subtotal</Text>
-                  <Text style={styles.paperText}>£42.95</Text>
+                  <Text style={styles.paperText}>£8.97</Text>
                 </View>
 
                 {isDeliv ? (
                   <View style={styles.paperSummaryRow}>
                     <Text style={styles.paperText}>Delivery Fee</Text>
-                    <Text style={styles.paperText}>£2.50</Text>
+                    <Text style={styles.paperText}>£1.49</Text>
                   </View>
                 ) : null}
 
@@ -2148,7 +2148,7 @@ export default function ReceiptCustomizationScreen() {
                       },
                     ]}
                   >
-                    £{isDeliv ? '43.16' : '40.66'}
+                    £{isDeliv ? '10.96' : '8.97'}
                   </Text>
                 </View>
 
