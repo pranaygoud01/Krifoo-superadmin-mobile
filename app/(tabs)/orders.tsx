@@ -1644,7 +1644,7 @@ export default function OrdersScreen() {
               const fullOrderRes = await orderService.getOrderById(orderId);
               if (fullOrderRes.success && fullOrderRes.data) orderToPrint = fullOrderRes.data;
             }
-            if (orderToPrint) await printThermalReceipt(orderToPrint, true);
+            if (orderToPrint) await printThermalReceipt(orderToPrint, false);
           }
         } catch (printErr) {
           console.error('[Orders] Auto-print failed:', printErr);

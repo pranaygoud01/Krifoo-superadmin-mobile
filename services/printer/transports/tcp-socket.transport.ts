@@ -48,7 +48,15 @@ export class TcpSocketTransport implements PrinterTransport {
               if (typeof client.end === 'function') {
                 client.end();
               }
-              client.destroy();
+              if (!result.ok) {
+                client.destroy();
+              } else {
+                setTimeout(() => {
+                  try {
+                    client.destroy();
+                  } catch {}
+                }, 1000);
+              }
             }
           } catch {}
           resolve(result);
@@ -61,7 +69,7 @@ export class TcpSocketTransport implements PrinterTransport {
           kind: 'timeout',
           detail: `Connection timed out to printer at ${ip}:${this.port}. Check that the printer is ON, connected to the same Wi-Fi, and Mobile Data is turned off.`,
         });
-      }, 6000);
+      }, 8000);
 
       try {
         client = TcpSocket.createConnection(
@@ -83,11 +91,11 @@ export class TcpSocketTransport implements PrinterTransport {
                   });
                 } else {
                   writeCompleted = true;
-                  // Allow buffer flush then close cleanly
+                  // Allow hardware buffer to flush completely to paper and cut before closing socket
                   setTimeout(() => {
                     clearTimeout(timer);
                     finish({ ok: true, rawResponse: 'write_ack' });
-                  }, 250);
+                  }, 1500);
                 }
               });
             } catch (writeErr: any) {

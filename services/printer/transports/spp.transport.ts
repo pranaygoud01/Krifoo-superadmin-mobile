@@ -50,6 +50,8 @@ export class SppTransport implements PrinterTransport {
           const text = new TextDecoder().decode(dataBytes);
           await PosPrinter.printText(text);
         }
+        // Allow hardware RFCOMM buffer to drain completely before disconnecting
+        await new Promise((res) => setTimeout(res, 1200));
         try {
           await PosPrinter.disconnectPrinter();
         } catch {}
@@ -83,6 +85,7 @@ export class SppTransport implements PrinterTransport {
         }
         const base64Data = typeof btoa === 'function' ? btoa(binary) : Buffer.from(dataBytes).toString('base64');
         await device.write(base64Data, 'base64');
+        await new Promise((res) => setTimeout(res, 1200));
         await device.disconnect();
         return { ok: true, rawResponse: 'spp_write_acknowledged' };
       } catch (err: any) {

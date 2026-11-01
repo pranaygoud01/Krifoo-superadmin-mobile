@@ -232,7 +232,7 @@ export default function DashboardScreen() {
               const fullOrderRes = await orderService.getOrderById(order._id);
               if (fullOrderRes.success && fullOrderRes.data) orderToPrint = fullOrderRes.data;
             }
-            if (orderToPrint) await printThermalReceipt(orderToPrint, true);
+            if (orderToPrint) await printThermalReceipt(orderToPrint, false);
           }
         } catch (printErr) {
           console.error('[Dashboard] Auto-print failed:', printErr);

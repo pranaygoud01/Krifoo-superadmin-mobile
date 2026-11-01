@@ -1174,9 +1174,10 @@ export async function printThermalReceipt(
     const now = Date.now();
 
     // Prevent duplicate auto-prints if socket and push notification fire at the same second
-    if (!isManual && orderKey) {
+    const minInterval = isManual ? 2500 : 20000;
+    if (orderKey) {
       const lastPrinted = recentPrints.get(orderKey);
-      if (lastPrinted && now - lastPrinted < 20000) {
+      if (lastPrinted && now - lastPrinted < minInterval) {
         console.log(`[PRINT SKIPPED] Duplicate auto-print for order #${orderNum} (printed ${Math.round((now - lastPrinted)/1000)}s ago)`);
         return true;
       }
