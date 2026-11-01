@@ -1,6 +1,6 @@
 import { Order } from '../../types';
 import { PosPrinterConfig } from '../pos-config.service';
-import { ReceiptTemplate, getCachedStoreProfile } from '../receipt-customization.service';
+import { ReceiptTemplate, getCachedStoreProfile, isDummyCustomerPhone } from '../receipt-customization.service';
 import { buildCustomizedReceiptDocument, getOrderScheduleInfo, getSanitizedOrderNotes } from './receipt-document';
 import { EscPosEncoder } from './encoders/escpos-encoder';
 
@@ -378,7 +378,7 @@ export function buildEscPosReceipt(order: Partial<Order> & any, config: PosPrint
 
   builder.bold(true).line('CUSTOMER:').bold(false);
   builder.line(`  Name:  ${customerName}`);
-  if (customerPhone) {
+  if (customerPhone && !isDummyCustomerPhone(customerPhone)) {
     builder.line(`  Phone: ${customerPhone}`);
   }
 

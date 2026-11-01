@@ -1,6 +1,6 @@
 import { Order } from '../../types';
 import { PosPrinterConfig } from '../pos-config.service';
-import { ReceiptTemplate, getCachedStoreProfile, formatRestaurantAddress } from '../receipt-customization.service';
+import { ReceiptTemplate, getCachedStoreProfile, formatRestaurantAddress, isDummyCustomerPhone } from '../receipt-customization.service';
 
 export type ReceiptCommand =
   | {
@@ -427,7 +427,7 @@ export function buildReceiptDocument(order: Partial<Order> & any, config?: Parti
   for (const line of custLines) {
     commands.push({ type: 'text', value: line, bold: true, align: 'left' });
   }
-  if (customerPhone) {
+  if (customerPhone && !isDummyCustomerPhone(customerPhone, restaurantPhone)) {
     commands.push({ type: 'text', value: `Phone:    ${customerPhone}`, align: 'left' });
   }
 
@@ -797,7 +797,7 @@ export function buildCustomizedReceiptDocument(
       });
     }
 
-    if (customerPhone) {
+    if (customerPhone && !isDummyCustomerPhone(customerPhone, restaurantPhone)) {
       commands.push({ type: 'text', value: `Phone:    ${customerPhone}`, align: 'left', font });
     }
 

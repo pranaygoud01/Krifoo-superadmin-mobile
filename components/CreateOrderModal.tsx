@@ -36,6 +36,28 @@ import { menuService } from '../services/menu.service';
 import { orderService } from '../services/order.service';
 import { printThermalReceipt } from '../services/thermal-print.service';
 import { MenuItem } from '../types';
+import { useAuth } from '../context/AuthContext';
+import { getCachedStoreProfile, setCachedStoreProfile } from '../services/receipt-customization.service';
+import { restaurantOwnerService } from '../services/restaurant-owner.service';
+import { restaurantService } from '../services/restaurant.service';
+
+/**
+ * Normalizes any phone string to a valid 10-digit UK format (no leading 0, no +44).
+ */
+const normalizeUKPhone = (raw?: string | null): string | null => {
+  if (!raw) return null;
+  let digits = String(raw).replace(/\D/g, '');
+  if (digits.startsWith('44') && digits.length >= 11) {
+    digits = digits.slice(2);
+  }
+  while (digits.startsWith('0')) {
+    digits = digits.slice(1);
+  }
+  if (digits.length === 10 && !/^(.)\1+$/.test(digits) && !digits.startsWith('0')) {
+    return digits;
+  }
+  return null;
+};
 
 interface CreateOrderModalProps {
   visible: boolean;
@@ -44,6 +66,7 @@ interface CreateOrderModalProps {
   initialChannel?: 'dine_in' | 'takeaway' | 'delivery';
   restaurantId?: string;
   restaurantName?: string;
+  restaurantPhone?: string;
 }
 
 export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
@@ -53,7 +76,10 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
   initialChannel = 'dine_in',
   restaurantId,
   restaurantName,
+  restaurantPhone: propRestaurantPhone,
 }) => {
+  const { user } = useAuth();
+  const [storePhone, setStorePhone] = useState<string>('');
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const isTablet = windowWidth >= 768;
@@ -87,6 +113,33 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
       setMobileTab('menu');
       setErrorMsg(null);
       loadMenu();
+
+      // Resolve store / restaurant phone number for fallback
+      const cached = getCachedStoreProfile();
+      const userPhone = user?.phoneNumber || (typeof user?.restaurantId === 'object' ? user?.restaurantId?.phoneNumber : undefined);
+      const initialResolvedPhone = propRestaurantPhone || cached?.phoneNumber || userPhone || '';
+      if (initialResolvedPhone) {
+        setStorePhone(initialResolvedPhone);
+      } else {
+        if (restaurantId && typeof restaurantId === 'string' && restaurantId.length === 24) {
+          restaurantService.getRestaurantById(restaurantId).then((res) => {
+            if (res.success && res.data?.phoneNumber) {
+              setStorePhone(res.data.phoneNumber);
+            }
+          }).catch(() => {});
+        } else {
+          restaurantOwnerService.getRestaurantProfile().then((res) => {
+            if (res.success && res.data?.phoneNumber) {
+              setStorePhone(res.data.phoneNumber);
+              setCachedStoreProfile({
+                restaurantName: res.data.restaurantName,
+                phoneNumber: res.data.phoneNumber,
+                address: res.data.address,
+              });
+            }
+          }).catch(() => {});
+        }
+      }
     } else {
       // Reset state
       setCart({});
@@ -191,15 +244,32 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
       return;
     }
 
-    // Phone validation
-    const cleanPhone = customerPhone.replace(/\D/g, '');
-    let finalPhone = cleanPhone;
-    if (!finalPhone) {
-      finalPhone = '0000000000'; // Default guest phone if not entered for dine-in/takeaway
-    } else if (finalPhone.length > 10) {
-      finalPhone = finalPhone.slice(-10);
-    } else if (finalPhone.length < 10) {
-      finalPhone = finalPhone.padStart(10, '7');
+    // Phone validation & normalization
+    let finalPhone = '';
+    const trimmedPhone = customerPhone.trim();
+    if (trimmedPhone) {
+      const validPhone = normalizeUKPhone(trimmedPhone);
+      if (!validPhone) {
+        setErrorMsg('Please enter a valid UK phone number (e.g. 07123 456789) or leave blank.');
+        return;
+      }
+      finalPhone = validPhone;
+    } else {
+      // Default phone for POS orders: use store or restaurant phone number
+      const candidateStorePhone =
+        storePhone ||
+        propRestaurantPhone ||
+        getCachedStoreProfile()?.phoneNumber ||
+        user?.phoneNumber ||
+        (typeof user?.restaurantId === 'object' ? user?.restaurantId?.phoneNumber : undefined);
+
+      const resolvedStorePhone = normalizeUKPhone(candidateStorePhone);
+      if (channel === 'delivery' && !resolvedStorePhone) {
+        setErrorMsg('Phone number is required for delivery orders.');
+        return;
+      }
+      // Use restaurant/store phone number as default (falls back to '7000000001' if restaurant phone not yet configured)
+      finalPhone = resolvedStorePhone || '7000000001';
     }
 
     if (channel === 'delivery' && !deliveryAddress.trim()) {
@@ -576,7 +646,10 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                         placeholder="Customer Name"
                         placeholderTextColor="#94A3B8"
                         value={customerName}
-                        onChangeText={setCustomerName}
+                        onChangeText={(t) => {
+                          setCustomerName(t);
+                          if (errorMsg) setErrorMsg(null);
+                        }}
                       />
                       <TextInput
                         style={[styles.inputField, { flex: 1.2 }]}
@@ -584,7 +657,10 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                         placeholderTextColor="#94A3B8"
                         keyboardType="phone-pad"
                         value={customerPhone}
-                        onChangeText={setCustomerPhone}
+                        onChangeText={(t) => {
+                          setCustomerPhone(t);
+                          if (errorMsg) setErrorMsg(null);
+                        }}
                       />
                     </View>
                   )}
@@ -597,7 +673,10 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                           placeholder="Recipient Name"
                           placeholderTextColor="#94A3B8"
                           value={customerName}
-                          onChangeText={setCustomerName}
+                          onChangeText={(t) => {
+                            setCustomerName(t);
+                            if (errorMsg) setErrorMsg(null);
+                          }}
                         />
                         <TextInput
                           style={[styles.inputField, { flex: 1 }]}
@@ -605,7 +684,10 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                           placeholderTextColor="#94A3B8"
                           keyboardType="phone-pad"
                           value={customerPhone}
-                          onChangeText={setCustomerPhone}
+                          onChangeText={(t) => {
+                            setCustomerPhone(t);
+                            if (errorMsg) setErrorMsg(null);
+                          }}
                         />
                       </View>
                       <TextInput
@@ -613,7 +695,10 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                         placeholder="Delivery Address & Postal Code"
                         placeholderTextColor="#94A3B8"
                         value={deliveryAddress}
-                        onChangeText={setDeliveryAddress}
+                        onChangeText={(t) => {
+                          setDeliveryAddress(t);
+                          if (errorMsg) setErrorMsg(null);
+                        }}
                       />
                     </View>
                   )}

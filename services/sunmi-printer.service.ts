@@ -1,7 +1,7 @@
 import { Platform } from 'react-native';
 import * as RN from 'react-native';
 import { Order } from '../types';
-import { getActiveReceiptTemplate, ReceiptTemplate, getCachedStoreProfile, formatRestaurantAddress } from './receipt-customization.service';
+import { getActiveReceiptTemplate, ReceiptTemplate, getCachedStoreProfile, formatRestaurantAddress, isDummyCustomerPhone } from './receipt-customization.service';
 import { getOrderScheduleInfo, getSanitizedOrderNotes } from './printer/receipt-document';
 import { getPosPrinterConfig, PosPrinterConfig } from './pos-config.service';
 
@@ -407,7 +407,7 @@ export async function printSunmiOrderReceipt(
       sunmi.printerText(`CUSTOMER:\n`);
       sunmi.setFontWeight(false);
       sunmi.printerText(`  Name:  ${customerName}\n`);
-      if (customerPhone) {
+      if (customerPhone && !isDummyCustomerPhone(customerPhone, restaurantPhone)) {
         sunmi.printerText(`  Phone: ${customerPhone}\n`);
       }
 

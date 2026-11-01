@@ -63,7 +63,7 @@ import {
 import { printThermalReceipt, isAutoPrintEnabled, getLastPrintJobReport, getOrderScheduleInfo } from '../../services/thermal-print.service';
 import { getSanitizedOrderNotes } from '../../services/printer/receipt-document';
 import { getPosPrinterConfig } from '../../services/pos-config.service';
-import { getActiveReceiptTemplate } from '../../services/receipt-customization.service';
+import { getActiveReceiptTemplate, isDummyCustomerPhone } from '../../services/receipt-customization.service';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const TABLET_BREAKPOINT = 768;
@@ -170,8 +170,11 @@ function getCustomerName(order: Order) {
 }
 
 function getCustomerPhone(order: Order) {
-  if (typeof order.customerId === 'object') return order.customerId?.phoneNumber || order.customerDetails?.phoneNumber || '';
-  return order.customerDetails?.phoneNumber || '';
+  let phone = '';
+  if (typeof order.customerId === 'object') phone = order.customerId?.phoneNumber || order.customerDetails?.phoneNumber || '';
+  else phone = order.customerDetails?.phoneNumber || '';
+  if (isDummyCustomerPhone(phone)) return '';
+  return phone;
 }
 
 function getRestaurantName(order: Order) {

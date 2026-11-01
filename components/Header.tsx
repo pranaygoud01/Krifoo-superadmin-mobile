@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Alert, DeviceEventEmitter, useWindowDimensions } from 'react-native';
 import { Image } from 'expo-image';
 import { useRouter, useSegments } from 'expo-router';
-import { ArrowLeft, Bell, Settings, User } from 'lucide-react-native';
+import { ArrowLeft, Bell, Settings, User, Store } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Colors } from '../constants/colors';
 import { orderService } from '../services/order.service';
@@ -61,6 +61,7 @@ export const Header: React.FC<HeaderProps> = ({
 
   const [storeLogoUrl, setStoreLogoUrl] = React.useState<string | null>(extractUserLogo());
   const [imageError, setImageError] = React.useState<boolean>(false);
+  const [localImageError, setLocalImageError] = React.useState<boolean>(false);
 
   // Fetch store logo if not present on user object
   React.useEffect(() => {
@@ -219,12 +220,17 @@ export const Header: React.FC<HeaderProps> = ({
                     contentFit="cover"
                     onError={() => setImageError(true)}
                   />
-                ) : (
+                ) : !localImageError ? (
                   <Image
                     source={require('../assets/logo.png')}
                     style={[styles.headerLogo, isTablet && styles.headerLogoTablet]}
                     contentFit="contain"
+                    onError={() => setLocalImageError(true)}
                   />
+                ) : (
+                  <View style={[styles.headerLogo, styles.headerRestaurantLogo, isTablet && styles.headerLogoTablet, { backgroundColor: '#FF5C39', alignItems: 'center', justifyContent: 'center' }]}>
+                    <Store size={isTablet ? 24 : 18} color="#FFFFFF" />
+                  </View>
                 )}
                 <View style={styles.greetingTextContainer}>
                   <Text style={[styles.greetingText, isTablet && styles.greetingTextTablet]}>

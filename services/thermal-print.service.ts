@@ -8,7 +8,7 @@ import { printEpsonOrderReceipt, testEpsonPrinter, testPrinterAlignmentSlip, dis
 import { buildReceiptDocument, buildDrawerKickDocument, buildCustomizedReceiptDocument, getOrderScheduleInfo, formatScheduleDisplay, getOrderFulfillmentLabel, getSanitizedOrderNotes } from './printer/receipt-document';
 import { resolvePrinter } from './printer/printer-registry';
 import { PrintQueueService } from './printer/print-queue.service';
-import { getActiveReceiptTemplate, ReceiptTemplate, getSampleOrderForPreview, getCachedStoreProfile, setCachedStoreProfile, formatRestaurantAddress } from './receipt-customization.service';
+import { getActiveReceiptTemplate, ReceiptTemplate, getSampleOrderForPreview, getCachedStoreProfile, setCachedStoreProfile, formatRestaurantAddress, isDummyCustomerPhone } from './receipt-customization.service';
 
 export {
   isSunmiAvailable,
@@ -377,7 +377,7 @@ export function generateCustomizedThermalReceiptHtml(order: Partial<Order> & any
   <div class="divider"></div>
   <div style="text-align:left;">
     <div style="font-weight:${layout.boldElements.customerDetails ? '700' : '500'};">Customer: ${customerName}</div>
-    ${customerPhone ? `<div>Phone: ${customerPhone}</div>` : ''}
+    ${customerPhone && !isDummyCustomerPhone(customerPhone, restaurantPhone) ? `<div>Phone: ${customerPhone}</div>` : ''}
     ${rawAddress && !isDineIn ? `<div>Address: ${rawAddress}</div>` : ''}
     ${postalCode && !isDineIn ? `<div style="font-weight:700;">Postcode: ${postalCode}</div>` : ''}
   </div>
@@ -980,8 +980,10 @@ export function generateThermalReceiptHtml(order: Partial<Order> & any, template
         : ''
     }
 
+    ${customerPhone && !isDummyCustomerPhone(customerPhone, restaurantPhone) ? `
     <div class="detail-label">Phone number</div>
     <div class="detail-val-bold">${customerPhone}</div>
+    ` : ''}
 
     ${
       specialNotes

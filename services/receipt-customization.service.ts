@@ -577,6 +577,35 @@ export function getCachedStoreProfile(): { restaurantName?: string; phoneNumber?
 }
 
 /**
+ * Checks whether a phone number is a dummy/placeholder (e.g. used for POS walk-in / counter orders)
+ * so it won't be printed as customer phone on receipts or shown as contact info.
+ */
+export function isDummyCustomerPhone(phone?: string | null, restaurantPhone?: string | null): boolean {
+  if (!phone) return true;
+  const digits = String(phone).replace(/\D/g, '');
+  if (!digits) return true;
+  if (
+    digits === '0000000000' ||
+    digits === '7000000001' ||
+    digits === '07000000001' ||
+    digits === '1234567890' ||
+    /^(.)\1+$/.test(digits)
+  ) {
+    return true;
+  }
+  // If the phone number matches the store or restaurant phone number, treat as dummy customer phone
+  // so the store's own number is not printed under "Customer: Phone:"
+  const rawStore = restaurantPhone || _cachedStoreProfile?.phoneNumber;
+  if (rawStore) {
+    const storeDigits = String(rawStore).replace(/\D/g, '');
+    if (storeDigits && (digits === storeDigits || digits.endsWith(storeDigits.slice(-9)) || storeDigits.endsWith(digits.slice(-9)))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Realistic Mock Sample Order for Live Preview
  */
 export function getSampleOrderForPreview(
