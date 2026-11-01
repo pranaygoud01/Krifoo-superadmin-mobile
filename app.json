@@ -62,6 +62,12 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
+      [
+        "expo-asset",
+        {
+          "assets": ["./assets"]
+        }
+      ],
       "./plugins/withDeviceCompatibility",
       "expo-router",
       [
