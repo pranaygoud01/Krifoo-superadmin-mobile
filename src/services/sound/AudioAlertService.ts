@@ -1,12 +1,6 @@
 import { Vibration, Platform, AppState } from 'react-native';
 import * as Haptics from 'expo-haptics';
-
-let Audio: any = null;
-try {
-  Audio = require('expo-av').Audio;
-} catch (e) {
-  console.warn('[AudioAlertService] ExponentAV native module not available in this client.');
-}
+import { Audio } from 'expo-av';
 
 /**
  * Interactive Audio Alert Service (`expo-av`).
@@ -19,7 +13,6 @@ class AudioAlertService {
   private isAlertActive: boolean = false;
 
   private async configureAudioMode(): Promise<void> {
-    if (!Audio?.setAudioModeAsync) return;
     try {
       await Audio.setAudioModeAsync({
         playsInSilentModeIOS: true,
@@ -53,19 +46,17 @@ class AudioAlertService {
         }, 1000);
       }
 
-      if (Audio?.Sound) {
-        const { sound } = await Audio.Sound.createAsync(
-          require('../../../assets/sounds/order_buzz.wav'),
-          {
-            shouldPlay: true,
-            isLooping: true,
-            volume: 1.0,
-          }
-        );
+      const { sound } = await Audio.Sound.createAsync(
+        require('../../../assets/sounds/order_buzz.wav'),
+        {
+          shouldPlay: true,
+          isLooping: true,
+          volume: 1.0,
+        }
+      );
 
-        this.activeSound = sound;
-        await sound.playAsync();
-      }
+      this.activeSound = sound;
+      await sound.playAsync();
 
       // Fallback auto-stop if unhandled after timeoutMs
       this.autoStopTimer = setTimeout(() => {

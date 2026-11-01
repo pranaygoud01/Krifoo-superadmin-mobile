@@ -89,6 +89,7 @@ module.exports = function withDeviceCompatibility(config) {
     if (application) {
       application.$ = application.$ || {};
       application.$['android:resizeableActivity'] = 'true';
+      application.$['android:usesCleartextTraffic'] = 'true';
 
       if (!application.activity) {
         application.activity = [];

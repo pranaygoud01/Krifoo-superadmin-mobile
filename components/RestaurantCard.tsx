@@ -1,5 +1,7 @@
 import React from 'react';
-import { View, Text, StyleSheet, Image, TouchableOpacity, Switch } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Switch } from 'react-native';
+import { Image } from 'expo-image';
+import { resolveImageUrl } from '../services/image.helper';
 import { Restaurant } from '../types';
 import { Colors } from '../constants/colors';
 import { StatusBadge } from './StatusBadge';
@@ -36,11 +38,19 @@ export const RestaurantCard: React.FC<RestaurantCardProps> = ({
 
   const isActive: boolean = restaurant.isActive ?? false;
 
+  const resolvedImageUrl = resolveImageUrl(restaurant.imageUrl);
+
   return (
     <View style={styles.card}>
       <View style={styles.header}>
-        {restaurant.imageUrl ? (
-          <Image source={{ uri: restaurant.imageUrl }} style={styles.image} />
+        {resolvedImageUrl ? (
+          <Image
+            source={{ uri: resolvedImageUrl }}
+            style={styles.image}
+            contentFit="cover"
+            transition={200}
+            cachePolicy="memory-disk"
+          />
         ) : (
           <View style={[styles.image, styles.imagePlaceholder]}>
             <Text style={styles.placeholderText}>{restaurant.restaurantName?.charAt(0) || 'R'}</Text>

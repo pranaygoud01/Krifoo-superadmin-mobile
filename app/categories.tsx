@@ -6,7 +6,6 @@ import {
   FlatList,
   TouchableOpacity,
   TextInput,
-  Image,
   ActivityIndicator,
   Modal,
   Switch,
@@ -15,6 +14,8 @@ import {
   Platform,
   useWindowDimensions,
 } from 'react-native';
+import { Image } from 'expo-image';
+import { resolveImageUrl } from '../services/image.helper';
 import { Header } from '../components/Header';
 import { Colors } from '../constants/colors';
 import { categoryService } from '../services/category.service';
@@ -249,8 +250,14 @@ export default function CategoriesScreen() {
           }
           renderItem={({ item }) => (
             <View style={styles.categoryCard}>
-              {item.imageUrl ? (
-                <Image source={{ uri: item.imageUrl }} style={styles.categoryThumb} />
+              {resolveImageUrl(item.imageUrl) ? (
+                <Image
+                  source={{ uri: resolveImageUrl(item.imageUrl)! }}
+                  style={styles.categoryThumb}
+                  contentFit="cover"
+                  transition={200}
+                  cachePolicy="memory-disk"
+                />
               ) : (
                 <View style={[styles.categoryThumb, styles.placeholderThumb]}>
                   <ImageIcon size={22} color={Colors.textMuted} />

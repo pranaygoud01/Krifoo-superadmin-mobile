@@ -8,10 +8,11 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Switch,
-  Image,
   useWindowDimensions,
   Platform,
 } from 'react-native';
+import { Image } from 'expo-image';
+import { resolveImageUrl } from '../services/image.helper';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Header } from '../components/Header';
 import { Colors } from '../constants/colors';
@@ -503,9 +504,15 @@ export default function ExternalWebsiteSettingsScreen() {
                     placeholderTextColor={Colors.textSubtle}
                     autoCapitalize="none"
                   />
-                  {logoUrl ? (
+                  {resolveImageUrl(logoUrl) ? (
                     <View style={styles.imageThumbnailRow}>
-                      <Image source={{ uri: logoUrl }} style={styles.logoPreview} />
+                      <Image
+                        source={{ uri: resolveImageUrl(logoUrl)! }}
+                        style={styles.logoPreview}
+                        contentFit="cover"
+                        transition={200}
+                        cachePolicy="memory-disk"
+                      />
                       <Text style={styles.imageThumbnailCaption}>Logo Preview</Text>
                     </View>
                   ) : null}
@@ -521,8 +528,14 @@ export default function ExternalWebsiteSettingsScreen() {
                     placeholderTextColor={Colors.textSubtle}
                     autoCapitalize="none"
                   />
-                  {heroBannerUrl ? (
-                    <Image source={{ uri: heroBannerUrl }} style={styles.bannerPreview} />
+                  {resolveImageUrl(heroBannerUrl) ? (
+                    <Image
+                      source={{ uri: resolveImageUrl(heroBannerUrl)! }}
+                      style={styles.bannerPreview}
+                      contentFit="cover"
+                      transition={200}
+                      cachePolicy="memory-disk"
+                    />
                   ) : null}
                 </View>
               </View>

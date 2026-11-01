@@ -7,8 +7,9 @@ import {
   Alert,
   DeviceEventEmitter,
   useWindowDimensions,
-  Image,
 } from 'react-native';
+import { Image } from 'expo-image';
+import { resolveImageUrl } from '../services/image.helper';
 import { useRouter, useSegments } from 'expo-router';
 import { ArrowLeft, Bell, Settings, User, Store } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -49,22 +50,20 @@ export const Header: React.FC<HeaderProps> = ({
   // Resolve restaurant logo from user object or props
   const extractUserLogo = React.useCallback((): string | null => {
     if (isSuperAdmin) return null;
-    if (propRestaurantLogo) return propRestaurantLogo;
-    if (user?.logoUrl) return user.logoUrl;
-    if (user?.restaurantLogo) return user.restaurantLogo;
-    if (user?.imageUrl) return user.imageUrl;
-    if (user?.logo) return user.logo;
-    if (typeof user?.restaurantId === 'object' && user?.restaurantId) {
+    let raw: any = null;
+    if (propRestaurantLogo) raw = propRestaurantLogo;
+    else if (user?.logoUrl) raw = user.logoUrl;
+    else if (user?.restaurantLogo) raw = user.restaurantLogo;
+    else if (user?.imageUrl) raw = user.imageUrl;
+    else if (user?.logo) raw = user.logo;
+    else if (typeof user?.restaurantId === 'object' && user?.restaurantId) {
       const rest = user.restaurantId;
-      if (rest.logoUrl) return rest.logoUrl;
-      if (rest.imageUrl) return rest.imageUrl;
-      if (rest.logo) return rest.logo;
-      if (rest.externalWebsiteSettings?.logoUrl) return rest.externalWebsiteSettings.logoUrl;
-    }
-    if (user?.externalWebsiteSettings?.logoUrl) return user.externalWebsiteSettings.logoUrl;
-    if (user?.restaurant?.logoUrl) return user.restaurant.logoUrl;
-    if (user?.restaurant?.imageUrl) return user.restaurant.imageUrl;
-    return null;
+      raw = rest.logoUrl || rest.imageUrl || rest.logo || rest.externalWebsiteSettings?.logoUrl;
+    } else if (user?.externalWebsiteSettings?.logoUrl) raw = user.externalWebsiteSettings.logoUrl;
+    else if (user?.restaurant?.logoUrl) raw = user.restaurant.logoUrl;
+    else if (user?.restaurant?.imageUrl) raw = user.restaurant.imageUrl;
+
+    return resolveImageUrl(raw);
   }, [isSuperAdmin, propRestaurantLogo, user]);
 
   const [storeLogoUrl, setStoreLogoUrl] = React.useState<string | null>(extractUserLogo());
@@ -93,12 +92,13 @@ export const Header: React.FC<HeaderProps> = ({
         if (!isMounted) return;
         if (res.success && res.data) {
           const r = res.data;
-          const remoteLogo =
+          const remoteLogo = resolveImageUrl(
             r.logoUrl ||
             r.externalWebsiteSettings?.logoUrl ||
             r.imageUrl ||
             r.logo ||
-            r.image;
+            r.image
+          );
           if (remoteLogo) {
             setStoreLogoUrl(remoteLogo);
             setImageError(false);
@@ -225,14 +225,16 @@ export const Header: React.FC<HeaderProps> = ({
                   <Image
                     source={{ uri: storeLogoUrl }}
                     style={[styles.headerLogo, styles.headerRestaurantLogo, isTablet && styles.headerLogoTablet]}
-                    resizeMode="cover"
+                    contentFit="cover"
+                    transition={200}
                     onError={() => setImageError(true)}
                   />
                 ) : !localImageError ? (
                   <Image
                     source={require('../assets/logo.png')}
                     style={[styles.headerLogo, isTablet && styles.headerLogoTablet]}
-                    resizeMode="contain"
+                    contentFit="contain"
+                    transition={200}
                     onError={() => setLocalImageError(true)}
                   />
                 ) : (

@@ -62,6 +62,12 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
+      [
+        "expo-av",
+        {
+          "microphonePermission": false
+        }
+      ],
       "./plugins/withDeviceCompatibility",
       "expo-router",
       [

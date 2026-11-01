@@ -7,10 +7,11 @@ import {
   ScrollView,
   TouchableOpacity,
   TextInput,
-  Image,
   Linking,
   useWindowDimensions,
 } from 'react-native';
+import { Image } from 'expo-image';
+import { resolveImageUrl } from '../services/image.helper';
 import { Restaurant, VerificationStatus } from '../types';
 import { Colors } from '../constants/colors';
 import { StatusBadge } from './StatusBadge';
@@ -85,8 +86,14 @@ export const RestaurantDetailModal: React.FC<RestaurantDetailModalProps> = ({
           <ScrollView style={styles.scrollBody} showsVerticalScrollIndicator={false}>
             {/* Banner & Basic Info */}
             <View style={styles.bannerRow}>
-              {restaurant.imageUrl ? (
-                <Image source={{ uri: restaurant.imageUrl }} style={styles.bannerImage} />
+              {resolveImageUrl(restaurant.imageUrl) ? (
+                <Image
+                  source={{ uri: resolveImageUrl(restaurant.imageUrl)! }}
+                  style={styles.bannerImage}
+                  contentFit="cover"
+                  transition={200}
+                  cachePolicy="memory-disk"
+                />
               ) : (
                 <View style={[styles.bannerImage, styles.imagePlaceholder]}>
                   <Text style={styles.placeholderText}>{restaurant.restaurantName?.charAt(0)}</Text>

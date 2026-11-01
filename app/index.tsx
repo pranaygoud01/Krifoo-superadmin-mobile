@@ -4,8 +4,8 @@ import {
   Text,
   StyleSheet,
   Dimensions,
-  Image,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../context/AuthContext';
 
@@ -43,7 +43,8 @@ export default function IndexScreen() {
           <Image
             source={require('../assets/logo.png')}
             style={styles.logo}
-            resizeMode="contain"
+            contentFit="contain"
+            transition={200}
           />
         </View>
 

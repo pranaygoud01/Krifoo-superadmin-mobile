@@ -9,12 +9,13 @@ import {
   ActivityIndicator,
   Switch,
   useWindowDimensions,
-  Image,
   Alert,
   KeyboardAvoidingView,
   Platform,
   Keyboard,
 } from 'react-native';
+import { Image } from 'expo-image';
+import { resolveImageUrl } from '../services/image.helper';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
@@ -2802,13 +2803,15 @@ export default function ReceiptCustomizationScreen() {
               {currentTemplate.content.logoUrl ? (
                 <View style={{ alignItems: 'center', marginVertical: 10, padding: 10, backgroundColor: '#F8FAFC', borderRadius: 10, borderWidth: 1, borderColor: '#E2E8F0' }}>
                   <Image
-                    source={{ uri: currentTemplate.content.logoUrl }}
+                    source={{ uri: resolveImageUrl(currentTemplate.content.logoUrl)! }}
                     style={[
                       { width: 72, height: 72 },
                       currentTemplate.content.logoShape === 'circle' && { borderRadius: 36, overflow: 'hidden' },
                       currentTemplate.content.logoShape === 'rounded' && { borderRadius: 10, overflow: 'hidden' },
                     ]}
-                    resizeMode={currentTemplate.content.logoShape === 'circle' ? 'cover' : 'contain'}
+                    contentFit={currentTemplate.content.logoShape === 'circle' ? 'cover' : 'contain'}
+                    transition={200}
+                    cachePolicy="memory-disk"
                   />
                   <Text style={{ fontSize: 11, color: '#64748B', marginTop: 6, fontWeight: '600' }}>
                     Preview: {currentTemplate.content.logoShape === 'circle' ? 'Circular Crop' : currentTemplate.content.logoShape === 'rounded' ? 'Rounded' : 'Standard'}
