@@ -11,7 +11,6 @@ import {
   Modal,
   Alert,
   ActivityIndicator,
-  Image,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Header } from '../../components/Header';
@@ -180,7 +179,6 @@ export default function DashboardScreen() {
   const router = useRouter();
   const { user } = useAuth();
   const isSuperAdmin = user?.userType === 'super_admin';
-  const [imgErrors, setImgErrors] = useState<Record<string, boolean>>({});
 
   const { width: windowWidth } = useWindowDimensions();
   const isSmallScreen = windowWidth < 375;
@@ -991,11 +989,9 @@ export default function DashboardScreen() {
                   ]}
                   pointerEvents="none"
                 />
-                <Image
-                  source={require('../../assets/kpi_gross_sales.png')}
-                  style={[styles.kpiBgIllustration, { width: superIllustrationSize, height: superIllustrationSize }]}
-                  resizeMode="contain"
-                />
+                <View style={[styles.kpiWatermarkBox, isTablet && styles.kpiWatermarkBoxTablet]} pointerEvents="none">
+                  <TrendingUp size={isSmallScreen ? 24 : isTablet ? 32 : 28} color="#059669" style={{ opacity: 0.35 }} />
+                </View>
                 <View style={styles.kpiContentContainer}>
                   <View style={styles.kpiTopRow}>
                     <View style={[styles.kpiIconBox, { backgroundColor: '#ECFDF5' }]}>
@@ -1029,11 +1025,9 @@ export default function DashboardScreen() {
                   ]}
                   pointerEvents="none"
                 />
-                <Image
-                  source={require('../../assets/kpi_online_card.png')}
-                  style={[styles.kpiBgIllustration, { width: superIllustrationSize, height: superIllustrationSize }]}
-                  resizeMode="contain"
-                />
+                <View style={[styles.kpiWatermarkBox, isTablet && styles.kpiWatermarkBoxTablet]} pointerEvents="none">
+                  <ShoppingBag size={isSmallScreen ? 24 : isTablet ? 32 : 28} color="#EA580C" style={{ opacity: 0.35 }} />
+                </View>
                 <View style={styles.kpiContentContainer}>
                   <View style={styles.kpiTopRow}>
                     <View style={[styles.kpiIconBox, { backgroundColor: '#FFF7ED' }]}>
@@ -1067,11 +1061,9 @@ export default function DashboardScreen() {
                   ]}
                   pointerEvents="none"
                 />
-                <Image
-                  source={require('../../assets/store.png')}
-                  style={[styles.kpiBgIllustration, { width: superIllustrationSize, height: superIllustrationSize }]}
-                  resizeMode="contain"
-                />
+                <View style={[styles.kpiWatermarkBox, isTablet && styles.kpiWatermarkBoxTablet]} pointerEvents="none">
+                  <Store size={isSmallScreen ? 24 : isTablet ? 32 : 28} color="#2563EB" style={{ opacity: 0.35 }} />
+                </View>
                 <View style={styles.kpiContentContainer}>
                   <View style={styles.kpiTopRow}>
                     <View style={[styles.kpiIconBox, { backgroundColor: '#EFF6FF' }]}>
@@ -1105,11 +1097,9 @@ export default function DashboardScreen() {
                   ]}
                   pointerEvents="none"
                 />
-                <Image
-                  source={require('../../assets/kpi_total_orders.png')}
-                  style={[styles.kpiBgIllustration, { width: superIllustrationSize, height: superIllustrationSize }]}
-                  resizeMode="contain"
-                />
+                <View style={[styles.kpiWatermarkBox, isTablet && styles.kpiWatermarkBoxTablet]} pointerEvents="none">
+                  <Clock size={isSmallScreen ? 24 : isTablet ? 32 : 28} color="#7C3AED" style={{ opacity: 0.35 }} />
+                </View>
                 <View style={styles.kpiContentContainer}>
                   <View style={styles.kpiTopRow}>
                     <View style={[styles.kpiIconBox, { backgroundColor: '#F5F3FF' }]}>
@@ -1320,18 +1310,9 @@ export default function DashboardScreen() {
                               Instant POS terminal
                             </Text>
                           </View>
-                          {imgErrors['op_create'] ? (
-                            <View style={[styles.gridIllustrationFallback, { backgroundColor: '#FFF7ED' }]}>
-                              <ShoppingBag size={28} color="#EA580C" />
+                          <View style={[styles.gridIllustrationBadge, { backgroundColor: '#FFF0EC', borderColor: '#FED7AA' }, isTablet && styles.gridIllustrationBadgeTablet]}>
+                              <ShoppingBag size={isTablet ? 24 : 20} color="#EA580C" />
                             </View>
-                          ) : (
-                            <Image
-                              source={require('../../assets/online_order.png')}
-                              style={[styles.gridIllustration, isSmallScreen && { width: 44, height: 44, bottom: -4, right: -4 }, isTablet && styles.gridIllustrationTablet]}
-                              resizeMode="contain"
-                              onError={() => setImgErrors(prev => ({ ...prev, op_create: true }))}
-                            />
-                          )}
                         </TouchableOpacity>
 
                         {/* 2. Instore Orders Card */}
@@ -1355,18 +1336,9 @@ export default function DashboardScreen() {
                                 : 'Dine-in service'}
                             </Text>
                           </View>
-                          {imgErrors['op_instore'] ? (
-                            <View style={[styles.gridIllustrationFallback, { backgroundColor: '#F5F3FF' }]}>
-                              <UtensilsCrossed size={28} color="#7C3AED" />
+                          <View style={[styles.gridIllustrationBadge, { backgroundColor: '#F5F3FF', borderColor: '#DDD6FE' }, isTablet && styles.gridIllustrationBadgeTablet]}>
+                              <UtensilsCrossed size={isTablet ? 24 : 20} color="#7C3AED" />
                             </View>
-                          ) : (
-                            <Image
-                              source={require('../../assets/dining_table.png')}
-                              style={[styles.gridIllustration, isSmallScreen && { width: 44, height: 44, bottom: -4, right: -4 }, isTablet && styles.gridIllustrationTablet]}
-                              resizeMode="contain"
-                              onError={() => setImgErrors(prev => ({ ...prev, op_instore: true }))}
-                            />
-                          )}
                         </TouchableOpacity>
                       </View>
 
@@ -1393,18 +1365,9 @@ export default function DashboardScreen() {
                                 : 'Pickup & collection'}
                             </Text>
                           </View>
-                          {imgErrors['op_takeaway'] ? (
-                            <View style={[styles.gridIllustrationFallback, { backgroundColor: '#FFF7ED' }]}>
-                              <Utensils size={28} color="#EA580C" />
+                          <View style={[styles.gridIllustrationBadge, { backgroundColor: '#FFF7ED', borderColor: '#FED7AA' }, isTablet && styles.gridIllustrationBadgeTablet]}>
+                              <Utensils size={isTablet ? 24 : 20} color="#EA580C" />
                             </View>
-                          ) : (
-                            <Image
-                              source={require('../../assets/food.png')}
-                              style={[styles.gridIllustration, isSmallScreen && { width: 44, height: 44, bottom: -4, right: -4 }, isTablet && styles.gridIllustrationTablet]}
-                              resizeMode="contain"
-                              onError={() => setImgErrors(prev => ({ ...prev, op_takeaway: true }))}
-                            />
-                          )}
                         </TouchableOpacity>
 
                         {/* 4. Delivery Orders Card */}
@@ -1428,18 +1391,9 @@ export default function DashboardScreen() {
                                 : 'Direct & fleet'}
                             </Text>
                           </View>
-                          {imgErrors['op_delivery'] ? (
-                      <View style={[styles.gridIllustrationFallback, { backgroundColor: '#EFF6FF' }]}>
-                        <Bike size={28} color="#2563EB" />
+                          <View style={[styles.gridIllustrationBadge, { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }, isTablet && styles.gridIllustrationBadgeTablet]}>
+                        <Bike size={isTablet ? 24 : 20} color="#2563EB" />
                       </View>
-                    ) : (
-                      <Image
-                        source={require('../../assets/fleet.png')}
-                        style={[styles.gridIllustration, isSmallScreen && { width: 44, height: 44, bottom: -4, right: -4 }, isTablet && styles.gridIllustrationTablet]}
-                        resizeMode="contain"
-                        onError={() => setImgErrors(prev => ({ ...prev, op_delivery: true }))}
-                      />
-                    )}
                   </TouchableOpacity>
                 </View>
                     </View>
@@ -1461,16 +1415,7 @@ export default function DashboardScreen() {
                       activeOpacity={0.7}
                     >
                       <View style={[styles.quickActionCircle, { backgroundColor: '#FFF0EC', borderColor: '#FED7AA' }, isTablet && styles.quickActionCircleTablet]}>
-                        {imgErrors['qa_bookings'] ? (
-                          <CalendarDays size={isTablet ? 26 : 22} color="#EA580C" />
-                        ) : (
-                          <Image
-                            source={require('../../assets/reservation.png')}
-                            style={[styles.quickActionIconImg, isTablet && styles.quickActionIconImgTablet]}
-                            resizeMode="contain"
-                            onError={() => setImgErrors(prev => ({ ...prev, qa_bookings: true }))}
-                          />
-                        )}
+                        <CalendarDays size={isTablet ? 26 : 22} color="#EA580C" />
                       </View>
                       <Text style={[styles.quickActionLabel, isTablet && styles.quickActionLabelTablet]} numberOfLines={1}>
                         Bookings
@@ -1489,16 +1434,7 @@ export default function DashboardScreen() {
                             <Text style={styles.quickActionBadgeText}>{tablesCount}</Text>
                           </View>
                         )}
-                        {imgErrors['qa_tables'] ? (
-                          <UtensilsCrossed size={isTablet ? 26 : 22} color="#7C3AED" />
-                        ) : (
-                          <Image
-                            source={require('../../assets/dining_table.png')}
-                            style={[styles.quickActionIconImg, isTablet && styles.quickActionIconImgTablet]}
-                            resizeMode="contain"
-                            onError={() => setImgErrors(prev => ({ ...prev, qa_tables: true }))}
-                          />
-                        )}
+                        <UtensilsCrossed size={isTablet ? 26 : 22} color="#7C3AED" />
                       </View>
                       <Text style={[styles.quickActionLabel, isTablet && styles.quickActionLabelTablet]} numberOfLines={1}>
                         Tables
@@ -1517,16 +1453,7 @@ export default function DashboardScreen() {
                             <Text style={styles.quickActionBadgeText}>{deliveryPartnersCount}</Text>
                           </View>
                         )}
-                        {imgErrors['qa_fleet'] ? (
-                          <Bike size={isTablet ? 26 : 22} color="#2563EB" />
-                        ) : (
-                          <Image
-                            source={require('../../assets/fleet.png')}
-                            style={[styles.quickActionIconImg, isTablet && styles.quickActionIconImgTablet]}
-                            resizeMode="contain"
-                            onError={() => setImgErrors(prev => ({ ...prev, qa_fleet: true }))}
-                          />
-                        )}
+                        <Bike size={isTablet ? 26 : 22} color="#2563EB" />
                       </View>
                       <Text style={[styles.quickActionLabel, isTablet && styles.quickActionLabelTablet]} numberOfLines={1}>
                         Fleet
@@ -1540,16 +1467,7 @@ export default function DashboardScreen() {
                       activeOpacity={0.7}
                     >
                       <View style={[styles.quickActionCircle, { backgroundColor: '#ECFDF5', borderColor: '#A7F3D0' }, isTablet && styles.quickActionCircleTablet]}>
-                        {imgErrors['qa_promo'] ? (
-                          <Sparkles size={isTablet ? 26 : 22} color="#059669" />
-                        ) : (
-                          <Image
-                            source={require('../../assets/publicity.png')}
-                            style={[styles.quickActionIconImg, isTablet && styles.quickActionIconImgTablet]}
-                            resizeMode="contain"
-                            onError={() => setImgErrors(prev => ({ ...prev, qa_promo: true }))}
-                          />
-                        )}
+                        <Sparkles size={isTablet ? 26 : 22} color="#059669" />
                       </View>
                       <Text style={[styles.quickActionLabel, isTablet && styles.quickActionLabelTablet]} numberOfLines={1}>
                         Promo
@@ -1563,16 +1481,7 @@ export default function DashboardScreen() {
                       activeOpacity={0.7}
                     >
                       <View style={[styles.quickActionCircle, { backgroundColor: '#EEF2FF', borderColor: '#C7D2FE' }, isTablet && styles.quickActionCircleTablet]}>
-                        {imgErrors['qa_analytics'] ? (
-                          <BarChart3 size={isTablet ? 26 : 22} color="#4F46E5" />
-                        ) : (
-                          <Image
-                            source={require('../../assets/kpi_gross_sales.png')}
-                            style={[styles.quickActionIconImg, isTablet && styles.quickActionIconImgTablet]}
-                            resizeMode="contain"
-                            onError={() => setImgErrors(prev => ({ ...prev, qa_analytics: true }))}
-                          />
-                        )}
+                        <BarChart3 size={isTablet ? 26 : 22} color="#4F46E5" />
                       </View>
                       <Text style={[styles.quickActionLabel, isTablet && styles.quickActionLabelTablet]} numberOfLines={1}>
                         Analytics
@@ -2503,11 +2412,27 @@ const styles = StyleSheet.create({
     position: 'absolute',
     bottom: -16,
     right: -16,
-    width: 72,
-    height: 72,
-    borderRadius: 36,
+    width: 76,
+    height: 76,
+    borderRadius: 40,
     opacity: 0.55,
     zIndex: 0,
+  },
+  kpiWatermarkBox: {
+    position: 'absolute',
+    bottom: 4,
+    right: 4,
+    width: 46,
+    height: 46,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 1,
+  },
+  kpiWatermarkBoxTablet: {
+    width: 58,
+    height: 58,
+    bottom: 6,
+    right: 6,
   },
   kpiBgIllustration: {
     position: 'absolute',
@@ -3039,15 +2964,23 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  gridIllustration: {
+  gridIllustrationBadge: {
     position: 'absolute',
-    bottom: -6,
-    right: -6,
-    width: 52,
-    height: 52,
-    resizeMode: 'contain',
-    opacity: 0.85,
-    zIndex: 1,
+    bottom: 8,
+    right: 8,
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  gridIllustrationBadgeTablet: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    bottom: 10,
+    right: 10,
   },
   kpiIllustration: {
     width: 22,

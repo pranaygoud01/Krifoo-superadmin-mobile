@@ -10,7 +10,6 @@ import {
   Dimensions,
   useWindowDimensions,
   Modal,
-  Image,
 } from 'react-native';
 import { Colors } from '../constants/colors';
 import { Order } from '../types';
@@ -751,11 +750,9 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
             ]}
             pointerEvents="none"
           />
-          <Image
-            source={require('../assets/kpi_gross_sales.png')}
-            style={[styles.kpiBgIllustration, { width: illustrationSize, height: illustrationSize }, isTablet && styles.kpiBgIllustrationTablet]}
-            resizeMode="contain"
-          />
+          <View style={[styles.kpiWatermarkBox, isTablet && styles.kpiWatermarkBoxTablet]} pointerEvents="none">
+            <TrendingUp size={isTablet ? 34 : 28} color="#EA580C" style={{ opacity: 0.35 }} />
+          </View>
 
           <View style={styles.kpiContentContainer}>
             <View style={styles.kpiTopRow}>
@@ -790,11 +787,9 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
             ]}
             pointerEvents="none"
           />
-          <Image
-            source={require('../assets/kpi_total_orders.png')}
-            style={[styles.kpiBgIllustration, { width: illustrationSize, height: illustrationSize }, isTablet && styles.kpiBgIllustrationTablet]}
-            resizeMode="contain"
-          />
+          <View style={[styles.kpiWatermarkBox, isTablet && styles.kpiWatermarkBoxTablet]} pointerEvents="none">
+            <ShoppingBag size={isTablet ? 34 : 28} color="#2563EB" style={{ opacity: 0.35 }} />
+          </View>
 
           <View style={styles.kpiContentContainer}>
             <View style={styles.kpiTopRow}>
@@ -829,11 +824,9 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
             ]}
             pointerEvents="none"
           />
-          <Image
-            source={require('../assets/kpi_avg_value.png')}
-            style={[styles.kpiBgIllustration, { width: illustrationSize, height: illustrationSize }, isTablet && styles.kpiBgIllustrationTablet]}
-            resizeMode="contain"
-          />
+          <View style={[styles.kpiWatermarkBox, isTablet && styles.kpiWatermarkBoxTablet]} pointerEvents="none">
+            <Receipt size={isTablet ? 34 : 28} color="#7C3AED" style={{ opacity: 0.35 }} />
+          </View>
 
           <View style={styles.kpiContentContainer}>
             <View style={styles.kpiTopRow}>
@@ -868,11 +861,9 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
             ]}
             pointerEvents="none"
           />
-          <Image
-            source={require('../assets/kpi_cash_orders.png')}
-            style={[styles.kpiBgIllustration, { width: illustrationSize, height: illustrationSize }, isTablet && styles.kpiBgIllustrationTablet]}
-            resizeMode="contain"
-          />
+          <View style={[styles.kpiWatermarkBox, isTablet && styles.kpiWatermarkBoxTablet]} pointerEvents="none">
+            <Banknote size={isTablet ? 34 : 28} color="#059669" style={{ opacity: 0.35 }} />
+          </View>
 
           <View style={styles.kpiContentContainer}>
             <View style={styles.kpiTopRow}>
@@ -907,11 +898,9 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
             ]}
             pointerEvents="none"
           />
-          <Image
-            source={require('../assets/kpi_online_card.png')}
-            style={[styles.kpiBgIllustration, { width: illustrationSize, height: illustrationSize }, isTablet && styles.kpiBgIllustrationTablet]}
-            resizeMode="contain"
-          />
+          <View style={[styles.kpiWatermarkBox, isTablet && styles.kpiWatermarkBoxTablet]} pointerEvents="none">
+            <CreditCard size={isTablet ? 34 : 28} color="#4F46E5" style={{ opacity: 0.35 }} />
+          </View>
 
           <View style={styles.kpiContentContainer}>
             <View style={styles.kpiTopRow}>
@@ -946,11 +935,9 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
             ]}
             pointerEvents="none"
           />
-          <Image
-            source={require('../assets/kpi_fulfillment_rate.png')}
-            style={[styles.kpiBgIllustration, { width: illustrationSize, height: illustrationSize }, isTablet && styles.kpiBgIllustrationTablet]}
-            resizeMode="contain"
-          />
+          <View style={[styles.kpiWatermarkBox, isTablet && styles.kpiWatermarkBoxTablet]} pointerEvents="none">
+            <CheckCircle2 size={isTablet ? 34 : 28} color="#0D9488" style={{ opacity: 0.35 }} />
+          </View>
 
           <View style={styles.kpiContentContainer}>
             <View style={styles.kpiTopRow}>
@@ -1814,6 +1801,22 @@ const styles = StyleSheet.create({
     borderRadius: 40,
     opacity: 0.55,
     zIndex: 0,
+  },
+  kpiWatermarkBox: {
+    position: 'absolute',
+    bottom: 4,
+    right: 4,
+    width: 46,
+    height: 46,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 1,
+  },
+  kpiWatermarkBoxTablet: {
+    width: 58,
+    height: 58,
+    bottom: 6,
+    right: 6,
   },
   kpiBgIllustration: {
     position: 'absolute',
