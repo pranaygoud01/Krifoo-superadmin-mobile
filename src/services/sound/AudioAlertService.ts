@@ -1,6 +1,7 @@
 import { Vibration, Platform, AppState } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { Audio } from 'expo-av';
+import { getOrderBuzzPlaybackSource } from '@/constants/local-assets';
 
 /**
  * Interactive Audio Alert Service (`expo-av`).
@@ -47,7 +48,7 @@ class AudioAlertService {
       }
 
       const { sound } = await Audio.Sound.createAsync(
-        require('../../../assets/sounds/order_buzz.wav'),
+        await getOrderBuzzPlaybackSource(),
         {
           shouldPlay: true,
           isLooping: true,

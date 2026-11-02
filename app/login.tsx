@@ -12,6 +12,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { Image } from 'expo-image';
+import { LocalImages } from '@/constants/local-assets';
 import { StatusBar } from 'expo-status-bar';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../context/AuthContext';
@@ -92,7 +93,7 @@ export default function LoginScreen() {
 
       {/* Background Watermark Logo */}
       <Image
-        source={require('../assets/logo.png')}
+        source={LocalImages.logo}
         style={styles.watermark}
         contentFit="contain"
       />
@@ -106,7 +107,7 @@ export default function LoginScreen() {
           {/* Cover Header Image */}
           <View style={styles.coverContainer}>
             <Image
-              source={require('../assets/login_cover.jpg')}
+              source={LocalImages.loginCover}
               style={styles.coverImage}
               contentFit="cover"
             />
@@ -121,7 +122,7 @@ export default function LoginScreen() {
           <View style={styles.logoBadgeContainer}>
             <View style={styles.logoCircle}>
               <Image
-                source={require('../assets/logo.png')}
+                source={LocalImages.logo}
                 style={{ width: 56, height: 56 }}
                 contentFit="contain"
               />

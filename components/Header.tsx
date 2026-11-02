@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { Image } from 'expo-image';
 import { resolveImageUrl } from '../services/image.helper';
+import { LocalImages } from '@/constants/local-assets';
 import { useRouter, useSegments } from 'expo-router';
 import { ArrowLeft, Bell, Settings, User, Store } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -231,10 +232,9 @@ export const Header: React.FC<HeaderProps> = ({
                   />
                 ) : !localImageError ? (
                   <Image
-                    source={require('../assets/logo.png')}
+                    source={LocalImages.logo}
                     style={[styles.headerLogo, isTablet && styles.headerLogoTablet]}
                     contentFit="contain"
-                    transition={200}
                     onError={() => setLocalImageError(true)}
                   />
                 ) : (

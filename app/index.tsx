@@ -8,6 +8,7 @@ import {
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../context/AuthContext';
+import { LocalImages } from '@/constants/local-assets';
 
 const { width } = Dimensions.get('window');
 
@@ -41,10 +42,9 @@ export default function IndexScreen() {
         {/* White squircle logo container */}
         <View style={styles.logoContainer}>
           <Image
-            source={require('../assets/logo.png')}
+            source={LocalImages.logo}
             style={styles.logo}
             contentFit="contain"
-            transition={200}
           />
         </View>
 

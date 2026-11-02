@@ -147,7 +147,7 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
       await Notifications.setNotificationChannelAsync('default', {
         name: 'Default Alerts',
         importance: Notifications.AndroidImportance.MAX,
-        sound: 'order_buzz.wav',
+        sound: 'order_buzz',
         vibrationPattern: [0, 600, 150, 600, 150, 600, 150, 600, 150, 600, 150, 600],
         lightColor: '#FF5C39',
         enableVibrate: true,
@@ -157,7 +157,7 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
       await Notifications.setNotificationChannelAsync('orders', {
         name: 'Order Alerts',
         importance: Notifications.AndroidImportance.MAX,
-        sound: 'order_buzz.wav',
+        sound: 'order_buzz',
         vibrationPattern: [0, 600, 150, 600, 150, 600, 150, 600, 150, 600, 150, 600],
         lightColor: '#FF5C39',
         enableVibrate: true,

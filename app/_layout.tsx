@@ -1,3 +1,5 @@
+import 'expo-asset';
+import '@/constants/local-assets';
 import React from 'react';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';

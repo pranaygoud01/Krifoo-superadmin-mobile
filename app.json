@@ -68,6 +68,24 @@
           "microphonePermission": false
         }
       ],
+      [
+        "expo-asset",
+        {
+          "assets": [
+            "./assets",
+            "./assets/sounds"
+          ]
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/logo.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#FF5C39"
+        }
+      ],
       "./plugins/withDeviceCompatibility",
       "expo-router",
       [

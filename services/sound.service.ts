@@ -2,6 +2,7 @@ import { Vibration, Platform, AppState } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Audio } from 'expo-av';
+import { getOrderBuzzPlaybackSource } from '@/constants/local-assets';
 
 export const SOUND_SETTINGS_KEY = '@krifoo_admin_sound_settings';
 
@@ -194,7 +195,7 @@ export async function playOrderBuzzSound(
     if (requestId !== currentRequestId) return;
 
     const { sound } = await Audio.Sound.createAsync(
-      require('../assets/sounds/order_buzz.wav'),
+      await getOrderBuzzPlaybackSource(),
       {
         shouldPlay: false,
         isLooping: true,
