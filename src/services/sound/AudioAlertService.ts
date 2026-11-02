@@ -1,13 +1,14 @@
-import { Audio } from 'expo-av';
 import { Vibration, Platform, AppState } from 'react-native';
 import * as Haptics from 'expo-haptics';
+import { Audio } from 'expo-av';
+import { LocalSounds, getOrderBuzzPlaybackSource } from '@/constants/local-assets';
 
 /**
  * Interactive Audio Alert Service (`expo-av`).
  * Loops alert tone until restaurant staff explicitly clicks "Accept" or "Reject".
  */
 class AudioAlertService {
-  private activeSound: Audio.Sound | null = null;
+  private activeSound: any = null;
   private autoStopTimer: any = null;
   private hapticInterval: any = null;
   private isAlertActive: boolean = false;
@@ -46,17 +47,46 @@ class AudioAlertService {
         }, 1000);
       }
 
-      const { sound } = await Audio.Sound.createAsync(
-        require('../../../assets/sounds/order_buzz.wav'),
-        {
-          shouldPlay: true,
-          isLooping: true,
-          volume: 1.0,
-        }
-      );
+      const sourcesToTry: any[] = Platform.OS === 'android'
+        ? [
+            { uri: 'android.resource://com.krifoo.admin/raw/order_buzz' },
+            { uri: 'order_buzz' },
+            LocalSounds.orderBuzz,
+          ]
+        : [
+            LocalSounds.orderBuzz,
+            { uri: 'order_buzz.wav' },
+          ];
 
-      this.activeSound = sound;
-      await sound.playAsync();
+      let loadedSound: any = null;
+      let lastErr: any = null;
+
+      for (const sourceCandidate of sourcesToTry) {
+        try {
+          const result = await Audio.Sound.createAsync(
+            sourceCandidate,
+            {
+              shouldPlay: true,
+              isLooping: true,
+              volume: 1.0,
+            },
+            null,
+            false // downloadFirst = false
+          );
+          loadedSound = result.sound;
+          break;
+        } catch (e) {
+          console.warn('[AudioAlertService] Candidate failed, trying fallback:', sourceCandidate, e);
+          lastErr = e;
+        }
+      }
+
+      if (!loadedSound) {
+        throw lastErr || new Error('Failed to load alert sound on all candidates');
+      }
+
+      this.activeSound = loadedSound;
+      await loadedSound.playAsync();
 
       // Fallback auto-stop if unhandled after timeoutMs
       this.autoStopTimer = setTimeout(() => {

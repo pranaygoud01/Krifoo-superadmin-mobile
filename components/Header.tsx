@@ -1,32 +1,120 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert, Image } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  Alert,
+  DeviceEventEmitter,
+  useWindowDimensions,
+  type ImageSourcePropType,
+} from 'react-native';
+import { Image } from 'expo-image';
+import { resolveImageUrl, resolveMediaImageSource } from '../services/image.helper';
+import { LocalImages } from '@/constants/local-assets';
 import { useRouter, useSegments } from 'expo-router';
-import { ArrowLeft, Bell, Settings, User } from 'lucide-react-native';
+import { ArrowLeft, Bell, Settings, User, Store } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Colors } from '../constants/colors';
 import { orderService } from '../services/order.service';
 import { restaurantService } from '../services/restaurant.service';
+import { restaurantOwnerService } from '../services/restaurant-owner.service';
 import { useAuth } from '../context/AuthContext';
 import { useFontSize } from '../context/FontSizeContext';
+import { computeUnreadCount, NOTIFICATIONS_BADGE_EVENT } from '../services/notification-tracker.service';
 
 interface HeaderProps {
   title: string;
   subtitle?: string;
   rightElement?: React.ReactNode;
+  rightAction?: React.ReactNode;
   showBackButton?: boolean;
+  restaurantLogo?: string;
 }
 
 export const Header: React.FC<HeaderProps> = ({
   title,
   subtitle,
   rightElement,
+  rightAction,
   showBackButton,
+  restaurantLogo: propRestaurantLogo,
 }) => {
   const router = useRouter();
   const segments = useSegments();
   const { user } = useAuth();
   const isSuperAdmin = user?.userType === 'super_admin';
   const [unreadCount, setUnreadCount] = React.useState<number>(0);
+
+  const { width: windowWidth } = useWindowDimensions();
+  const isTablet = windowWidth >= 768;
+
+  // Resolve restaurant logo from user object or props
+  const extractUserLogo = React.useCallback((): ImageSourcePropType | null => {
+    if (isSuperAdmin) return null;
+    let raw: any = null;
+    if (propRestaurantLogo) raw = propRestaurantLogo;
+    else if (user?.logoUrl) raw = user.logoUrl;
+    else if (user?.restaurantLogo) raw = user.restaurantLogo;
+    else if (user?.imageUrl) raw = user.imageUrl;
+    else if (user?.logo) raw = user.logo;
+    else if (typeof user?.restaurantId === 'object' && user?.restaurantId) {
+      const rest = user.restaurantId;
+      raw = rest.logoUrl || rest.imageUrl || rest.logo || rest.externalWebsiteSettings?.logoUrl;
+    } else if (user?.externalWebsiteSettings?.logoUrl) raw = user.externalWebsiteSettings.logoUrl;
+    else if (user?.restaurant?.logoUrl) raw = user.restaurant.logoUrl;
+    else if (user?.restaurant?.imageUrl) raw = user.restaurant.imageUrl;
+
+    return resolveMediaImageSource(raw);
+  }, [isSuperAdmin, propRestaurantLogo, user]);
+
+  const [storeLogoSource, setStoreLogoSource] = React.useState<ImageSourcePropType | null>(extractUserLogo());
+  const [imageError, setImageError] = React.useState<boolean>(false);
+  const [localImageError, setLocalImageError] = React.useState<boolean>(false);
+
+  // Fetch store logo if not present on user object
+  React.useEffect(() => {
+    if (isSuperAdmin) {
+      setStoreLogoSource(null);
+      setImageError(false);
+      return;
+    }
+
+    const immediateLogo = extractUserLogo();
+    if (immediateLogo) {
+      setStoreLogoSource(immediateLogo);
+      setImageError(false);
+      return;
+    }
+
+    let isMounted = true;
+    restaurantOwnerService
+      .getRestaurantProfile()
+      .then((res) => {
+        if (!isMounted) return;
+        if (res.success && res.data) {
+          const r = res.data;
+          const remoteLogo = resolveMediaImageSource(
+            r.logoUrl ||
+            r.externalWebsiteSettings?.logoUrl ||
+            r.imageUrl ||
+            r.logo ||
+            r.image
+          );
+          if (remoteLogo) {
+            setStoreLogoSource(remoteLogo);
+            setImageError(false);
+          }
+        }
+      })
+      .catch(() => {
+        // Silently fall back to default app logo
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [isSuperAdmin, extractUserLogo]);
 
   const getRestaurantName = () => {
     if (user?.restaurantName) return user.restaurantName;
@@ -42,23 +130,20 @@ export const Header: React.FC<HeaderProps> = ({
     return undefined;
   };
 
-  // Fetch pending applications and active orders to compute live badge count
+  // Fetch pending applications and active orders to compute live badge count, respecting seen/read state
   React.useEffect(() => {
     let isMounted = true;
     const fetchBadgeCount = async () => {
       try {
         const [orderRes, restRes] = await Promise.all([
-          orderService.getAllOrders().catch(() => ({ success: false, data: [] })),
-          restaurantService.getRestaurants().catch(() => ({ success: false, data: [] })),
+          orderService.fetchAllOrders({ status: 'placed,preparing' }).catch(() => ({ success: false, data: [] })),
+          restaurantService.getRestaurants({ limit: 1000 }).catch(() => ({ success: false, data: [] })),
         ]);
 
-        let count = 0;
-        if (restRes.success && restRes.data) {
-          count += restRes.data.filter((r) => r.verificationStatus === 'pending').length;
-        }
-        if (orderRes.success && orderRes.data) {
-          count += orderRes.data.filter((o) => o.status === 'placed' || o.status === 'preparing').length;
-        }
+        const count = await computeUnreadCount(
+          orderRes.success && Array.isArray(orderRes.data) ? orderRes.data : [],
+          restRes.success && Array.isArray(restRes.data) ? restRes.data : []
+        );
 
         if (isMounted) {
           setUnreadCount(count);
@@ -69,8 +154,19 @@ export const Header: React.FC<HeaderProps> = ({
     };
 
     fetchBadgeCount();
+
+    // Listen for live badge updates when notifications are seen or marked read
+    const badgeSub = DeviceEventEmitter.addListener(NOTIFICATIONS_BADGE_EVENT, (customCount?: number) => {
+      if (typeof customCount === 'number') {
+        if (isMounted) setUnreadCount(customCount);
+      } else {
+        fetchBadgeCount();
+      }
+    });
+
     return () => {
       isMounted = false;
+      badgeSub.remove();
     };
   }, []);
 
@@ -112,32 +208,48 @@ export const Header: React.FC<HeaderProps> = ({
 
   return (
     <SafeAreaView edges={['top']} style={styles.safeArea}>
-      <View style={styles.header}>
+      <View style={[styles.header, isTablet && styles.headerTablet]}>
         <View style={styles.leftContainer}>
           {canGoBack && (
             <TouchableOpacity
               style={styles.backButton}
               onPress={handleBack}
               activeOpacity={0.7}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
-              <ArrowLeft size={20} color={Colors.text} />
+              <ArrowLeft size={isTablet ? 22 : 20} color={Colors.text} />
             </TouchableOpacity>
           )}
           <View style={styles.titleContainer}>
             {title === 'Krifoo Admin' ? (
-              <View style={styles.profileSection}>
-                <Image
-                  source={require('../assets/logo.png')}
-                  style={styles.headerLogo}
-                  resizeMode="contain"
-                />
+              <View style={[styles.profileSection, isTablet && styles.profileSectionTablet]}>
+                {!isSuperAdmin && storeLogoSource && !imageError ? (
+                  <Image
+                    source={storeLogoSource}
+                    style={[styles.headerLogo, styles.headerRestaurantLogo, isTablet && styles.headerLogoTablet]}
+                    contentFit="cover"
+                    transition={200}
+                    onError={() => setImageError(true)}
+                  />
+                ) : !localImageError ? (
+                  <Image
+                    source={LocalImages.logo}
+                    style={[styles.headerLogo, isTablet && styles.headerLogoTablet]}
+                    contentFit="contain"
+                    onError={() => setLocalImageError(true)}
+                  />
+                ) : (
+                  <View style={[styles.headerLogo, styles.headerRestaurantLogo, isTablet && styles.headerLogoTablet, { backgroundColor: '#FF5C39', alignItems: 'center', justifyContent: 'center' }]}>
+                    <Store size={isTablet ? 24 : 18} color="#FFFFFF" />
+                  </View>
+                )}
                 <View style={styles.greetingTextContainer}>
-                  <Text style={styles.greetingText}>
+                  <Text style={[styles.greetingText, isTablet && styles.greetingTextTablet]}>
                     {isSuperAdmin
                       ? `Hello, ${user?.fullName?.split(' ')[0] || 'Admin'} 👋`
                       : (getRestaurantName() || 'Restaurant Partner')}
                   </Text>
-                  <Text style={styles.greetingRole}>
+                  <Text style={[styles.greetingRole, isTablet && styles.greetingRoleTablet]}>
                     {isSuperAdmin
                       ? 'Admin'
                       : (getOwnerName() || 'Restaurant Partner')}
@@ -145,7 +257,7 @@ export const Header: React.FC<HeaderProps> = ({
                 </View>
               </View>
             ) : (
-              <Text style={styles.title} numberOfLines={1}>
+              <Text style={[styles.title, isTablet && styles.titleTablet]} numberOfLines={1}>
                 {title}
               </Text>
             )}
@@ -180,8 +292,8 @@ export const Header: React.FC<HeaderProps> = ({
             </TouchableOpacity>
           </View>
 
-          {rightElement ? (
-            rightElement
+          {(rightElement || rightAction) ? (
+            (rightElement || rightAction)
           ) : (
             showDefaultActions && (
               <View style={styles.defaultActions}>
@@ -189,6 +301,7 @@ export const Header: React.FC<HeaderProps> = ({
                   style={styles.actionIconButton}
                   onPress={handleNotificationPress}
                   activeOpacity={0.7}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 >
                   <View>
                     <Bell size={20} color={Colors.text} strokeWidth={1.8} />
@@ -201,13 +314,13 @@ export const Header: React.FC<HeaderProps> = ({
                     )}
                   </View>
                 </TouchableOpacity>
-                <TouchableOpacity
+                  {/* <TouchableOpacity
                   style={styles.actionIconButton}
                   onPress={handleSettingsPress}
                   activeOpacity={0.7}
                 >
                   <Settings size={20} color={Colors.text} strokeWidth={1.8} />
-                </TouchableOpacity>
+                </TouchableOpacity> */}
               </View>
             )
           )}
@@ -231,6 +344,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: Colors.background,
   },
+  headerTablet: {
+    maxWidth: 1200,
+    width: '100%',
+    alignSelf: 'center',
+    paddingHorizontal: 28,
+    paddingTop: 16,
+    paddingBottom: 16,
+  },
   leftContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -253,18 +374,34 @@ const styles = StyleSheet.create({
   },
   title: {
     color: Colors.text,
-    fontSize: 20,
-    fontWeight: '800',
+    fontSize: 16,
+    fontWeight: '700',
     letterSpacing: -0.5,
+  },
+  titleTablet: {
+    fontSize: 20,
   },
   profileSection: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
   },
+  profileSectionTablet: {
+    gap: 14,
+  },
   headerLogo: {
     width: 36,
     height: 36,
+  },
+  headerLogoTablet: {
+    width: 44,
+    height: 44,
+  },
+  headerRestaurantLogo: {
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: Colors.cardBorder,
+    backgroundColor: Colors.cardSurface,
   },
   greetingTextContainer: {
     justifyContent: 'center',
@@ -275,10 +412,18 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: -0.3,
   },
+  greetingTextTablet: {
+    fontSize: 18,
+    letterSpacing: -0.4,
+  },
   greetingRole: {
     color: Colors.textMuted,
     fontSize: 11,
     fontWeight: '600',
+    marginTop: 2,
+  },
+  greetingRoleTablet: {
+    fontSize: 12.5,
     marginTop: 2,
   },
   rightContainer: {

@@ -8,6 +8,7 @@ import {
   RefreshControl,
   ActivityIndicator,
   Alert,
+  useWindowDimensions,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Header } from '../../components/Header';
@@ -20,10 +21,15 @@ import { useToast } from '../../context/ToastContext';
 import { Restaurant, VerificationStatus } from '../../types';
 import { Search, Store } from 'lucide-react-native';
 import { RestaurantListSkeleton } from '../../components/Skeleton';
+import { ErrorState } from '../../components/ErrorState';
+import { ApiErrorType } from '../../services/api';
 
 export default function RestaurantsScreen() {
   const router = useRouter();
   const { showToast } = useToast();
+  const { width: windowWidth } = useWindowDimensions();
+  const isTablet = windowWidth >= 768;
+
   const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -39,6 +45,12 @@ export default function RestaurantsScreen() {
   const [totalPages, setTotalPages] = useState(1);
   const [loadingMore, setLoadingMore] = useState(false);
 
+  const [restaurantsError, setRestaurantsError] = useState<{
+    type: ApiErrorType;
+    message: string;
+    statusCode?: number;
+  } | null>(null);
+
   const fetchRestaurants = async (pageNum = 1, isRefresh = false) => {
     try {
       if (pageNum === 1) {
@@ -52,7 +64,7 @@ export default function RestaurantsScreen() {
         ? selectedFilter
         : undefined;
 
-      const res = await restaurantService.getRestaurants({
+      const res: any = await restaurantService.getRestaurants({
         page: pageNum,
         limit: 10,
         status: statusParam,
@@ -67,9 +79,20 @@ export default function RestaurantsScreen() {
         }
         setPage(pageNum);
         setTotalPages(res.totalPages || 1);
+        setRestaurantsError(null);
+      } else {
+        setRestaurantsError({
+          type: res.errorType || 'unknown',
+          message: res.message || 'Failed to load restaurants from server.',
+          statusCode: res.statusCode,
+        });
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error('Failed fetching restaurants:', e);
+      setRestaurantsError({
+        type: 'network',
+        message: e?.message || 'Cannot reach server.',
+      });
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -238,6 +261,14 @@ export default function RestaurantsScreen() {
       {/* Restaurants List */}
       {loading ? (
         <RestaurantListSkeleton />
+      ) : restaurantsError && restaurants.length === 0 ? (
+        <ErrorState
+          errorType={restaurantsError.type}
+          message={restaurantsError.message}
+          statusCode={restaurantsError.statusCode}
+          onRetry={() => fetchRestaurants(1, false)}
+          isRetrying={loading || refreshing}
+        />
       ) : filteredRestaurants.length === 0 ? (
         <View style={styles.centerBox}>
           <Store size={48} color={Colors.cardBorder} />
@@ -248,9 +279,12 @@ export default function RestaurantsScreen() {
         </View>
       ) : (
         <FlatList
+          key={isTablet ? 'restaurants-tablet-grid' : 'restaurants-phone-list'}
+          numColumns={isTablet ? 2 : 1}
           data={filteredRestaurants}
           keyExtractor={(item) => item._id}
-          contentContainerStyle={styles.listContent}
+          contentContainerStyle={[styles.listContent, isTablet && styles.listContentTablet]}
+          columnWrapperStyle={isTablet ? styles.restaurantColumnWrapper : undefined}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -262,14 +296,16 @@ export default function RestaurantsScreen() {
           onEndReachedThreshold={0.5}
           ListFooterComponent={renderFooter}
           renderItem={({ item }) => (
-            <RestaurantCard
-              restaurant={item}
-              onViewDetails={(r) => {
-                router.push({ pathname: '/restaurant-details', params: { restaurantId: r._id } });
-              }}
-              onVerifyStatusChange={(r, status) => handleVerifyStatusChange(r, status)}
-              onToggleActive={(r, active) => handleToggleActive(r, active)}
-            />
+            <View style={isTablet ? { flex: 1 } : undefined}>
+              <RestaurantCard
+                restaurant={item}
+                onViewDetails={(r) => {
+                  router.push({ pathname: '/restaurant-details', params: { restaurantId: r._id } });
+                }}
+                onVerifyStatusChange={(r, status) => handleVerifyStatusChange(r, status)}
+                onToggleActive={(r, active) => handleToggleActive(r, active)}
+              />
+            </View>
           )}
         />
       )}
@@ -329,6 +365,16 @@ const styles = StyleSheet.create({
   listContent: {
     paddingHorizontal: 16,
     paddingBottom: 110,
+  },
+  listContentTablet: {
+    maxWidth: 1200,
+    width: '100%',
+    alignSelf: 'center',
+    paddingHorizontal: 20,
+    gap: 14,
+  },
+  restaurantColumnWrapper: {
+    gap: 14,
   },
   centerBox: {
     flex: 1,

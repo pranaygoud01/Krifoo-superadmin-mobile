@@ -3,7 +3,7 @@
     "name": "Krifoo Admin",
     "slug": "krifoo-admin",
     "owner": "krifoos-app",
-    "version": "1.0.5",
+    "version": "1.0.19",
     "orientation": "default",
     "icon": "./assets/logo.png",
     "scheme": "krifooadmin",
@@ -14,17 +14,21 @@
       "resizeMode": "contain",
       "backgroundColor": "#FF5C39"
     },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.krifoo.admin",
+      "buildNumber": "40",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "NSBluetoothAlwaysUsageDescription": "This app requires Bluetooth access to discover and print receipt orders on thermal receipt printers.",
         "NSBluetoothPeripheralUsageDescription": "This app requires Bluetooth access to connect to thermal receipt printers.",
         "NSLocalNetworkUsageDescription": "This app requires Local Network access to discover and print receipts on network printers (Epson TM-m30III).",
-        "UISupportedExternalAccessoryProtocols": [
-          "com.epson.epos.print"
-        ]
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true
+        }
       }
     },
     "android": {
@@ -33,7 +37,7 @@
         "backgroundColor": "#FFFFFF"
       },
       "package": "com.krifoo.admin",
-      "versionCode": 10,
+      "versionCode": 15,
       "googleServicesFile": "./google-services.json",
       "permissions": [
         "RECEIVE_BOOT_COMPLETED",
@@ -43,10 +47,14 @@
         "BLUETOOTH_ADMIN",
         "BLUETOOTH_SCAN",
         "BLUETOOTH_CONNECT",
+        "NEARBY_WIFI_DEVICES",
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION",
+        "ACCESS_NETWORK_STATE",
         "CHANGE_WIFI_MULTICAST_STATE",
-        "INTERNET"
+        "android.permission.INTERNET",
+        "INTERNET",
+        "woyou.aidlservice.jiuiv5.permission.PRINT"
       ]
     },
     "web": {
@@ -55,7 +63,35 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
+      [
+        "expo-av",
+        {
+          "microphonePermission": false
+        }
+      ],
+      "expo-asset",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/logo.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#FF5C39"
+        }
+      ],
+      "./plugins/withDeviceCompatibility",
       "expo-router",
+      [
+        "react-native-ble-plx",
+        {
+          "isBackgroundEnabled": false,
+          "modes": [
+            "peripheral",
+            "central"
+          ],
+          "bluetoothAlwaysPermission": "Allow Krifoo Admin to connect to Bluetooth thermal printers."
+        }
+      ],
       [
         "expo-notifications",
         {
@@ -72,7 +108,10 @@
         {
           "android": {
             "minSdkVersion": 24,
-            "usesCleartextTraffic": true
+            "usesCleartextTraffic": true,
+            "enableMinifyInReleaseBuilds": false,
+            "enableProguardInReleaseBuilds": false,
+            "extraProguardRules": "-keep class **.R { *; }\n-keep class **.R$* { *; }\n-keepclassmembers class **.R$* {\n    public static <fields>;\n}\n-keep class com.facebook.react.views.imagehelper.** { *; }\n-keep class com.swmansion.reanimated.** { *; }\n-keep class com.facebook.react.turbomodule.** { *; }\n-keep class com.swmansion.rnscreens.** { *; }\n-keep class com.swmansion.gesturehandler.** { *; }\n-keep class com.swmansion.worklets.** { *; }\n-keep class com.sunmi.** { *; }\n-dontwarn com.sunmi.**\n-keep class woyou.aidlservice.jiuiv5.** { *; }\n-dontwarn woyou.aidlservice.jiuiv5.**\n-keep class com.un1v3r.** { *; }\n-dontwarn com.un1v3r.**\n-keep class com.tencent.mmkv.** { *; }\n-dontwarn com.tencent.mmkv.**\n-keep class com.horcrux.svg.** { *; }\n-keep class expo.modules.** { *; }\n-keep class com.google.firebase.** { *; }\n-keep class com.facebook.fresco.** { *; }\n-keep class com.facebook.imagepipeline.** { *; }\n-keep class com.facebook.drawee.** { *; }\n-keep class com.facebook.react.views.image.** { *; }\n-dontwarn com.facebook.imagepipeline.**\n-dontwarn com.facebook.drawee.**\n-keep class com.bumptech.glide.** { *; }\n-dontwarn com.bumptech.glide.**\n-keep class expo.modules.image.** { *; }\n-keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod\n-keep class com.facebook.react.bridge.** { *; }\n-keep class com.expo.image.** { *; }\n-keep class android.content.res.AssetManager { *; }\n-keepclassmembers class * {\n    @com.facebook.react.common.annotations.VisibleForTesting *;\n    @com.facebook.react.bridge.ReactMethod *;\n}"
           },
           "ios": {
             "deploymentTarget": "16.4"

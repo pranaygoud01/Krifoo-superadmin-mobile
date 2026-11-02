@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Platform } from 'react-native';
 import { isSunmiAvailable } from './sunmi-printer.service';
 
 export type PosBrand =
@@ -15,6 +16,18 @@ export type PosBrand =
 
 export type PosConnectionType = 'builtin' | 'network' | 'bluetooth' | 'system';
 
+/**
+ * Discriminated union of valid hardware printer profiles.
+ * Makes invalid printer states unrepresentable at compile time (Fixes Bug #9, #4, #11).
+ */
+export type PrinterProfile =
+  | { connectionType: 'network_epos'; ipAddress: string; port?: number; deviceName?: string }
+  | { connectionType: 'network_raw'; ipAddress: string; port: number; deviceName?: string }
+  | { connectionType: 'ble'; macAddress: string; serviceUuid?: string; writeCharacteristicUuid?: string; deviceName?: string }
+  | { connectionType: 'spp'; macAddress: string; target?: string; deviceName?: string }
+  | { connectionType: 'builtin'; deviceName?: string }
+  | { connectionType: 'system'; deviceName?: string };
+
 export interface PosPrinterConfig {
   brand: PosBrand;
   connectionType: PosConnectionType;
@@ -22,6 +35,8 @@ export interface PosPrinterConfig {
   port: number;
   macAddress?: string;
   target?: string;
+  deviceName?: string;
+  printerName?: string;
   paperWidth: '80mm' | '58mm';
   autoPrint: boolean;
   copies: number;
@@ -128,6 +143,104 @@ export const DEFAULT_POS_CONFIG: PosPrinterConfig = {
 };
 
 /**
+ * Resolves a typed PrinterProfile from application POS config.
+ * Returns null if required connection fields (like IP or MAC address) are missing,
+ * avoiding silent invalid network/bluetooth attempts.
+ */
+export function profileFromConfig(config: PosPrinterConfig): PrinterProfile | null {
+  const deviceName = config.deviceName || config.printerName;
+
+  switch (config.connectionType) {
+    case 'builtin':
+      return { connectionType: 'builtin', deviceName };
+
+    case 'system':
+      return { connectionType: 'system', deviceName };
+
+    case 'network': {
+      const ip = (config.ipAddress || '').trim();
+      if (!ip) {
+        return null; // Missing required IP
+      }
+      // Port 8008 or 80 is reserved exclusively for Epson ePOS HTTP XML service.
+      // Port 9100 (standard raw socket) is used for ESC/POS binary printing on Bonkaso, Xprinter, Star, and Epson RAW.
+      if (config.port === 8008 || config.port === 80) {
+        return {
+          connectionType: 'network_epos',
+          ipAddress: ip,
+          port: config.port,
+          deviceName,
+        };
+      }
+      // Standard raw socket port 9100
+      return {
+        connectionType: 'network_raw',
+        ipAddress: ip,
+        port: config.port || 9100,
+        deviceName,
+      };
+    }
+
+    case 'bluetooth': {
+      const mac = (config.macAddress || config.target || '').trim();
+      if (!mac) {
+        return null; // Missing required MAC address / target
+      }
+      // Android or explicit BT: target uses Classic SPP
+      if (Platform.OS === 'android' || config.target?.startsWith('BT:')) {
+        return {
+          connectionType: 'spp',
+          macAddress: mac,
+          target: config.target,
+          deviceName,
+        };
+      }
+      // iOS / Modern TM-m30 uses BLE GATT
+      return {
+        connectionType: 'ble',
+        macAddress: mac,
+        deviceName,
+      };
+    }
+
+    default:
+      return { connectionType: 'system', deviceName };
+  }
+}
+
+/**
+ * Check if the active printer configuration has all required fields configured
+ */
+export function isProfileConfigured(config: PosPrinterConfig): boolean {
+  return profileFromConfig(config) !== null;
+}
+
+/**
+ * Validate configuration inputs before saving
+ */
+export function validatePosConfig(config: Partial<PosPrinterConfig>): { valid: boolean; error?: string } {
+  if (config.connectionType === 'network') {
+    const ip = (config.ipAddress || '').trim();
+    if (!ip) {
+      return { valid: false, error: 'Please enter a valid Printer IP Address for network connection.' };
+    }
+    const ipRegex = /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/;
+    if (!ipRegex.test(ip)) {
+      return { valid: false, error: 'Invalid IP Address format (e.g. 192.168.1.100).' };
+    }
+  }
+
+  if (config.connectionType === 'bluetooth') {
+    const mac = (config.macAddress || config.target || '').trim();
+    if (!mac) {
+      return { valid: false, error: 'Please pair or enter a Bluetooth device address.' };
+    }
+  }
+
+  return { valid: true };
+}
+
+/**
  * Get brand option details by brand ID
  */
 export function getBrandOption(brandId?: string): BrandOption {
@@ -154,7 +267,6 @@ export function getBrandName(brandId?: string): string {
  */
 export async function getPosPrinterConfig(restaurantId?: string): Promise<PosPrinterConfig> {
   try {
-    // 1. Try restaurant-specific key first
     if (restaurantId) {
       const restRaw = await AsyncStorage.getItem(`${POS_CONFIG_KEY}_${restaurantId}`);
       if (restRaw) {
@@ -163,14 +275,12 @@ export async function getPosPrinterConfig(restaurantId?: string): Promise<PosPri
       }
     }
 
-    // 2. Try global/default key
     const raw = await AsyncStorage.getItem(POS_CONFIG_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
       return { ...DEFAULT_POS_CONFIG, ...parsed, ...(restaurantId ? { restaurantId } : {}) };
     }
 
-    // 3. Smart initial hardware detection
     const isSunmi = await isSunmiAvailable();
     if (isSunmi) {
       return {
@@ -206,11 +316,9 @@ export async function savePosPrinterConfig(
       ...(restaurantId ? { restaurantId } : {}),
     };
 
-    // Save under restaurant-specific key if provided
     if (restaurantId) {
       await AsyncStorage.setItem(`${POS_CONFIG_KEY}_${restaurantId}`, JSON.stringify(updated));
     }
-    // Also save under primary key for active session
     await AsyncStorage.setItem(POS_CONFIG_KEY, JSON.stringify(updated));
 
     console.log(`[POS Config] Saved printer configuration${restaurantId ? ` for rest ${restaurantId}` : ''}:`, updated);

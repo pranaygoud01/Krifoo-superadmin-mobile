@@ -1,355 +1,291 @@
 import { Order } from '../../types';
-import { PosPrinterConfig } from '../pos-config.service';
+import { PosPrinterConfig, PosConnectionType, profileFromConfig } from '../pos-config.service';
 import { EpsonEposModule } from '../../src/modules/epson-epos';
-import { buildOrderEscPosBytes } from '../../src/services/printer/EscPosBuilder';
+import { buildReceiptDocument, buildDrawerKickDocument, buildCustomizedReceiptDocument } from './receipt-document';
+import { EposXmlEncoder } from './encoders/epos-xml-encoder';
+import { resolvePrinter } from './printer-registry';
+import { PrintQueueService } from './print-queue.service';
+import {
+  getActiveReceiptTemplate,
+  ReceiptTemplate,
+  getSampleOrderForPreview,
+  getCachedStoreProfile,
+  formatRestaurantAddress,
+} from '../receipt-customization.service';
 
 /**
- * Format currency (£ for UK)
+ * Generate official Epson ePOS-Print XML payload from order using Layer 1 & 2 encoders
  */
-function formatMoney(amount?: number): string {
-  if (amount === undefined || amount === null || isNaN(amount)) return '£0.00';
-  return `£${Number(amount).toFixed(2)}`;
+export function buildEpsonEposXml(order: Partial<Order> & any, config: PosPrinterConfig, template?: ReceiptTemplate): string {
+  const doc = template ? buildCustomizedReceiptDocument(order, config, template) : buildReceiptDocument(order, config);
+  return EposXmlEncoder.encode(doc, config);
 }
 
-/**
- * Format order date into UK style strings
- */
-function formatOrderDate(dateString?: string): { placedAt: string; targetTime: string } {
-  const now = dateString ? new Date(dateString) : new Date();
+export interface FormattedPrinterError {
+  title: string;
+  message: string;
+  troubleshootingSteps: string[];
+  isLikelyNonPrinter: boolean;
+}
 
-  const options: Intl.DateTimeFormatOptions = {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
+const NON_PRINTER_AUDIO_KEYWORDS = [
+  'rockerz',
+  'airpod',
+  'earbud',
+  'headphone',
+  'headset',
+  'earphone',
+  'soundbar',
+  'speaker',
+  'handsfree',
+  'smartwatch',
+  'smart watch',
+  'watch',
+  'band',
+  'fitbit',
+  'car media',
+  'car audio',
+  'echo dot',
+  'nest mini',
+  'buds',
+  'tws',
+  'soundcore',
+  'realme buds',
+  'oneplus bullets',
+  'boult',
+  'mivi',
+  'noise',
+];
+
+export function isLikelyAudioDevice(name: string): boolean {
+  if (!name) return false;
+  const n = name.toLowerCase();
+  return NON_PRINTER_AUDIO_KEYWORDS.some((kw) => n.includes(kw));
+}
+
+export function formatPrinterConnectionError(
+  rawError: string,
+  deviceName?: string,
+  connectionType?: PosConnectionType
+): FormattedPrinterError {
+  const name = (deviceName || '').trim();
+  const lowerErr = (rawError || '').toLowerCase();
+
+  const isAudio = isLikelyAudioDevice(name);
+
+  if (isAudio) {
+    return {
+      title: 'Not a POS Receipt Printer',
+      message: `"${name}" is a Bluetooth audio accessory (headphones/speaker) and does not support thermal receipt printing.`,
+      troubleshootingSteps: [
+        'Please tap "Choose Different Printer" below to select your POS receipt printer.',
+        'If your thermal printer is not listed, make sure its power switch is ON and it is paired in your tablet Bluetooth settings (PIN: 0000 or 1234).',
+      ],
+      isLikelyNonPrinter: true,
+    };
+  }
+
+  // Detect whether this target is a Network / Wi-Fi / Ethernet printer
+  const isNetwork =
+    connectionType === 'network' ||
+    name.toLowerCase().includes('network') ||
+    lowerErr.includes('tcp') ||
+    lowerErr.includes('192.168.') ||
+    lowerErr.includes('10.') ||
+    lowerErr.includes('172.') ||
+    lowerErr.includes('9100') ||
+    lowerErr.includes('8008') ||
+    name.includes(':') ||
+    (!name.toLowerCase().includes('bt') &&
+      !name.toLowerCase().includes('bluetooth') &&
+      !lowerErr.includes('bluetooth') &&
+      (lowerErr.includes('timeout') || lowerErr.includes('timed out') || lowerErr.includes('refused')));
+
+  if (isNetwork) {
+    if (lowerErr.includes('native tcp socket module is not compiled')) {
+      return {
+        title: 'Development Build Update Required',
+        message: 'The native TCP Socket library is not yet compiled into this APK build.',
+        troubleshootingSteps: [
+          'Run `npx expo run:android` to compile native TCP socket support into your development build.',
+          'Alternatively, switch to Bluetooth connection if printing right away.',
+        ],
+        isLikelyNonPrinter: false,
+      };
+    }
+
+    if (lowerErr.includes('timeout') || lowerErr.includes('timed out')) {
+      return {
+        title: 'Network Printer Timed Out',
+        message: `Could not reach network printer at "${name || 'configured IP'}". The connection timed out.`,
+        troubleshootingSteps: [
+          'Ensure the printer power switch is ON and the paper roll is loaded.',
+          'Verify your tablet/phone is connected to the SAME Wi-Fi network as the printer router.',
+          'Turn OFF Mobile Data (Cellular Data) temporarily — Android/iOS often routes local LAN connections to mobile data instead of Wi-Fi.',
+          'Check that the Ethernet LAN cable is firmly plugged into both printer and router (look for LED light on the printer Ethernet port).',
+          'Confirm the printer IP address (e.g. 192.168.1.200) matches the self-test slip (hold FEED button while turning power ON).',
+        ],
+        isLikelyNonPrinter: false,
+      };
+    }
+
+    if (lowerErr.includes('refused') || lowerErr.includes('econnrefused')) {
+      return {
+        title: 'Printer Port Busy or Refused',
+        message: `Printer at "${name || 'configured IP'}" refused connection on port 9100.`,
+        troubleshootingSteps: [
+          'Thermal network printers only accept one active connection at a time. Ensure no other phone, PC, or POS app is currently connected.',
+          'Turn the printer power switch OFF for 5 seconds and turn it back ON to reset the network port.',
+          'Confirm port 9100 is selected (standard ESC/POS raw port).',
+        ],
+        isLikelyNonPrinter: false,
+      };
+    }
+
+    return {
+      title: 'Network Printer Unreachable',
+      message: `Unable to establish communication with printer at "${name || 'configured IP'}".`,
+      troubleshootingSteps: [
+        'Check that the printer is powered ON and has paper loaded.',
+        'Verify your tablet/phone is on the SAME Wi-Fi network as the printer router.',
+        'Turn OFF Mobile Data (Cellular Data) on your tablet/phone.',
+        'Confirm the IP address matches your printer self-test slip.',
+      ],
+      isLikelyNonPrinter: false,
+    };
+  }
+
+  if (
+    lowerErr.includes('socket might closed') ||
+    lowerErr.includes('read ret: -1') ||
+    lowerErr.includes('broken pipe') ||
+    lowerErr.includes('connection reset') ||
+    lowerErr.includes('connection refused')
+  ) {
+    return {
+      title: 'Printer Not Responding',
+      message: `Could not establish communication with "${name || 'thermal printer'}". The printer may be turned OFF, sleeping, or out of range.`,
+      troubleshootingSteps: [
+        'Check that the printer power switch is ON and the power LED is green.',
+        'Ensure the thermal paper roll is loaded and the printer lid is fully locked.',
+        'Make sure no other tablet, phone, or POS app is currently connected (Bluetooth thermal printers only accept 1 device at a time).',
+        'Keep your tablet within 5 meters of the printer and try again.',
+      ],
+      isLikelyNonPrinter: false,
+    };
+  }
+
+  if (lowerErr.includes('bluetooth is disabled') || lowerErr.includes('bluetooth_disabled')) {
+    return {
+      title: 'Bluetooth is Switched Off',
+      message: 'Bluetooth is currently disabled on this tablet.',
+      troubleshootingSteps: [
+        'Turn ON Bluetooth in your device quick settings tray.',
+        'Tap "Retry Link" to reconnect.',
+      ],
+      isLikelyNonPrinter: false,
+    };
+  }
+
+  if (lowerErr.includes('not found') || lowerErr.includes('not paired') || lowerErr.includes('bonded')) {
+    return {
+      title: 'Printer Not Paired',
+      message: `"${name || 'The printer'}" is not paired with this tablet.`,
+      troubleshootingSteps: [
+        'Open Bluetooth Settings on your tablet.',
+        'Select your thermal printer to pair (default PIN is usually 0000 or 1234).',
+        'Return here and tap "Retry Link".',
+      ],
+      isLikelyNonPrinter: false,
+    };
+  }
+
+  if (lowerErr.includes('permission') || lowerErr.includes('nearby')) {
+    return {
+      title: 'Bluetooth Permission Required',
+      message: 'Android requires "Nearby devices" permission to communicate with Bluetooth printers.',
+      troubleshootingSteps: [
+        'Go to Settings > Apps > Krifoo Admin > Permissions and allow "Nearby devices".',
+      ],
+      isLikelyNonPrinter: false,
+    };
+  }
+
+  return {
+    title: 'Connection Handshake Failed',
+    message: `Unable to establish communication with "${name || 'printer'}".`,
+    troubleshootingSteps: [
+      'Check that the printer is powered ON and has paper loaded.',
+      'Verify the printer is paired in tablet Bluetooth settings.',
+      'Turn the printer power switch OFF and back ON, then tap "Retry Link".',
+    ],
+    isLikelyNonPrinter: false,
   };
-  const placedAt = now.toLocaleDateString('en-GB', options);
-
-  const targetDate = new Date(now.getTime() + 35 * 60000);
-  const hours = String(targetDate.getHours()).padStart(2, '0');
-  const minutes = String(targetDate.getMinutes()).padStart(2, '0');
-  const targetTime = `Today by ${hours}:${minutes}`;
-
-  return { placedAt, targetTime };
 }
 
 /**
- * Escape XML special characters
+ * Discover available Epson Bluetooth & Network printers
  */
-function escapeXml(str: string): string {
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
-}
-
-/**
- * Format 2-column key-value text line for thermal paper
- */
-function formatTwoColumn(left: string, right: string, cols: number = 48): string {
-  const leftLen = left.length;
-  const rightLen = right.length;
-  const spaces = Math.max(1, cols - leftLen - rightLen);
-  return left + ' '.repeat(spaces) + right + '&#10;';
-}
-
-/**
- * Format 3-column table row (QTY, ITEM, PRICE)
- */
-function formatThreeColumn(qty: string, item: string, price: string, cols: number = 48): string {
-  if (cols === 32) {
-    const q = qty.padEnd(4);
-    const p = price.padStart(8);
-    const maxItemLen = 20;
-    const itemName = item.length > maxItemLen ? item.substring(0, maxItemLen) : item.padEnd(maxItemLen);
-    return `${q}${itemName}${p}&#10;`;
-  } else {
-    const q = qty.padEnd(6);
-    const p = price.padStart(10);
-    const maxItemLen = 32;
-    const itemName = item.length > maxItemLen ? item.substring(0, maxItemLen) : item.padEnd(maxItemLen);
-    return `${q}${itemName}${p}&#10;`;
-  }
-}
-
-/**
- * Generate official Epson ePOS-Print XML payload for Epson TM-m30 / TM-T88 / TM-T20 / TM-T82 printers
- */
-export function buildEpsonEposXml(order: Partial<Order> & any, config: PosPrinterConfig): string {
-  const is58mm = config.paperWidth === '58mm';
-  const cols = is58mm ? 32 : 48;
-  const divider = '-'.repeat(cols) + '&#10;';
-  const doubleDivider = '='.repeat(cols) + '&#10;';
-
-  // Restaurant details
-  const restaurantName =
-    typeof order.restaurantId === 'object'
-      ? order.restaurantId?.restaurantName || 'KRIFOO RESTAURANT'
-      : 'KRIFOO RESTAURANT';
-
-  const restaurantPhone =
-    typeof order.restaurantId === 'object'
-      ? order.restaurantId?.phoneNumber || ''
-      : '';
-
-  // Customer details
-  const customerName =
-    order.customerDetails?.name ||
-    order.customerId?.fullName ||
-    order.userId?.fullName ||
-    order.userId?.name ||
-    order.customerName ||
-    'Customer';
-
-  const customerPhone =
-    order.customerDetails?.phoneNumber ||
-    order.customerId?.phoneNumber ||
-    order.userId?.phoneNumber ||
-    order.deliveryAddress?.phoneNumber ||
-    order.phoneNumber ||
-    '';
-
-  // Delivery Address extraction
-  let deliveryAddress = '';
-  let deliveryPostcode = '';
-
-  if (typeof order.deliveryAddress === 'string' && order.deliveryAddress.trim()) {
-    deliveryAddress = order.deliveryAddress.trim();
-  } else if (order.deliveryAddress && typeof order.deliveryAddress === 'object') {
-    const addrObj = order.deliveryAddress;
-    const addrParts: string[] = [];
-
-    if (addrObj.fullAddress) {
-      addrParts.push(addrObj.fullAddress);
-    } else {
-      if (addrObj.addressLine1) addrParts.push(addrObj.addressLine1);
-      if (addrObj.addressLine2) addrParts.push(addrObj.addressLine2);
-      if (addrObj.street) addrParts.push(addrObj.street);
-      if (addrObj.formattedAddress) addrParts.push(addrObj.formattedAddress);
-      if (addrObj.address) addrParts.push(addrObj.address);
-    }
-
-    if (addrObj.landmark) addrParts.push(`Landmark: ${addrObj.landmark}`);
-    if (addrObj.city && !addrParts.some((p) => p.includes(addrObj.city))) {
-      addrParts.push(addrObj.city);
-    }
-
-    deliveryAddress = addrParts.filter(Boolean).join(', ');
-    deliveryPostcode = addrObj.postalCode || addrObj.postcode || addrObj.postCode || addrObj.zipCode || '';
-  }
-
-  const orderNum = order.orderNumber || (order._id ? `#${order._id.slice(-5).toUpperCase()}` : '#00000');
-  const fulfillmentType = (order.orderType || order.deliveryType || (deliveryAddress ? 'DELIVERY' : 'COLLECTION')).toUpperCase();
-  const isDelivery = fulfillmentType.includes('DELIV') || Boolean(deliveryAddress);
-  const { placedAt, targetTime } = formatOrderDate(order.createdAt);
-
-  let xmlBody = '';
-
-  // 1. HEADER
-  xmlBody += `<text align="center" width="2" height="2" em="true">${escapeXml(restaurantName.toUpperCase())}&#10;</text>`;
-  xmlBody += `<text align="center" width="1" height="1" em="false"/>`;
-  if (restaurantPhone) {
-    xmlBody += `<text align="center">Tel: ${escapeXml(restaurantPhone)}&#10;</text>`;
-  }
-  xmlBody += `<text align="center">${doubleDivider}</text>`;
-
-  // ORDER NUMBER & TYPE
-  xmlBody += `<text align="center" width="2" height="2" em="true">ORDER: ${escapeXml(orderNum)}&#10;</text>`;
-  xmlBody += `<text align="center" width="1" height="1" em="false">[ ${escapeXml(fulfillmentType)} ]&#10;</text>`;
-  xmlBody += `<text align="center">${divider}</text>`;
-
-  // 2. TIMINGS & CUSTOMER
-  xmlBody += `<text align="left">Placed: ${escapeXml(placedAt)}  Target: ${escapeXml(targetTime)}&#10;</text>`;
-  xmlBody += `<text align="left">${divider}</text>`;
-
-  xmlBody += `<text align="left" em="true">CUSTOMER:&#10;</text>`;
-  xmlBody += `<text align="left" em="false">  Name:  ${escapeXml(customerName)}&#10;</text>`;
-  if (customerPhone) {
-    xmlBody += `<text align="left">  Phone: ${escapeXml(customerPhone)}&#10;</text>`;
-  }
-
-  if (isDelivery && deliveryAddress) {
-    xmlBody += `<text align="left" em="true">DELIVERY ADDRESS:&#10;</text>`;
-    xmlBody += `<text align="left" em="false">  ${escapeXml(deliveryAddress)}&#10;</text>`;
-    if (deliveryPostcode && !deliveryAddress.includes(deliveryPostcode)) {
-      xmlBody += `<text align="left">  POSTCODE: ${escapeXml(deliveryPostcode)}&#10;</text>`;
-    }
-  }
-
-  if (order.deliveryInstructions || order.notes) {
-    const note = order.deliveryInstructions || order.notes;
-    xmlBody += `<text align="left" em="true">NOTE: ${escapeXml(note)}&#10;</text>`;
-    xmlBody += `<text align="left" em="false"/>`;
-  }
-
-  xmlBody += `<text align="center">${doubleDivider}</text>`;
-
-  // 3. ITEMS TABLE
-  xmlBody += `<text align="left" em="true">${formatThreeColumn('QTY', 'ITEM', 'PRICE', cols)}</text>`;
-  xmlBody += `<text align="left" em="false">${divider}</text>`;
-
-  const itemsList =
-    Array.isArray(order.orderedItems) && order.orderedItems.length > 0
-      ? order.orderedItems
-      : Array.isArray(order.items) && order.items.length > 0
-      ? order.items
-      : [];
-
-  itemsList.forEach((item: any) => {
-    const qtyNum = Number(item.quantity || item.qty || 1);
-    const qtyStr = `${qtyNum}x`;
-
-    const name =
-      item.itemName ||
-      item.name ||
-      item.title ||
-      item.itemId?.name ||
-      item.itemId?.itemName ||
-      item.menuItemId?.name ||
-      item.menuItemId?.itemName ||
-      item.menuItem?.name ||
-      item.menuItem?.itemName ||
-      item.dishName ||
-      item.productName ||
-      'Item';
-
-    let itemPrice = 0;
-    if (item.itemTotal !== undefined && item.itemTotal !== null && !isNaN(item.itemTotal)) {
-      itemPrice = Number(item.itemTotal);
-    } else if (item.basePrice !== undefined && item.basePrice !== null && !isNaN(item.basePrice)) {
-      itemPrice = Number(item.basePrice) * qtyNum;
-    } else if (item.price !== undefined && item.price !== null && !isNaN(item.price)) {
-      itemPrice = Number(item.price) * qtyNum;
-    }
-    const priceStr = formatMoney(itemPrice);
-
-    xmlBody += `<text align="left" em="true" height="2">${escapeXml(formatThreeColumn(qtyStr, name, priceStr, cols))}</text>`;
-    xmlBody += `<text align="left" em="false" height="1"/>`;
-
-    // Variants & Add-ons
-    const optionsList: string[] = [];
-    if (Array.isArray(item.selectedVariants)) {
-      item.selectedVariants.forEach((v: any) => {
-        if (typeof v === 'string' && v.trim()) optionsList.push(v.trim());
-        else if (v?.name) {
-          const p = v.price || v.additionalPrice ? ` (+${formatMoney(v.price || v.additionalPrice)})` : '';
-          optionsList.push(`${v.name}${p}`);
-        }
-      });
-    }
-    if (Array.isArray(item.selectedAddons)) {
-      item.selectedAddons.forEach((a: any) => {
-        if (typeof a === 'string' && a.trim()) optionsList.push(a.trim());
-        else if (a?.name) {
-          const p = a.price || a.additionalPrice ? ` (+${formatMoney(a.price || a.additionalPrice)})` : '';
-          optionsList.push(`${a.name}${p}`);
-        }
-      });
-    }
-    if (item.customization?.size) optionsList.push(`Size: ${item.customization.size}`);
-    if (Array.isArray(item.customization?.addOns)) {
-      item.customization.addOns.forEach((a: string) => {
-        if (a) optionsList.push(a);
-      });
-    }
-
-    if (optionsList.length > 0) {
-      optionsList.forEach((opt) => {
-        xmlBody += `<text align="left">    + ${escapeXml(opt)}&#10;</text>`;
-      });
-    }
-
-    const itemNote = item.instructions || item.specialInstructions || item.note || '';
-    if (itemNote) {
-      xmlBody += `<text align="left">    * Note: ${escapeXml(itemNote)}&#10;</text>`;
-    }
-  });
-
-  xmlBody += `<text align="center">${doubleDivider}</text>`;
-
-  // 4. TOTALS
-  const subtotal =
-    order.pricing?.subtotal !== undefined
-      ? order.pricing.subtotal
-      : order.subtotal !== undefined
-      ? order.subtotal
-      : order.totalAmount || 0;
-  xmlBody += `<text align="left">${escapeXml(formatTwoColumn('Subtotal:', formatMoney(subtotal), cols))}</text>`;
-
-  const deliveryFee = order.pricing?.deliveryFee !== undefined ? order.pricing.deliveryFee : order.deliveryFee;
-  if (deliveryFee !== undefined && deliveryFee > 0) {
-    xmlBody += `<text align="left">${escapeXml(formatTwoColumn('Delivery Fee:', formatMoney(deliveryFee), cols))}</text>`;
-  }
-
-  const serviceFee =
-    order.pricing?.serviceFee !== undefined
-      ? order.pricing.serviceFee
-      : order.pricing?.handlingCharge !== undefined
-      ? order.pricing.handlingCharge
-      : order.serviceFee;
-  if (serviceFee !== undefined && serviceFee > 0) {
-    xmlBody += `<text align="left">${escapeXml(formatTwoColumn('Service Fee:', formatMoney(serviceFee), cols))}</text>`;
-  }
-
-  const discount = order.pricing?.discount !== undefined ? order.pricing.discount : order.discount;
-  if (discount !== undefined && discount > 0) {
-    xmlBody += `<text align="left">${escapeXml(formatTwoColumn('Discount:', `-${formatMoney(discount)}`, cols))}</text>`;
-  }
-
-  const tip = order.pricing?.tip !== undefined ? order.pricing.tip : order.tip;
-  if (tip !== undefined && tip > 0) {
-    xmlBody += `<text align="left">${escapeXml(formatTwoColumn('Driver Tip:', formatMoney(tip), cols))}</text>`;
-  }
-
-  xmlBody += `<text align="center">${divider}</text>`;
-
-  // TOTAL
-  const grandTotal =
-    order.pricing?.total !== undefined ? order.pricing.total : order.totalAmount || order.total || subtotal;
-  xmlBody += `<text align="left" width="2" height="2" em="true">${escapeXml(
-    formatTwoColumn('TOTAL:', formatMoney(grandTotal), Math.floor(cols / 2))
-  )}</text>`;
-  xmlBody += `<text align="left" width="1" height="1" em="false"/>`;
-  xmlBody += `<text align="center">${divider}</text>`;
-
-  // Payment
-  const paymentMethod = (order.paymentType || order.paymentMethod || 'Online / Card').toUpperCase();
-  const paymentStatus = (order.paymentStatus || 'PAID').toUpperCase();
-  xmlBody += `<text align="left">Payment: ${escapeXml(paymentMethod)} (${escapeXml(paymentStatus)})&#10;</text>`;
-
-  // 5. FOOTER
-  xmlBody += `<text align="center">&#10;Thank you for your order!&#10;</text>`;
-
-  // Cash drawer pulse if enabled
-  if (config.openCashDrawer && (paymentMethod.includes('CASH') || paymentStatus.includes('CASH'))) {
-    xmlBody += `<pulse drawer="drawer_1" time="pulse_100"/>`;
-  }
-
-  // Feed & Cut
-  xmlBody += `<feed line="3"/>`;
-  if (config.autoCut) {
-    xmlBody += `<cut type="feed"/>`;
-  }
-
-  // Full ePOS SOAP envelope
-  return `<?xml version="1.0" encoding="utf-8"?>
-<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
-  <s:Body>
-    <epos-print xmlns="http://www.epson-pos.com/schemas/2011/03/epos-print">
-      ${xmlBody}
-    </epos-print>
-  </s:Body>
-</s:Envelope>`;
-}
-
-/**
- * Discover available Epson printers across Bluetooth (iOS MFi / Android SPP) & Local Network
- */
-export async function discoverEpsonPrinters(): Promise<Array<{ id: string; name: string; connectionType: 'bluetooth' | 'network'; target?: string; ipAddress?: string }>> {
+export async function discoverEpsonPrinters(): Promise<
+  Array<{ id: string; name: string; connectionType: 'bluetooth' | 'network'; target?: string; ipAddress?: string; macAddress?: string }>
+> {
   const discovered: Array<any> = [];
+  let isBtDisabled = false;
+
+  // 1. Discover via PosPrinter (react-native-thermal-pos-printer) native driver
+  try {
+    const { NativeModules } = require('react-native');
+    const PosPrinter = NativeModules?.PosPrinter;
+    if (PosPrinter && typeof PosPrinter.getDeviceList === 'function') {
+      const btDevices = await PosPrinter.getDeviceList();
+      if (Array.isArray(btDevices)) {
+        for (const dev of btDevices) {
+          if (!isLikelyAudioDevice(dev.name)) {
+            discovered.push({
+              id: dev.address || `bt_${dev.name}`,
+              name: dev.name || 'Bluetooth Thermal Printer',
+              connectionType: 'bluetooth' as const,
+              target: dev.address,
+              macAddress: dev.address,
+            });
+          }
+        }
+      }
+    }
+  } catch (e: any) {
+    console.warn('[PosPrinter] Bluetooth scan error:', e);
+    if (e?.message?.toLowerCase().includes('bluetooth is disabled') || e?.code === 'BLUETOOTH_DISABLED') {
+      isBtDisabled = true;
+    }
+  }
+
+  // 2. Discover via react-native-bluetooth-classic if available
+  try {
+    const RNBluetoothClassic =
+      require('react-native-bluetooth-classic').default || require('react-native-bluetooth-classic');
+    if (RNBluetoothClassic && typeof RNBluetoothClassic.getBondedDevices === 'function') {
+      const bonded = await RNBluetoothClassic.getBondedDevices();
+      if (Array.isArray(bonded)) {
+        for (const b of bonded) {
+          if (!isLikelyAudioDevice(b.name) && !discovered.some((d) => d.target === b.address)) {
+            discovered.push({
+              id: b.address,
+              name: b.name || 'Paired Bluetooth Printer',
+              connectionType: 'bluetooth' as const,
+              target: b.address,
+              macAddress: b.address,
+            });
+          }
+        }
+      }
+    }
+  } catch (e: any) {
+    if (e?.message?.toLowerCase().includes('bluetooth is disabled')) {
+      isBtDisabled = true;
+    }
+  }
+
+  // 3. Fallback to EpsonEposModule discovery
   try {
     const btDevices = await EpsonEposModule.discoverBluetoothPrinters();
     discovered.push(...btDevices);
@@ -362,168 +298,409 @@ export async function discoverEpsonPrinters(): Promise<Array<{ id: string; name:
   } catch (e) {
     console.warn('[Epson SDK] Network scan error:', e);
   }
+
+  // 4. Discover via react-native-ble-plx (BLE GATT on iOS and Android)
+  try {
+    const BleModule = require('react-native-ble-plx');
+    if (BleModule && BleModule.BleManager) {
+      const manager = new BleModule.BleManager();
+      const bleScanPromise = new Promise<void>((resolve) => {
+        let timer: any = null;
+        try {
+          manager.startDeviceScan(null, { allowDuplicates: false }, (error: any, device: any) => {
+            if (error) {
+              console.warn('[BleScan] Device scan error:', error);
+              if (timer) clearTimeout(timer);
+              try {
+                manager.destroy();
+              } catch {}
+              resolve();
+              return;
+            }
+            if (
+              device &&
+              (device.name || device.localName) &&
+              !isLikelyAudioDevice(device.name || device.localName)
+            ) {
+              const devName = device.name || device.localName;
+              const devId = device.id;
+              if (
+                !discovered.some(
+                  (d) => d.target === devId || d.macAddress === devId || d.id === devId
+                )
+              ) {
+                discovered.push({
+                  id: devId,
+                  name: devName,
+                  connectionType: 'bluetooth' as const,
+                  target: devId,
+                  macAddress: devId,
+                });
+              }
+            }
+          });
+        } catch (scanErr) {
+          console.warn('[BleScan] startDeviceScan threw:', scanErr);
+          resolve();
+          return;
+        }
+
+        timer = setTimeout(() => {
+          try {
+            manager.stopDeviceScan();
+            manager.destroy();
+          } catch {}
+          resolve();
+        }, 3200);
+      });
+
+      await bleScanPromise;
+    }
+  } catch (e) {
+    console.warn('[BleScan] BLE scan unavailable or failed:', e);
+  }
+
+  if (discovered.length === 0 && isBtDisabled) {
+    const err: any = new Error('Bluetooth is disabled');
+    err.code = 'BLUETOOTH_DISABLED';
+    throw err;
+  }
+
   return discovered;
 }
 
 /**
- * Send print request to Epson TM-m30III printer via Bluetooth (MFi/SPP) or Epson ePOS XML SDK endpoints
+ * Send print request to Epson TM-series printer using the layered architecture pipeline.
  */
 export async function printEpsonOrderReceipt(
   order: Partial<Order> & any,
-  config: PosPrinterConfig
+  config: PosPrinterConfig,
+  template?: ReceiptTemplate
 ): Promise<boolean> {
-  // 1. Bluetooth Connection Path (iOS MFi protocol com.epson.epos.print / Android SPP - No Wi-Fi required)
-  if (config.connectionType === 'bluetooth' || config.target?.startsWith('BT:')) {
-    try {
-      const target = config.target || config.macAddress || 'BT:EP-TM-M30III';
-      console.log(`[Epson Bluetooth] Sending print job to Bluetooth printer target: ${target}...`);
-      const escPosBytes = buildOrderEscPosBytes(order, config);
-      const success = await EpsonEposModule.printRawEscPos(target, escPosBytes);
-      if (success) {
-        return true;
-      }
-    } catch (btErr: any) {
-      console.warn(`[Epson Bluetooth] Bluetooth print error: ${btErr.message}`);
-    }
+  const profile = profileFromConfig(config);
+  if (!profile) {
+    console.warn('[Epson SDK] Cannot print: Missing connection profile or IP/target address.');
+    return false;
   }
 
-  // 2. Local Network Path (Epson TM-m30 ePOS XML HTTP / SOAP API)
-  const ip = config.ipAddress || '192.168.1.100';
-  const xmlPayload = buildEpsonEposXml(order, config);
+  const restId = typeof order.restaurantId === 'object' ? order.restaurantId?._id : (order.restaurantId || order.restaurant);
+  const activeTemplate = template || (await getActiveReceiptTemplate(restId ? String(restId) : undefined));
 
-  const endpoints = [
-    `http://${ip}/cgi-bin/epos/service.cgi?devid=local_printer&timeout=10000`,
-    `http://${ip}:8008/cgi-bin/epos/service.cgi?devid=local_printer&timeout=10000`,
-    `http://${ip}:80/cgi-bin/epos/service.cgi?devid=local_printer&timeout=10000`,
-  ];
+  const printer = resolvePrinter(profile, { brand: config.brand, paperWidth: config.paperWidth });
+  const doc = buildCustomizedReceiptDocument(order, config, activeTemplate);
+  const orderNum = order.orderNumber || (order._id ? order._id.slice(-5).toUpperCase() : 'Order');
 
-  for (const endpoint of endpoints) {
-    try {
-      console.log(`[Epson SDK] Sending ePOS-Print job to ${endpoint}...`);
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 6000);
+  const result = await PrintQueueService.enqueuePrintJob(
+    printer,
+    doc,
+    config,
+    `Epson_#${orderNum}`
+  );
 
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'text/xml; charset=utf-8',
-          SOAPAction: '""',
-          'If-Modified-Since': 'Thu, 01 Jan 1970 00:00:00 GMT',
-        },
-        body: xmlPayload,
-        signal: controller.signal,
-      });
-
-      clearTimeout(timeoutId);
-
-      if (response.ok || response.status === 200) {
-        const text = await response.text();
-        console.log(`[Epson SDK] Response received from ${endpoint}:`, text.substring(0, 150));
-        if (text.includes('success="true"') || text.includes('epos-print') || response.status === 200) {
-          return true;
-        }
-      }
-    } catch (err: any) {
-      console.log(`[Epson SDK] Endpoint ${endpoint} failed: ${err.message}, trying next...`);
-    }
-  }
-
-  return false;
+  return result.success;
 }
 
 /**
- * Test Epson printer connection & status (Supports both Bluetooth & Network)
+ * Test printer hardware by rendering and printing the current Receipt Template.
+ * Fully formats the sample order, store header, items, tax breakdown, and footer.
  */
 export async function testEpsonPrinter(
-  config: PosPrinterConfig
+  config: PosPrinterConfig,
+  restaurantId?: string,
+  customTemplate?: ReceiptTemplate
 ): Promise<{ success: boolean; message: string }> {
-  // Test Bluetooth target if connectionType is bluetooth
-  if (config.connectionType === 'bluetooth' || config.target?.startsWith('BT:')) {
+  const profile = profileFromConfig(config);
+  if (!profile) {
+    return {
+      success: false,
+      message: 'Printer connection target is not configured. Please select or enter an address.',
+    };
+  }
+
+  // 1. Fetch current active receipt template and apply selected paper roll width preference
+  const baseTemplate = customTemplate || (await getActiveReceiptTemplate(restaurantId));
+  const effectiveWidth = config.paperWidth || baseTemplate.layout?.paperWidth || '58mm';
+  config.paperWidth = effectiveWidth;
+  const template: ReceiptTemplate = {
+    ...baseTemplate,
+    layout: {
+      ...baseTemplate.layout,
+      paperWidth: effectiveWidth,
+    },
+  };
+
+  // 2. Resolve store profile details (restaurant name, phone, address)
+  let resolvedStoreName = getCachedStoreProfile()?.restaurantName;
+  let resolvedPhone = getCachedStoreProfile()?.phoneNumber;
+  let resolvedAddress = getCachedStoreProfile()?.address;
+
+  if (!resolvedStoreName && restaurantId) {
     try {
-      const target = config.target || config.macAddress || 'BT:EP-TM-M30III';
-      const sampleOrder: any = {
-        _id: 'TEST_BT',
-        orderNumber: 'TEST-BT',
-        orderType: 'DINE_IN',
-        createdAt: new Date().toISOString(),
-        customerDetails: { name: 'Bluetooth Test Print' },
-        orderedItems: [{ itemName: 'Epson TM-m30III Bluetooth Test', quantity: 1, basePrice: 0.0, itemTotal: 0.0 }],
-        pricing: { total: 0.0 },
-        paymentType: 'CASH',
-        paymentStatus: 'PAID',
-      };
-      const bytes = buildOrderEscPosBytes(sampleOrder, config);
-      const success = await EpsonEposModule.printRawEscPos(target, bytes);
-      if (success) {
-        return {
-          success: true,
-          message: `Successfully connected & printed test page to Epson TM-m30III via Bluetooth (${target}).`,
-        };
+      const { restaurantService } = require('../restaurant.service');
+      const res = await restaurantService.getRestaurantById(restaurantId);
+      if (res?.success && res.data?.restaurantName) {
+        resolvedStoreName = res.data.restaurantName;
+        resolvedPhone = res.data.phoneNumber || resolvedPhone;
+        resolvedAddress = formatRestaurantAddress(res.data.address) || resolvedAddress;
       }
-    } catch (e: any) {
-      return {
-        success: false,
-        message: `Bluetooth connection failed: ${e?.message || 'Printer not in range or un-paired'}.`,
-      };
+    } catch (err) {
+      console.warn('[testEpsonPrinter] Could not fetch restaurant profile:', err);
     }
   }
 
-  // Network test
-  const ip = config.ipAddress || '192.168.1.100';
-
-  const testXml = `<?xml version="1.0" encoding="utf-8"?>
-<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
-  <s:Body>
-    <epos-print xmlns="http://www.epson-pos.com/schemas/2011/03/epos-print">
-      <text align="center" width="2" height="2" em="true">EPSON TM-m30III TEST&#10;</text>
-      <text align="center" width="1" height="1" em="false">Krifoo POS System&#10;</text>
-      <text align="center">================================&#10;</text>
-      <text align="left">Model: EPSON TM-m30III&#10;</text>
-      <text align="left">IP: ${ip}&#10;</text>
-      <text align="left">Connection: ${config.connectionType.toUpperCase()}&#10;</text>
-      <text align="left">Status: Connected &amp; Ready&#10;</text>
-      <text align="center">================================&#10;</text>
-      <feed line="3"/>
-      <cut type="feed"/>
-    </epos-print>
-  </s:Body>
-</s:Envelope>`;
-
-  const endpoints = [
-    `http://${ip}/cgi-bin/epos/service.cgi?devid=local_printer&timeout=5000`,
-    `http://${ip}:8008/cgi-bin/epos/service.cgi?devid=local_printer&timeout=5000`,
-  ];
-
-  for (const endpoint of endpoints) {
+  if (!resolvedStoreName) {
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
-
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'text/xml; charset=utf-8',
-          SOAPAction: '""',
-        },
-        body: testXml,
-        signal: controller.signal,
-      });
-
-      clearTimeout(timeoutId);
-
-      if (response.ok || response.status === 200) {
-        return {
-          success: true,
-          message: `Successfully connected to Epson TM-m30III at ${ip}`,
-        };
+      const { restaurantOwnerService } = require('../restaurant-owner.service');
+      const ownerRes = await restaurantOwnerService.getRestaurantProfile();
+      if (ownerRes?.success && ownerRes.data?.restaurantName) {
+        resolvedStoreName = ownerRes.data.restaurantName;
+        resolvedPhone = ownerRes.data.phoneNumber || resolvedPhone;
+        resolvedAddress = formatRestaurantAddress(ownerRes.data.address) || resolvedAddress;
       }
-    } catch (e) {
-      // Continue to next endpoint
+    } catch (err) {
+      console.warn('[testEpsonPrinter] Could not fetch owner profile:', err);
+    }
+  }
+
+  // 3. Generate high-fidelity sample order matching current template settings
+  const sampleOrder = getSampleOrderForPreview(
+    template.content?.showTableNumber ? 'dine_in' : 'delivery',
+    resolvedStoreName || 'Krifoo Kitchen'
+  );
+
+  if (resolvedStoreName) {
+    sampleOrder.restaurantName = resolvedStoreName;
+    sampleOrder.restaurantAddress = resolvedAddress || '';
+    if (typeof sampleOrder.restaurantId === 'object') {
+      sampleOrder.restaurantId.restaurantName = resolvedStoreName;
+      sampleOrder.restaurantId.phoneNumber = resolvedPhone || '';
+      sampleOrder.restaurantId.address = resolvedAddress || '';
+    }
+  }
+
+  // If cash drawer is enabled, test drawer kick signal
+  if (config.openCashDrawer) {
+    sampleOrder.paymentType = 'Cash';
+  }
+
+  // 4. Build customized receipt document commands (respects autoCut, paperWidth, and drawer)
+  const testDoc = buildCustomizedReceiptDocument(sampleOrder, config, template);
+
+  // 5. Generate thermal HTML for System Spooler / AirPrint
+  let htmlContent: string | undefined;
+  try {
+    const { generateThermalReceiptHtml } = require('../thermal-print.service');
+    if (typeof generateThermalReceiptHtml === 'function') {
+      htmlContent = generateThermalReceiptHtml(sampleOrder, template);
+    }
+  } catch (err) {
+    console.warn('[testEpsonPrinter] Could not generate thermal receipt HTML:', err);
+  }
+
+  // 6. Resolve printer with complete context (paper width, template, and html)
+  const printer = resolvePrinter(profile, {
+    brand: config.brand,
+    paperWidth: config.paperWidth,
+    orderContext: sampleOrder,
+    configContext: config,
+    templateContext: template,
+    htmlContent,
+  });
+
+  // 7. Enqueue print job(s) respecting number of copies preference
+  const copies = Math.max(1, config.copies || 1);
+  for (let copy = 1; copy <= copies; copy++) {
+    const result = await PrintQueueService.enqueuePrintJob(
+      printer,
+      testDoc,
+      config,
+      `ReceiptTemplate_Test_c${copy}`
+    );
+
+    if (!result.success) {
+      return {
+        success: false,
+        message: result.detail || `Test print failed (${result.reason}). Check printer connection or paper roll.`,
+      };
     }
   }
 
   return {
-    success: false,
-    message: `Could not reach Epson TM-m30III at ${ip}. Ensure printer is on the same WiFi/Network or switch to Bluetooth.`,
+    success: true,
+    message: `Successfully printed ${copies} ${copies > 1 ? 'copies' : 'copy'} of test receipt (${config.paperWidth}) to ${printer.model}.`,
   };
 }
+
+/**
+ * Send manual Cash Drawer kickout signal without creating a fake dummy order.
+ * Structurally fixes Bug #8.
+ */
+export async function openEpsonCashDrawer(config: PosPrinterConfig): Promise<boolean> {
+  const profile = profileFromConfig(config);
+  if (!profile) {
+    console.warn('[Epson Drawer] Cannot kick drawer: Missing connection profile.');
+    return false;
+  }
+
+  const printer = resolvePrinter(profile, { brand: config.brand, paperWidth: config.paperWidth });
+  const kickDoc = buildDrawerKickDocument(1);
+
+  const result = await PrintQueueService.enqueuePrintJob(
+    printer,
+    kickDoc,
+    config,
+    'Drawer_Kick_Pulse'
+  );
+
+  return result.success;
+}
+
+/**
+ * Print a hardware alignment and column calibration test slip
+ */
+export async function testPrinterAlignmentSlip(
+  config: PosPrinterConfig
+): Promise<{ success: boolean; message: string }> {
+  const profile = profileFromConfig(config);
+  if (!profile) {
+    return {
+      success: false,
+      message: 'Printer is not configured. Please select or pair a printer first.',
+    };
+  }
+
+  const printer = resolvePrinter(profile, { brand: config.brand, paperWidth: config.paperWidth });
+  const is80 = config.paperWidth === '80mm';
+  const cols = is80 ? 48 : 32;
+
+  const rulerLine = is80
+    ? '01--------10--------20--------30--------40----48'
+    : '01--------10--------20--------32';
+
+  const testDoc = [
+    { type: 'text' as const, value: 'HARDWARE CALIBRATION SLIP', bold: true, align: 'center' as const, size: 'double' as const },
+    { type: 'line' as const },
+    { type: 'text' as const, value: `Width Mode: ${config.paperWidth} (${cols} Columns)`, bold: true, align: 'center' as const },
+    { type: 'text' as const, value: `Interface: ${profile.connectionType.toUpperCase()}`, align: 'center' as const },
+    { type: 'text' as const, value: `Date: ${new Date().toLocaleString('en-GB')}`, align: 'center' as const },
+    { type: 'line' as const },
+    { type: 'text' as const, value: 'RULER ALIGNMENT CHECK:', bold: true },
+    { type: 'text' as const, value: rulerLine, bold: true },
+    { type: 'text' as const, value: '(Line must fit completely without wrapping)', align: 'center' as const },
+    { type: 'line' as const },
+    { type: 'text' as const, value: 'PRICE RIGHT-ALIGNMENT CHECK:', bold: true },
+    {
+      type: 'table' as const,
+      cols: is80 ? [5, 31, 12] : [4, 18, 10],
+      aligns: ['left' as const, 'left' as const, 'right' as const],
+      rows: [
+        ['1x', 'Margherita Pizza 12"', '£12.50'],
+        ['2x', 'Crispy Wings (6pcs)', '£15.00'],
+      ],
+    },
+    { type: 'line' as const },
+    {
+      type: 'table' as const,
+      cols: is80 ? [28, 20] : [18, 14],
+      aligns: ['left' as const, 'right' as const],
+      rows: [
+        ['Subtotal:', '£27.50'],
+        ['TOTAL:', '£27.50'],
+      ],
+    },
+    { type: 'line' as const },
+    { type: 'text' as const, value: 'CALIBRATION PASSED [OK]', bold: true, align: 'center' as const },
+    { type: 'feed' as const, lines: 3 },
+    { type: 'cut' as const, mode: 'partial' as const },
+  ];
+
+  const result = await PrintQueueService.enqueuePrintJob(
+    printer,
+    testDoc as any,
+    config,
+    'Alignment_Test'
+  );
+
+  return {
+    success: result.success,
+    message: result.success
+      ? `Calibration slip printed on ${config.paperWidth} (${cols} columns).`
+      : result.detail || 'Failed transmitting calibration slip to printer.',
+  };
+}
+
+/**
+ * Test & verify active hardware connection with printer (Bluetooth, Network, or Builtin)
+ * without wasting physical receipt paper.
+ * Sends universal ESC/POS handshake pulse (ESC @) to confirm bidirectional link.
+ */
+export async function verifyPrinterConnection(
+  config: PosPrinterConfig
+): Promise<{ success: boolean; message: string; rawError?: string }> {
+  const profile = profileFromConfig(config);
+  if (!profile) {
+    return {
+      success: false,
+      message: 'Missing connection target (IP or Bluetooth MAC address).',
+    };
+  }
+
+  if (profile.connectionType === 'builtin') {
+    return { success: true, message: 'Built-in Sunmi printer is ready.' };
+  }
+
+  if (profile.connectionType === 'system') {
+    return { success: true, message: 'System print spooler is ready.' };
+  }
+
+  try {
+    const printer = resolvePrinter(profile, {
+      brand: config.brand,
+      paperWidth: config.paperWidth || '58mm',
+    });
+
+    // Send zero-length document so the encoder emits only the initialization handshake (ESC @)
+    const result = await PrintQueueService.enqueuePrintJob(
+      printer,
+      [],
+      config,
+      'Connection_Verification_Ping'
+    );
+
+    if (result.success) {
+      return {
+        success: true,
+        message: `Successfully connected to ${printer.model} via ${config.connectionType.toUpperCase()}!`,
+      };
+    } else {
+      const failDetail = (result as any).detail || (result as any).reason || 'Printer did not respond';
+      const formatted = formatPrinterConnectionError(
+        failDetail,
+        config.connectionType === 'network'
+          ? (config.ipAddress ? `${config.ipAddress}:${config.port || 9100}` : printer.model)
+          : (config.target || printer.model),
+        config.connectionType
+      );
+      return {
+        success: false,
+        message: `${formatted.title}: ${formatted.message}`,
+        rawError: failDetail,
+      };
+    }
+  } catch (err: any) {
+    const raw = err?.message || 'Failed to communicate with printer.';
+    const formatted = formatPrinterConnectionError(
+      raw,
+      config.connectionType === 'network'
+        ? (config.ipAddress ? `${config.ipAddress}:${config.port || 9100}` : undefined)
+        : config.target,
+      config.connectionType
+    );
+    return {
+      success: false,
+      message: `${formatted.title}: ${formatted.message}`,
+      rawError: raw,
+    };
+  }
+}
+

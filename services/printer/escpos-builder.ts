@@ -1,5 +1,8 @@
 import { Order } from '../../types';
 import { PosPrinterConfig } from '../pos-config.service';
+import { ReceiptTemplate, getCachedStoreProfile, isDummyCustomerPhone } from '../receipt-customization.service';
+import { buildCustomizedReceiptDocument, getOrderScheduleInfo, getSanitizedOrderNotes } from './receipt-document';
+import { EscPosEncoder } from './encoders/escpos-encoder';
 
 /**
  * Format currency with symbol (£ for UK)
@@ -12,7 +15,7 @@ function formatMoney(amount?: number): string {
 /**
  * Format order date into UK style strings
  */
-function formatOrderDate(dateString?: string): { placedAt: string; targetTime: string } {
+function formatOrderDate(dateString?: string, scheduledText?: string | null): { placedAt: string; targetTime: string } {
   const now = dateString ? new Date(dateString) : new Date();
 
   const options: Intl.DateTimeFormatOptions = {
@@ -23,6 +26,10 @@ function formatOrderDate(dateString?: string): { placedAt: string; targetTime: s
     hour12: false,
   };
   const placedAt = now.toLocaleDateString('en-GB', options);
+
+  if (scheduledText && scheduledText.trim()) {
+    return { placedAt, targetTime: scheduledText.trim() };
+  }
 
   const targetDate = new Date(now.getTime() + 35 * 60000);
   const hours = String(targetDate.getHours()).padStart(2, '0');
@@ -39,6 +46,8 @@ function formatOrderDate(dateString?: string): { placedAt: string; targetTime: s
 export class EscPosBuilder {
   private buffer: number[] = [];
   private cols: number;
+  private currentAlign: 'left' | 'center' | 'right' = 'left';
+  private currentWidthMulti: number = 1;
 
   constructor(paperWidth: '80mm' | '58mm' = '80mm') {
     this.cols = paperWidth === '58mm' ? 32 : 48;
@@ -57,16 +66,28 @@ export class EscPosBuilder {
   }
 
   public alignLeft(): this {
+    this.currentAlign = 'left';
     this.buffer.push(0x1b, 0x61, 0);
     return this;
   }
 
   public alignCenter(): this {
+    this.currentAlign = 'center';
+    if (this.cols === 32) {
+      // 58mm mode: Keep hardware alignment strictly left so 80mm paper doesn't center across 80mm
+      this.buffer.push(0x1b, 0x61, 0);
+      return this;
+    }
     this.buffer.push(0x1b, 0x61, 1);
     return this;
   }
 
   public alignRight(): this {
+    this.currentAlign = 'right';
+    if (this.cols === 32) {
+      this.buffer.push(0x1b, 0x61, 0);
+      return this;
+    }
     this.buffer.push(0x1b, 0x61, 2);
     return this;
   }
@@ -76,7 +97,45 @@ export class EscPosBuilder {
     return this;
   }
 
+  public italic(enable: boolean): this {
+    this.buffer.push(0x1b, 0x34, enable ? 1 : 0);
+    return this;
+  }
+
+  public setFont(font: 'fontA' | 'fontB' = 'fontA'): this {
+    this.buffer.push(0x1b, 0x4d, font === 'fontB' ? 1 : 0);
+    return this;
+  }
+
+  public setLineSpacing(spacing: 'compact' | 'normal' | 'relaxed' = 'normal'): this {
+    if (spacing === 'compact') {
+      this.buffer.push(0x1b, 0x33, 18);
+    } else if (spacing === 'relaxed') {
+      this.buffer.push(0x1b, 0x33, 36);
+    } else {
+      this.buffer.push(0x1b, 0x32);
+    }
+    return this;
+  }
+
+  public qrCode(data: string): this {
+    const pL = (data.length + 3) % 256;
+    const pH = Math.floor((data.length + 3) / 256);
+    this.alignCenter();
+    this.buffer.push(0x1d, 0x28, 0x6b, 0x04, 0x00, 0x31, 0x41, 0x32, 0x00);
+    this.buffer.push(0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x43, 0x06);
+    this.buffer.push(0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x45, 0x31);
+    this.buffer.push(0x1d, 0x28, 0x6b, pL, pH, 0x31, 0x50, 0x30);
+    for (let i = 0; i < data.length; i++) {
+      this.buffer.push(data.charCodeAt(i));
+    }
+    this.buffer.push(0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x51, 0x30);
+    this.buffer.push(0x0a);
+    return this;
+  }
+
   public setSize(widthMulti: number = 1, heightMulti: number = 1): this {
+    this.currentWidthMulti = widthMulti;
     // GS ! n (Character size: (width - 1) * 16 + (height - 1))
     const w = Math.min(Math.max(widthMulti - 1, 0), 7);
     const h = Math.min(Math.max(heightMulti - 1, 0), 7);
@@ -107,7 +166,16 @@ export class EscPosBuilder {
   }
 
   public line(str: string = ''): this {
-    this.text(str);
+    if (this.cols === 32 && this.currentAlign !== 'left') {
+      const isDouble = this.currentWidthMulti > 1 && str.length <= 16;
+      const lineCapacity = isDouble ? 16 : 32;
+      const pad = this.currentAlign === 'center'
+        ? Math.max(0, Math.floor((lineCapacity - str.length) / 2))
+        : Math.max(0, lineCapacity - str.length);
+      this.text(' '.repeat(pad) + str);
+    } else {
+      this.text(str);
+    }
     this.buffer.push(0x0a); // LF
     return this;
   }
@@ -132,10 +200,11 @@ export class EscPosBuilder {
   /**
    * Print 2-column key-value row (e.g. Subtotal £20.00)
    */
-  public twoColumn(left: string, right: string): this {
+  public twoColumn(left: string, right: string, isDoubleSize: boolean = false): this {
     const leftLen = left.length;
     const rightLen = right.length;
-    const spaces = Math.max(1, this.cols - leftLen - rightLen);
+    const targetCols = isDoubleSize ? Math.floor(this.cols / 2) : this.cols;
+    const spaces = Math.max(1, targetCols - leftLen - rightLen);
     this.line(left + ' '.repeat(spaces) + right);
     return this;
   }
@@ -202,9 +271,12 @@ export function buildEscPosReceipt(order: Partial<Order> & any, config: PosPrint
 
   // Restaurant details
   const restaurantName =
-    typeof order.restaurantId === 'object'
-      ? order.restaurantId?.restaurantName || 'KRIFOO RESTAURANT'
-      : 'KRIFOO RESTAURANT';
+    (typeof order.restaurantId === 'object' ? order.restaurantId?.restaurantName : '') ||
+    order.restaurantName ||
+    order.restaurantTitle ||
+    (typeof order.restaurant === 'object' ? order.restaurant?.restaurantName : '') ||
+    getCachedStoreProfile()?.restaurantName ||
+    'Restaurant';
 
   const restaurantPhone =
     typeof order.restaurantId === 'object'
@@ -258,9 +330,18 @@ export function buildEscPosReceipt(order: Partial<Order> & any, config: PosPrint
   }
 
   const orderNum = order.orderNumber || (order._id ? `#${order._id.slice(-5).toUpperCase()}` : '#00000');
-  const fulfillmentType = (order.orderType || order.deliveryType || (deliveryAddress ? 'DELIVERY' : 'COLLECTION')).toUpperCase();
-  const isDelivery = fulfillmentType.includes('DELIV') || Boolean(deliveryAddress);
-  const { placedAt, targetTime } = formatOrderDate(order.createdAt);
+  const rawType = (order.orderType || order.deliveryType || '').toString().toUpperCase();
+  const isPickup =
+    rawType.includes('PICKUP') ||
+    rawType.includes('COLLECT') ||
+    rawType.includes('TAKEAWAY') ||
+    (!rawType.includes('DELIV') && !rawType.includes('DINE') && (deliveryAddress ? deliveryAddress.toLowerCase().includes('pickup') : false));
+  const isDineIn = rawType.includes('DINE') || rawType.includes('EAT') || Boolean(order.tableNumber || order.table);
+  const isDelivery = !isPickup && !isDineIn && (rawType.includes('DELIV') || (Boolean(deliveryAddress) && !deliveryAddress.toLowerCase().includes('pickup')));
+  const fulfillmentType = isPickup ? 'PICKUP' : isDineIn ? 'DINE-IN' : 'DELIVERY';
+
+  const scheduleInfo = getOrderScheduleInfo(order);
+  const { placedAt, targetTime } = formatOrderDate(order.createdAt, scheduleInfo.scheduleTimeText);
 
   // 1. HEADER
   builder.alignCenter();
@@ -277,14 +358,27 @@ export function buildEscPosReceipt(order: Partial<Order> & any, config: PosPrint
   builder.bold(false);
   builder.divider();
 
+  // SCHEDULED BANNER (If Scheduled)
+  if (scheduleInfo.isScheduled && scheduleInfo.scheduleTimeText) {
+    builder.doubleDivider();
+    builder.bold(true).setSize(1, 1).line(`*** SCHEDULED ${fulfillmentType} ***`);
+    builder.setSize(1, 1).line(`TARGET TIME: ${scheduleInfo.scheduleTimeText.toUpperCase()}`);
+    builder.bold(false);
+    builder.doubleDivider();
+  }
+
   // 2. TIMINGS & CUSTOMER
   builder.alignLeft();
-  builder.line(`Placed: ${placedAt}  Target: ${targetTime}`);
+  if (scheduleInfo.isScheduled && scheduleInfo.scheduleTimeText) {
+    builder.line(`Placed: ${placedAt}  Target: ${scheduleInfo.scheduleTimeText}`);
+  } else {
+    builder.line(`Placed: ${placedAt}  Target: ${targetTime}`);
+  }
   builder.divider();
 
   builder.bold(true).line('CUSTOMER:').bold(false);
   builder.line(`  Name:  ${customerName}`);
-  if (customerPhone) {
+  if (customerPhone && !isDummyCustomerPhone(customerPhone)) {
     builder.line(`  Phone: ${customerPhone}`);
   }
 
@@ -295,11 +389,13 @@ export function buildEscPosReceipt(order: Partial<Order> & any, config: PosPrint
       builder.line(`  POSTCODE: ${deliveryPostcode}`);
     }
     builder.bold(false);
+  } else if (isPickup && deliveryAddress && !deliveryAddress.toLowerCase().includes('pickup')) {
+    builder.line(`  Cust Addr: ${deliveryAddress}`);
   }
 
-  if (order.deliveryInstructions || order.notes) {
-    const note = order.deliveryInstructions || order.notes;
-    builder.bold(true).line(`NOTE: ${note}`).bold(false);
+  const cleanNote = getSanitizedOrderNotes(order.deliveryInstructions || order.notes);
+  if (cleanNote) {
+    builder.bold(true).line(`NOTE: ${cleanNote}`).bold(false);
   }
 
   builder.doubleDivider();
@@ -397,12 +493,27 @@ export function buildEscPosReceipt(order: Partial<Order> & any, config: PosPrint
     builder.twoColumn('Delivery Fee:', formatMoney(deliveryFee));
   }
 
-  const serviceFee = order.pricing?.serviceFee !== undefined ? order.pricing.serviceFee : (order.pricing?.handlingCharge !== undefined ? order.pricing.handlingCharge : order.serviceFee);
+  const onlinePaymentFee = order.pricing?.onlinePaymentFee !== undefined ? order.pricing.onlinePaymentFee : (order.onlinePaymentFee !== undefined ? order.onlinePaymentFee : ((order.pricing as any)?.cardFee || (order.pricing as any)?.paymentFee));
+  if (onlinePaymentFee !== undefined && onlinePaymentFee > 0) {
+    builder.twoColumn('Handling Fee:', formatMoney(onlinePaymentFee));
+  }
+
+  const handlingCharge = order.pricing?.handlingCharge !== undefined ? order.pricing.handlingCharge : order.handlingCharge;
+  if (handlingCharge !== undefined && handlingCharge > 0) {
+    builder.twoColumn('Handling Charge:', formatMoney(handlingCharge));
+  }
+
+  const serviceFee = order.pricing?.serviceFee !== undefined ? order.pricing.serviceFee : (order.pricing?.platformFee !== undefined ? order.pricing.platformFee : (order.serviceFee || order.platformFee));
   if (serviceFee !== undefined && serviceFee > 0) {
     builder.twoColumn('Service Fee:', formatMoney(serviceFee));
   }
 
-  const discount = order.pricing?.discount !== undefined ? order.pricing.discount : order.discount;
+  const tax = order.pricing?.tax !== undefined ? order.pricing.tax : (order.pricing?.vat !== undefined ? order.pricing.vat : (order.tax || order.vat));
+  if (tax !== undefined && tax > 0) {
+    builder.twoColumn('Tax / VAT:', formatMoney(tax));
+  }
+
+  const discount = order.pricing?.discount !== undefined ? order.pricing.discount : (order.pricing?.discountAmount !== undefined ? order.pricing.discountAmount : order.discount);
   if (discount !== undefined && discount > 0) {
     builder.twoColumn('Discount:', `-${formatMoney(discount)}`);
   }
@@ -415,9 +526,9 @@ export function buildEscPosReceipt(order: Partial<Order> & any, config: PosPrint
   builder.divider();
 
   // TOTAL
-  const grandTotal = order.pricing?.total !== undefined ? order.pricing.total : (order.totalAmount || order.total || subtotal);
+  const grandTotal = order.pricing?.total !== undefined ? order.pricing.total : (order.pricing?.totalAmount !== undefined ? order.pricing.totalAmount : (order.totalAmount || order.total || subtotal));
   builder.bold(true).setSize(2, 2);
-  builder.twoColumn('TOTAL:', formatMoney(grandTotal));
+  builder.twoColumn('TOTAL:', formatMoney(grandTotal), true);
   builder.setSize(1, 1).bold(false);
   builder.divider();
 
@@ -444,3 +555,19 @@ export function buildEscPosReceipt(order: Partial<Order> & any, config: PosPrint
 
   return builder.toByteArray();
 }
+
+/**
+ * Build customized ESC/POS binary receipt using template customizations
+ */
+export function buildCustomizedEscPosReceipt(
+  order: Partial<Order> & any,
+  config: PosPrinterConfig,
+  template?: ReceiptTemplate
+): Uint8Array {
+  if (!template) {
+    return buildEscPosReceipt(order, config);
+  }
+  const doc = buildCustomizedReceiptDocument(order, config, template);
+  return EscPosEncoder.encode(doc, config);
+}
+

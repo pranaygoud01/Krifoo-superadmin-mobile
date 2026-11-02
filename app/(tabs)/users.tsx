@@ -10,7 +10,9 @@ import {
   Switch,
   TouchableOpacity,
   Alert,
+  useWindowDimensions,
 } from 'react-native';
+import { useLocalSearchParams } from 'expo-router';
 import { Header } from '../../components/Header';
 import { FilterChip } from '../../components/FilterChip';
 import { StatusBadge } from '../../components/StatusBadge';
@@ -22,14 +24,28 @@ import { useToast } from '../../context/ToastContext';
 import { UserAccount } from '../../types';
 import { Search, Users, User, Bike, Trash2, Mail, Phone } from 'lucide-react-native';
 import { UserListSkeleton } from '../../components/Skeleton';
+import { ErrorState } from '../../components/ErrorState';
+import { ApiErrorType } from '../../services/api';
 
 export default function UsersScreen() {
   const { showToast } = useToast();
+  const { width: windowWidth } = useWindowDimensions();
+  const isTablet = windowWidth >= 768;
+
+  const params = useLocalSearchParams<{ role?: string; userType?: string }>();
+  const initialRole = params.role || params.userType || 'all';
+
   const [users, setUsers] = useState<UserAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedRole, setSelectedRole] = useState<string>('all');
+  const [selectedRole, setSelectedRole] = useState<string>(initialRole);
+
+  useEffect(() => {
+    if (params.role || params.userType) {
+      setSelectedRole(params.role || params.userType || 'all');
+    }
+  }, [params.role, params.userType]);
 
   // Detail Modal States
   const [selectedUser, setSelectedUser] = useState<UserAccount | null>(null);
@@ -43,6 +59,11 @@ export default function UsersScreen() {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [usersError, setUsersError] = useState<{
+    type: ApiErrorType;
+    message: string;
+    statusCode?: number;
+  } | null>(null);
 
   const fetchUsers = async (pageNum = 1, isRefresh = false) => {
     try {
@@ -53,7 +74,7 @@ export default function UsersScreen() {
       }
 
       // Backend supports: userType, search, page, limit
-      const res = await userService.getAllUsers({
+      const res: any = await userService.getAllUsers({
         userType: selectedRole !== 'all' ? selectedRole : undefined,
         search: searchQuery.trim() || undefined,
         page: pageNum,
@@ -69,9 +90,20 @@ export default function UsersScreen() {
         }
         setPage(pageNum);
         setTotalPages(res.totalPages || 1);
+        setUsersError(null);
+      } else {
+        setUsersError({
+          type: res.errorType || 'unknown',
+          message: res.message || 'Failed to load users from server.',
+          statusCode: res.statusCode,
+        });
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error('Failed fetching users:', e);
+      setUsersError({
+        type: 'network',
+        message: e?.message || 'Cannot reach server.',
+      });
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -197,6 +229,14 @@ export default function UsersScreen() {
       {/* User Cards List */}
       {loading ? (
         <UserListSkeleton />
+      ) : usersError && users.length === 0 ? (
+        <ErrorState
+          errorType={usersError.type}
+          message={usersError.message}
+          statusCode={usersError.statusCode}
+          onRetry={() => fetchUsers(1, false)}
+          isRetrying={loading || refreshing}
+        />
       ) : users.length === 0 ? (
         <View style={styles.centerBox}>
           <Users size={48} color={Colors.cardBorder} />
@@ -207,9 +247,12 @@ export default function UsersScreen() {
         </View>
       ) : (
         <FlatList
+          key={isTablet ? 'users-tablet-grid' : 'users-phone-list'}
+          numColumns={isTablet ? 2 : 1}
           data={users}
           keyExtractor={(item) => item._id}
-          contentContainerStyle={styles.listContent}
+          contentContainerStyle={[styles.listContent, isTablet && styles.listContentTablet]}
+          columnWrapperStyle={isTablet ? styles.userColumnWrapper : undefined}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -222,7 +265,7 @@ export default function UsersScreen() {
           ListFooterComponent={renderFooter}
           renderItem={({ item }) => (
             <TouchableOpacity
-              style={styles.userCard}
+              style={[styles.userCard, isTablet && styles.userCardTablet]}
               onPress={() => {
                 setSelectedUser(item);
                 setDetailModalVisible(true);
@@ -338,6 +381,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 110,
   },
+  listContentTablet: {
+    maxWidth: 1200,
+    width: '100%',
+    alignSelf: 'center',
+    paddingHorizontal: 20,
+    gap: 14,
+  },
+  userColumnWrapper: {
+    gap: 14,
+  },
   centerBox: {
     flex: 1,
     justifyContent: 'center',
@@ -368,6 +421,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     padding: 14,
     marginBottom: 12,
+  },
+  userCardTablet: {
+    flex: 1,
+    marginBottom: 0,
   },
   userHeader: {
     flexDirection: 'row',

@@ -72,7 +72,7 @@ export class ShiftReportService {
    */
   static async printShiftReport(report: ShiftReport, config: PosPrinterConfig): Promise<boolean> {
     return printQueue.enqueue(async () => {
-      const is58mm = config.paperWidth === '58mm';
+      const is58mm = config?.paperWidth !== '80mm';
       const width = is58mm ? 32 : 48;
 
       const builder = new EscPosBuilder();

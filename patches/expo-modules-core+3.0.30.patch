@@ -1,0 +1,22 @@
+diff --git a/node_modules/expo-modules-core/src/requireNativeModule.ts b/node_modules/expo-modules-core/src/requireNativeModule.ts
+index b655da0..f812ceb 100644
+--- a/node_modules/expo-modules-core/src/requireNativeModule.ts
++++ b/node_modules/expo-modules-core/src/requireNativeModule.ts
+@@ -17,7 +17,16 @@ export function requireNativeModule<ModuleType = any>(moduleName: string): Modul
+   const nativeModule = requireOptionalNativeModule<ModuleType>(moduleName);
+ 
+   if (!nativeModule) {
+-    throw new Error(`Cannot find native module '${moduleName}'`);
++    console.warn(`[requireNativeModule] Native module '${moduleName}' not found in this client. Using safe mock.`);
++    return new Proxy({}, {
++      get: (_target, prop) => {
++        if (typeof prop === 'string') {
++          if (prop === 'addListener' || prop === 'removeListeners') return () => {};
++          if (prop === 'getConstants' || prop === 'constants') return () => ({});
++        }
++        return (..._args: any[]) => Promise.resolve(null);
++      }
++    }) as any;
+   }
+   return nativeModule;
+ }

@@ -7,11 +7,13 @@ import {
   FlatList,
   TouchableOpacity,
   ActivityIndicator,
+  useWindowDimensions,
 } from 'react-native';
 import { Order, UserAccount } from '../types';
 import { Colors } from '../constants/colors';
 import { userService } from '../services/user.service';
 import { X, Bike, Check, Phone } from 'lucide-react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface AssignDeliveryModalProps {
   visible: boolean;
@@ -26,6 +28,10 @@ export const AssignDeliveryModal: React.FC<AssignDeliveryModalProps> = ({
   onClose,
   onConfirmAssign,
 }) => {
+  const { width: windowWidth } = useWindowDimensions();
+  const isTablet = windowWidth >= 768;
+  const insets = useSafeAreaInsets();
+
   const [partners, setPartners] = useState<UserAccount[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedPartnerId, setSelectedPartnerId] = useState<string | null>(null);
@@ -67,15 +73,31 @@ export const AssignDeliveryModal: React.FC<AssignDeliveryModalProps> = ({
   if (!order) return null;
 
   return (
-    <Modal visible={visible} animationType="slide" transparent={true} onRequestClose={onClose}>
-      <View style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
+    <Modal
+      visible={visible}
+      animationType={isTablet ? 'fade' : 'slide'}
+      transparent={true}
+      statusBarTranslucent={true}
+      onRequestClose={onClose}
+    >
+      <View style={[styles.modalOverlay, isTablet && styles.modalOverlayTablet]}>
+        <View
+          style={[
+            styles.modalContent,
+            isTablet && styles.modalContentTablet,
+            { paddingBottom: isTablet ? 20 : Math.max(insets.bottom, 20) },
+          ]}
+        >
           <View style={styles.header}>
             <View style={styles.titleRow}>
               <Bike size={20} color={Colors.primary} />
               <Text style={styles.headerTitle}>Assign Delivery Partner</Text>
             </View>
-            <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
+            <TouchableOpacity
+              onPress={onClose}
+              style={styles.closeBtn}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
               <X size={20} color={Colors.textMuted} />
             </TouchableOpacity>
           </View>
@@ -162,12 +184,28 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(17, 24, 28, 0.45)',
     justifyContent: 'flex-end',
   },
+  modalOverlayTablet: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
   modalContent: {
     backgroundColor: Colors.background,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     maxHeight: '80%',
     paddingBottom: 20,
+  },
+  modalContentTablet: {
+    width: '100%',
+    maxWidth: 600,
+    borderRadius: 20,
+    maxHeight: '85%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.18,
+    shadowRadius: 24,
+    elevation: 12,
   },
   header: {
     flexDirection: 'row',
@@ -277,6 +315,8 @@ const styles = StyleSheet.create({
   confirmBtn: {
     backgroundColor: Colors.primary,
     paddingVertical: 14,
+    minHeight: 48,
+    justifyContent: 'center',
     borderRadius: 12,
     alignItems: 'center',
   },

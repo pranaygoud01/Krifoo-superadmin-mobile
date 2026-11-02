@@ -7,13 +7,16 @@ import {
   ScrollView,
   TouchableOpacity,
   TextInput,
-  Image,
   Linking,
+  useWindowDimensions,
 } from 'react-native';
+import { Image } from 'expo-image';
+import { resolveImageUrl, resolveMediaImageSource } from '../services/image.helper';
 import { Restaurant, VerificationStatus } from '../types';
 import { Colors } from '../constants/colors';
 import { StatusBadge } from './StatusBadge';
 import { X, FileText, CheckCircle, XCircle, Clock, Printer } from 'lucide-react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getBrandName, getPosPrinterConfig } from '../services/pos-config.service';
 
 interface RestaurantDetailModalProps {
@@ -29,6 +32,10 @@ export const RestaurantDetailModal: React.FC<RestaurantDetailModalProps> = ({
   onClose,
   onUpdateVerification,
 }) => {
+  const { width: windowWidth } = useWindowDimensions();
+  const isTablet = windowWidth >= 768;
+  const insets = useSafeAreaInsets();
+
   const [remarks, setRemarks] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [printerBrand, setPrinterBrand] = useState('Epson ePOS (TM-m30)');
@@ -55,13 +62,23 @@ export const RestaurantDetailModal: React.FC<RestaurantDetailModalProps> = ({
     : restaurant.address || 'N/A';
 
   return (
-    <Modal visible={visible} animationType="slide" transparent={true} onRequestClose={onClose}>
-      <View style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
+    <Modal
+      visible={visible}
+      animationType={isTablet ? 'fade' : 'slide'}
+      transparent={true}
+      statusBarTranslucent={true}
+      onRequestClose={onClose}
+    >
+      <View style={[styles.modalOverlay, isTablet && styles.modalOverlayTablet]}>
+        <View style={[styles.modalContent, isTablet && styles.modalContentTablet]}>
           {/* Header */}
           <View style={styles.header}>
             <Text style={styles.headerTitle}>Restaurant Verification</Text>
-            <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
+            <TouchableOpacity
+              onPress={onClose}
+              style={styles.closeBtn}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
               <X size={20} color={Colors.textMuted} />
             </TouchableOpacity>
           </View>
@@ -69,13 +86,28 @@ export const RestaurantDetailModal: React.FC<RestaurantDetailModalProps> = ({
           <ScrollView style={styles.scrollBody} showsVerticalScrollIndicator={false}>
             {/* Banner & Basic Info */}
             <View style={styles.bannerRow}>
-              {restaurant.imageUrl ? (
-                <Image source={{ uri: restaurant.imageUrl }} style={styles.bannerImage} />
-              ) : (
-                <View style={[styles.bannerImage, styles.imagePlaceholder]}>
-                  <Text style={styles.placeholderText}>{restaurant.restaurantName?.charAt(0)}</Text>
-                </View>
-              )}
+              {(() => {
+                const bannerSource = resolveMediaImageSource(
+                  restaurant.imageUrl ||
+                  (restaurant as any).logoUrl ||
+                  (restaurant as any).logo ||
+                  restaurant.externalWebsiteSettings?.heroBannerUrl ||
+                  restaurant.externalWebsiteSettings?.logoUrl
+                );
+                return bannerSource ? (
+                  <Image
+                    source={bannerSource}
+                    style={styles.bannerImage}
+                    contentFit="cover"
+                    transition={200}
+                    cachePolicy="memory-disk"
+                  />
+                ) : (
+                  <View style={[styles.bannerImage, styles.imagePlaceholder]}>
+                    <Text style={styles.placeholderText}>{restaurant.restaurantName?.charAt(0)}</Text>
+                  </View>
+                );
+              })()}
               <View style={styles.bannerInfo}>
                 <Text style={styles.restaurantName}>{restaurant.restaurantName}</Text>
                 <Text style={styles.ownerText}>Owner: {restaurant.ownerName || 'Not specified'}</Text>
@@ -161,7 +193,7 @@ export const RestaurantDetailModal: React.FC<RestaurantDetailModalProps> = ({
           </ScrollView>
 
           {/* Action Footer */}
-          <View style={styles.footerActions}>
+          <View style={[styles.footerActions, { paddingBottom: isTablet ? 16 : Math.max(insets.bottom, 16) }]}>
             <TouchableOpacity
               disabled={submitting}
               style={[styles.actionBtn, styles.approveBtn]}
@@ -201,12 +233,28 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(17, 24, 28, 0.45)',
     justifyContent: 'flex-end',
   },
+  modalOverlayTablet: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
   modalContent: {
     backgroundColor: Colors.background,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     maxHeight: '90%',
     paddingBottom: 20,
+  },
+  modalContentTablet: {
+    width: '100%',
+    maxWidth: 640,
+    borderRadius: 20,
+    maxHeight: '85%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.18,
+    shadowRadius: 24,
+    elevation: 12,
   },
   header: {
     flexDirection: 'row',
@@ -365,6 +413,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
+    minHeight: 48,
     gap: 6,
     paddingVertical: 12,
     borderRadius: 10,

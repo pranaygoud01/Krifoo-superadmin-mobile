@@ -23,6 +23,48 @@ export interface RestaurantOwner {
   phoneNumber?: string;
 }
 
+export interface ExternalDistanceTier {
+  maxDistance: number;
+  charge: number;
+}
+
+export interface ExternalDeliverySettings {
+  enabled: boolean;
+  deliveryChargeType: 'tiered' | 'fixed' | 'per_mile';
+  fixedCharge?: number;
+  freeDeliveryOverOrderValue?: number | null;
+  chargePerMile?: number;
+  baseDeliveryCharge?: number;
+  baseDeliveryDistance?: number;
+  maxDeliveryRadius?: number;
+  distanceTiers?: ExternalDistanceTier[];
+}
+
+export interface ExternalWebsiteSettings {
+  domain?: string;
+  brandName?: string;
+  primaryColor?: string;
+  secondaryColor?: string;
+  heroBannerUrl?: string;
+  logoUrl?: string;
+  faviconUrl?: string;
+  metaTitle?: string;
+  metaDescription?: string;
+  facebookUrl?: string;
+  instagramUrl?: string;
+  twitterUrl?: string;
+  isPublished?: boolean;
+}
+
+export interface ExternalPaymentSettings {
+  acceptsDelivery?: boolean;
+  acceptsPickup?: boolean;
+  acceptsCashOnDelivery?: boolean;
+  acceptsOnlineDelivery?: boolean;
+  acceptsPayAtCounter?: boolean;
+  acceptsOnlinePickup?: boolean;
+}
+
 export interface Restaurant {
   _id: string;
   restaurantName: string;
@@ -46,6 +88,9 @@ export interface Restaurant {
     };
   } | string;
   cuisineTypes?: string[];
+  commissionRate?: number;
+  defaultDeliveryTime?: number;
+  handlingChargesPercentage?: number;
   verificationStatus: VerificationStatus;
   verificationRemarks?: string;
   isActive: boolean;
@@ -54,6 +99,25 @@ export interface Restaurant {
   totalOrdersCount?: number;
   stripeAccountStatus?: string;
   documents?: RestaurantDocument[];
+  deliverySettings?: {
+    freeDeliveryRadius?: number;
+    chargePerMile?: number;
+    maxDeliveryRadius?: number;
+    normalDeliveryDistance?: number;
+    slotOrderingDistance?: number;
+  };
+  externalDeliverySettings?: ExternalDeliverySettings;
+  externalWebsiteSettings?: ExternalWebsiteSettings;
+  externalPaymentSettings?: ExternalPaymentSettings;
+  acceptsOnlineOrders?: boolean;
+  acceptsDelivery?: boolean;
+  acceptsPickup?: boolean;
+  acceptsCashOnDelivery?: boolean;
+  acceptsOnlineDelivery?: boolean;
+  acceptsPayAtCounter?: boolean;
+  acceptsOnlinePickup?: boolean;
+  acceptsDining?: boolean;
+  autoApproveOrders?: boolean;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -73,12 +137,16 @@ export interface OrderItem {
 export interface Order {
   _id: string;
   orderNumber?: string;
-  orderType?: 'delivery' | 'pickup' | 'dine_in' | string;
+  orderType?: 'delivery' | 'pickup' | 'takeaway' | 'dine_in' | string;
+  orderSource?: 'krifoo' | 'external' | string;
+  sourceDomain?: string;
   restaurantId: {
     _id: string;
     restaurantName: string;
     imageUrl?: string;
     phoneNumber?: string;
+    address?: any;
+    externalWebsiteSettings?: ExternalWebsiteSettings;
   } | string;
   customerId?: {
     _id: string;
@@ -112,6 +180,7 @@ export interface Order {
     deliveryFee?: number;
     tax?: number;
     handlingCharge?: number;
+    onlinePaymentFee?: number;
     platformFee?: number;
     discount?: number;
     discountAmount?: number;
@@ -135,6 +204,13 @@ export interface Order {
     [key: string]: any;
   } | any;
   notes?: string;
+  scheduleTimeDate?: string;
+  collectionTime?: string;
+  deliverySlotTime?: string;
+  selectedDeliverySlotId?: any;
+  isScheduled?: boolean;
+  scheduledFor?: string;
+  deliveryTime?: number;
   createdAt: string;
   updatedAt?: string;
 
@@ -169,12 +245,23 @@ export interface Category {
   isActive: boolean;
   imageUrl?: string;
   categoryType?: string;
+  sortOrder?: number;
 }
 
 export interface DeliveryChargeTier {
   _id: string;
   maxDistance: number;
   charge: number;
+}
+
+export interface GlobalSettings {
+  _id?: string;
+  platformFee?: number;
+  defaultCommissionRate?: number;
+  defaultHandlingCharge?: number;
+  minOrderValue?: number;
+  freeDeliveryThreshold?: number;
+  [key: string]: any;
 }
 
 export interface DashboardStats {
@@ -195,6 +282,10 @@ export interface MenuItem {
   description?: string;
   price?: number;
   basePrice?: number;
+  deliveryPrice?: number;
+  collectionPrice?: number;
+  eatInPrice?: number;
+  stock?: number;
   category?: string;
   categories?: { _id: string; categoryName: string }[];
   isAvailable: boolean;

@@ -11,7 +11,10 @@ interface OrderCardProps {
   onAssignDelivery: (order: Order) => void;
 }
 
+import { getOrderStatusColor } from '../app/(tabs)/orders';
+
 export const OrderCard: React.FC<OrderCardProps> = ({ order, onPress, onAssignDelivery }) => {
+  const statusColor = getOrderStatusColor(order.status);
   const restaurantName = typeof order.restaurantId === 'object'
     ? order.restaurantId?.restaurantName || 'Unknown Restaurant'
     : 'Restaurant';
@@ -46,6 +49,8 @@ export const OrderCard: React.FC<OrderCardProps> = ({ order, onPress, onAssignDe
       onPress={() => onPress(order)}
       style={styles.card}
     >
+      {/* Top Status Accent Strip */}
+      <View style={[styles.cardTopStrip, { backgroundColor: statusColor }]} />
       {/* Watermark Stamp Overlay */}
       {order.status === 'delivered' && (
         <View style={styles.stampOverlay} pointerEvents="none">
@@ -69,6 +74,7 @@ export const OrderCard: React.FC<OrderCardProps> = ({ order, onPress, onAssignDe
         <View style={styles.orderIdBox}>
           <ShoppingBag size={14} color={Colors.primary} />
           <Text style={styles.orderIdText}>#{order.orderNumber || order._id?.substring(0, 8)}</Text>
+          <StatusBadge status={order.paymentStatus || 'pending'} type="payment" />
         </View>
 
         <StatusBadge status={order.status} type="order" />
@@ -105,8 +111,10 @@ export const OrderCard: React.FC<OrderCardProps> = ({ order, onPress, onAssignDe
 
       <View style={styles.footer}>
         <View style={styles.footerAmountContainer}>
-          <Text style={styles.totalLabel}>Total Amount</Text>
-          <Text style={styles.totalValue}>€{(totalAmount || 0).toFixed(2)}</Text>
+          <Text style={styles.totalLabel}>
+            {order.paymentType ? `${order.paymentType.toUpperCase()} • ` : ''}Total Amount
+          </Text>
+          <Text style={styles.totalValue}>£{(totalAmount || 0).toFixed(2)}</Text>
         </View>
 
         <View style={styles.footerRight}>
@@ -146,7 +154,19 @@ const styles = StyleSheet.create({
     borderColor: '#EEEEEE',
     borderWidth: 1,
     padding: 14,
+    paddingTop: 17,
     marginBottom: 12,
+    position: 'relative',
+  },
+  cardTopStrip: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 4,
+    borderTopLeftRadius: 15,
+    borderTopRightRadius: 15,
+    zIndex: 1,
   },
   header: {
     flexDirection: 'row',

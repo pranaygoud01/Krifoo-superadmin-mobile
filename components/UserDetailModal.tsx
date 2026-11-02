@@ -7,11 +7,13 @@ import {
   TouchableOpacity,
   Switch,
   ScrollView,
+  useWindowDimensions,
 } from 'react-native';
 import { UserAccount } from '../types';
 import { Colors } from '../constants/colors';
 import { StatusBadge } from './StatusBadge';
 import { X, User, Mail, Phone, Calendar, Shield, Trash2, Bike, MapPin } from 'lucide-react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface UserDetailModalProps {
   visible: boolean;
@@ -28,16 +30,36 @@ export const UserDetailModal: React.FC<UserDetailModalProps> = ({
   onToggleActive,
   onDelete,
 }) => {
+  const { width: windowWidth } = useWindowDimensions();
+  const isTablet = windowWidth >= 768;
+  const insets = useSafeAreaInsets();
+
   if (!user) return null;
 
   return (
-    <Modal visible={visible} animationType="slide" transparent={true} onRequestClose={onClose}>
-      <View style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
+    <Modal
+      visible={visible}
+      animationType={isTablet ? 'fade' : 'slide'}
+      transparent={true}
+      statusBarTranslucent={true}
+      onRequestClose={onClose}
+    >
+      <View style={[styles.modalOverlay, isTablet && styles.modalOverlayTablet]}>
+        <View
+          style={[
+            styles.modalContent,
+            isTablet && styles.modalContentTablet,
+            { paddingBottom: isTablet ? 20 : Math.max(insets.bottom, 20) },
+          ]}
+        >
           {/* Header */}
           <View style={styles.header}>
             <Text style={styles.headerTitle}>User Account Details</Text>
-            <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
+            <TouchableOpacity
+              onPress={onClose}
+              style={styles.closeBtn}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
               <X size={20} color={Colors.textMuted} />
             </TouchableOpacity>
           </View>
@@ -174,12 +196,28 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(17, 24, 28, 0.45)',
     justifyContent: 'flex-end',
   },
+  modalOverlayTablet: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
   modalContent: {
     backgroundColor: Colors.background,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     maxHeight: '90%',
     paddingBottom: 20,
+  },
+  modalContentTablet: {
+    width: '100%',
+    maxWidth: 640,
+    borderRadius: 20,
+    maxHeight: '85%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.18,
+    shadowRadius: 24,
+    elevation: 12,
   },
   header: {
     flexDirection: 'row',
@@ -304,6 +342,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
+    minHeight: 48,
     gap: 8,
     paddingVertical: 14,
     borderRadius: 12,

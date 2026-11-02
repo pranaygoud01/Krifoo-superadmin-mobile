@@ -10,7 +10,9 @@ import {
   Platform,
   ActivityIndicator,
   Alert,
+  useWindowDimensions,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../context/AuthContext';
 import { Colors } from '../constants/colors';
@@ -18,6 +20,9 @@ import { ArrowLeft, ArrowRight, Check, ShieldCheck, Mail, Phone, Lock, User, Sto
 
 export default function RegisterScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
+  const isTablet = width >= 768;
   const { registerOwner } = useAuth();
 
   const [step, setStep] = useState(1);
@@ -214,7 +219,7 @@ export default function RegisterScreen() {
                 <Mail size={16} color={Colors.textSubtle} style={styles.inputIcon} />
                 <TextInput
                   style={styles.input}
-                  placeholder="owner@krifoo.com"
+                  placeholder="owner@krifoo.co.uk"
                   autoCapitalize="none"
                   keyboardType="email-address"
                   value={formData.email}
@@ -552,8 +557,12 @@ export default function RegisterScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       style={styles.container}
     >
-      <View style={styles.header}>
-        <TouchableOpacity style={styles.backButton} onPress={handleBack}>
+      <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
+        <TouchableOpacity
+          style={styles.backButton}
+          onPress={handleBack}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        >
           <ArrowLeft size={20} color={Colors.text} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Register Partner</Text>
@@ -562,13 +571,22 @@ export default function RegisterScreen() {
 
       {/* Progress Line */}
       <View style={styles.progressContainer}>
-        <View style={styles.progressTrack}>
+        <View style={[styles.progressTrack, isTablet && { maxWidth: 680, alignSelf: 'center', width: '100%' }]}>
           <View style={[styles.progressBar, { width: `${(step / 4) * 100}%` }]} />
         </View>
-        <Text style={styles.progressText}>Step {step} of 4</Text>
+        <Text style={[styles.progressText, isTablet && { maxWidth: 680, alignSelf: 'center', width: '100%' }]}>
+          Step {step} of 4
+        </Text>
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={[
+          styles.scrollContent,
+          isTablet && { maxWidth: 680, alignSelf: 'center', width: '100%' },
+          { paddingBottom: Math.max(insets.bottom + 24, 40) },
+        ]}
+        showsVerticalScrollIndicator={false}
+      >
         {renderStep()}
 
         <View style={styles.actionRow}>
@@ -615,8 +633,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingTop: Platform.OS === 'ios' ? 50 : 20,
-    height: Platform.OS === 'ios' ? 95 : 70,
+    paddingBottom: 12,
     borderBottomWidth: 1,
     borderBottomColor: Colors.cardBorder,
     backgroundColor: '#FFFFFF',

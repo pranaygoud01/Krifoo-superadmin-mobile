@@ -31,8 +31,12 @@ import {
   Banknote,
   ChevronDown,
   ChevronUp,
+  Clock,
 } from 'lucide-react-native';
-import { printThermalReceipt, isAutoPrintEnabled, getLastPrintJobReport } from '../services/thermal-print.service';
+import { printThermalReceipt, isAutoPrintEnabled, getLastPrintJobReport, getOrderScheduleInfo } from '../services/thermal-print.service';
+import { getSanitizedOrderNotes } from '../services/printer/receipt-document';
+import { getPosPrinterConfig } from '../services/pos-config.service';
+import { getActiveReceiptTemplate } from '../services/receipt-customization.service';
 
 const STATUS_DROPDOWN_OPTIONS = [
   { label: 'Placed', sub: 'New Order Received', value: 'placed', icon: '📦' },
@@ -55,6 +59,24 @@ export default function OrderDetailsScreen() {
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [assignModalVisible, setAssignModalVisible] = useState(false);
   const [printing, setPrinting] = useState(false);
+  const [paperRollSize, setPaperRollSize] = useState<string>('58');
+
+  useEffect(() => {
+    const loadPaperRollSize = async () => {
+      try {
+        const posConfig = await getPosPrinterConfig();
+        const activeTemplate = await getActiveReceiptTemplate();
+        const rawWidth = activeTemplate?.layout?.paperWidth || posConfig?.paperWidth || '58mm';
+        const parsed = rawWidth.replace(/[^0-9]/g, '');
+        if (parsed) {
+          setPaperRollSize(parsed);
+        }
+      } catch (err) {
+        console.warn('Failed to load printer roll size:', err);
+      }
+    };
+    loadPaperRollSize();
+  }, []);
 
   const handlePrintReceipt = async () => {
     if (!order) return;
@@ -102,7 +124,7 @@ export default function OrderDetailsScreen() {
       }
 
       // Fallback: search in recent orders if the single order endpoint is not deployed yet
-      const fallbackRes = await orderService.getAllOrders({ limit: 100 });
+      const fallbackRes = await orderService.fetchAllOrders();
       if (fallbackRes.success && fallbackRes.data) {
         const found = fallbackRes.data.find((o) => o._id === orderId);
         if (found) {
@@ -237,7 +259,31 @@ export default function OrderDetailsScreen() {
       : order.customerDetails?.phoneNumber;
 
   const orderTypeRaw = String(order.orderType || (order as any).fulfillmentType || '').toLowerCase();
-  const isDeliveryOrder = orderTypeRaw === 'delivery' || (!orderTypeRaw && !!order.deliveryAddress && typeof order.deliveryAddress === 'object');
+  const domain = String(order.sourceDomain || '').toLowerCase();
+  const notes = typeof order.notes === 'string' ? order.notes.toLowerCase() : '';
+  const custName = (order.customerDetails?.name || (order.customerId as any)?.fullName || '').toLowerCase();
+  const phone = (order.customerDetails?.phoneNumber || (order.customerId as any)?.phoneNumber || '').replace(/\D/g, '');
+  const isDineIn =
+    orderTypeRaw.includes('dine') ||
+    orderTypeRaw.includes('eat') ||
+    Boolean((order as any).tableNumber) ||
+    notes.includes('dine-in') ||
+    notes.includes('dine in') ||
+    notes.includes('table');
+
+  const isTakeaway =
+    !isDineIn && (
+      orderTypeRaw === 'takeaway' ||
+      domain.includes('swaad-takeaway') ||
+      domain.includes('swaadtakeaway') ||
+      notes.includes('takeaway') ||
+      custName.includes('takeaway') ||
+      custName.includes('swaad takeaway') ||
+      phone.includes('7783448291') ||
+      (order as any).appName === 'swaad-takeaway'
+    );
+
+  const isDeliveryOrder = !isTakeaway && !isDineIn && (orderTypeRaw === 'delivery' || (!orderTypeRaw && !!order.deliveryAddress && typeof order.deliveryAddress === 'object'));
 
   const deliveryPartner =
     typeof order.assignedDeliveryPartnerId === 'object'
@@ -246,8 +292,10 @@ export default function OrderDetailsScreen() {
 
   const addressText =
     typeof order.deliveryAddress === 'object'
-      ? order.deliveryAddress?.addressLine1 || order.deliveryAddress?.formattedAddress || 'Self Pickup'
-      : order.deliveryAddress || 'Self Pickup';
+      ? order.deliveryAddress?.addressLine1 || order.deliveryAddress?.formattedAddress || (isTakeaway ? 'Takeaway Order' : isDineIn ? 'Dine In (Takeaway)' : 'Self Pickup')
+      : order.deliveryAddress || (isTakeaway ? 'Takeaway Order' : isDineIn ? 'Dine In (Takeaway)' : 'Self Pickup');
+
+  const scheduleInfo = getOrderScheduleInfo(order);
 
   const orderedItemsList = order.orderedItems || [];
 
@@ -390,6 +438,22 @@ export default function OrderDetailsScreen() {
           </View>
         )}
 
+        {/* Scheduled Order Banner */}
+        {scheduleInfo.isScheduled && (
+          <View style={styles.scheduledAlertBox}>
+            <View style={styles.scheduledAlertHeader}>
+              <Clock size={18} color="#B45309" />
+              <Text style={styles.scheduledAlertTitle}>SCHEDULED ORDER</Text>
+            </View>
+            <Text style={styles.scheduledAlertTime}>
+              Target Time / Slot: {scheduleInfo.scheduleTimeText}
+            </Text>
+            <Text style={styles.scheduledAlertSubtitle}>
+              Please do not prepare immediately. Cook closer to scheduled fulfillment time.
+            </Text>
+          </View>
+        )}
+
         {/* Restaurant Information Card */}
         <View style={styles.card}>
           <View style={styles.cardHeader}>
@@ -401,9 +465,44 @@ export default function OrderDetailsScreen() {
 
         {/* Customer Information Card */}
         <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <User size={16} color={Colors.info} />
-            <Text style={styles.cardTitle}>Customer Information</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+            <View style={[styles.cardHeader, { marginBottom: 0 }]}>
+              <User size={16} color={Colors.info} />
+              <Text style={styles.cardTitle}>Customer Information</Text>
+            </View>
+            <View
+              style={[
+                {
+                  paddingHorizontal: 8,
+                  paddingVertical: 3,
+                  borderRadius: 6,
+                  borderWidth: 1,
+                  alignSelf: 'flex-start',
+                },
+                isDeliveryOrder
+                  ? { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }
+                  : isDineIn
+                  ? { backgroundColor: '#F5F3FF', borderColor: '#DDD6FE' }
+                  : isTakeaway
+                  ? { backgroundColor: '#FEF3C7', borderColor: '#FDE68A' }
+                  : { backgroundColor: '#FFF7ED', borderColor: '#FED7AA' },
+              ]}
+            >
+              <Text
+                style={[
+                  { fontSize: 10.5, fontWeight: '800' },
+                  isDeliveryOrder
+                    ? { color: '#2563EB' }
+                    : isDineIn
+                    ? { color: '#7C3AED' }
+                    : isTakeaway
+                    ? { color: '#B45309' }
+                    : { color: '#EA580C' },
+                ]}
+              >
+                {isDeliveryOrder ? '🛵 DELIVERY' : isDineIn ? '🍽️ DINE IN (TAKEAWAY)' : isTakeaway ? '🥡 TAKEAWAY ORDER' : '🛍️ SELF PICKUP'}
+              </Text>
+            </View>
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
             <View style={{ flex: 1 }}>
@@ -438,12 +537,15 @@ export default function OrderDetailsScreen() {
             </TouchableOpacity>
           </View>
 
-          {order.notes ? (
-            <View style={styles.notesBox}>
-              <Text style={styles.notesTitle}>Special Instructions / Notes:</Text>
-              <Text style={styles.notesText}>{order.notes}</Text>
-            </View>
-          ) : null}
+          {(() => {
+            const cleanNote = getSanitizedOrderNotes(order.notes);
+            return cleanNote ? (
+              <View style={styles.notesBox}>
+                <Text style={styles.notesTitle}>Special Instructions / Notes:</Text>
+                <Text style={styles.notesText}>{cleanNote}</Text>
+              </View>
+            ) : null;
+          })()}
         </View>
 
         {/* Items & Pricing Breakdown Card */}
@@ -539,31 +641,13 @@ export default function OrderDetailsScreen() {
                 </Text>
                 <Text style={{ color: Colors.textMuted, fontSize: 11, marginTop: 1 }}>
                   {(order.paymentType || 'cash').toLowerCase() === 'cash'
-                    ? 'Pay on fulfillment / COD'
-                    : 'Processed via Stripe'}
+                    ? (isTakeaway || isDineIn ? 'Cash at Counter' : 'Pay on fulfillment / COD')
+                    : (order.paymentType?.toLowerCase() === 'card' && (isTakeaway || isDineIn) ? 'Card at Counter / Terminal' : 'Processed via Stripe')}
                 </Text>
               </View>
             </View>
 
-            <View
-              style={[
-                { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 14, borderWidth: 1 },
-                order.paymentStatus === 'paid' || order.status === 'delivered'
-                  ? { backgroundColor: '#DCFCE7', borderColor: '#86EFAC' }
-                  : { backgroundColor: '#FEF3C7', borderColor: '#FDE68A' },
-              ]}
-            >
-              <Text
-                style={[
-                  { fontSize: 11, fontWeight: '800', letterSpacing: 0.5 },
-                  order.paymentStatus === 'paid' || order.status === 'delivered'
-                    ? { color: '#15803D' }
-                    : { color: '#B45309' },
-                ]}
-              >
-                {order.paymentStatus === 'paid' || order.status === 'delivered' ? 'PAID' : (order.paymentStatus || 'PENDING').toUpperCase()}
-              </Text>
-            </View>
+            <StatusBadge status={order.paymentStatus || 'pending'} type="payment" />
           </View>
         </View>
 
@@ -621,10 +705,10 @@ export default function OrderDetailsScreen() {
         >
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <Printer size={18} color="#FFFFFF" />
-            <Text style={styles.printCardBtnText}>Print Receipt</Text>
+            <Text style={styles.printCardBtnText}>Print Receipt({paperRollSize || '58'}mm)</Text>
           </View>
           <View style={styles.thermalBadge}>
-            <Text style={styles.thermalBadgeText}>Thermal / 80mm</Text>
+            <Text style={styles.thermalBadgeText}>Thermal / {paperRollSize || '58'}mm</Text>
           </View>
         </TouchableOpacity>
 
@@ -971,5 +1055,37 @@ const styles = StyleSheet.create({
     color: '#94A3B8',
     fontSize: 11,
     fontWeight: '800',
+  },
+  scheduledAlertBox: {
+    backgroundColor: '#FEF3C7',
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#F59E0B',
+    padding: 14,
+    marginBottom: 14,
+  },
+  scheduledAlertHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 4,
+  },
+  scheduledAlertTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#92400E',
+    letterSpacing: 0.5,
+  },
+  scheduledAlertTime: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#78350F',
+    marginTop: 2,
+  },
+  scheduledAlertSubtitle: {
+    fontSize: 12,
+    color: '#92400E',
+    marginTop: 4,
+    fontWeight: '500',
   },
 });

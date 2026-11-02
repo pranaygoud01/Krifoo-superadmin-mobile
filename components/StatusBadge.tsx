@@ -4,7 +4,7 @@ import { Colors } from '../constants/colors';
 
 interface StatusBadgeProps {
   status?: string;
-  type?: 'restaurant' | 'order' | 'user';
+  type?: 'restaurant' | 'order' | 'user' | 'payment';
 }
 
 export const StatusBadge: React.FC<StatusBadgeProps> = ({ status, type = 'restaurant' }) => {
@@ -80,6 +80,28 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({ status, type = 'restau
       bg = Colors.statusRejected.bg;
       textColor = Colors.statusRejected.text;
       label = 'Inactive';
+    }
+  } else if (type === 'payment') {
+    if (normalized === 'paid' || normalized === 'completed') {
+      bg = '#ECFDF5';
+      textColor = '#065F46';
+      label = 'PAID';
+    } else if (normalized === 'pending') {
+      bg = '#FFFBEB';
+      textColor = '#B45309';
+      label = 'PAYMENT PENDING';
+    } else if (normalized === 'failed') {
+      bg = '#FEF2F2';
+      textColor = '#DC2626';
+      label = 'FAILED';
+    } else if (normalized === 'refunded') {
+      bg = '#F3E8FF';
+      textColor = '#7C3AED';
+      label = 'REFUNDED';
+    } else {
+      bg = '#F3F4F6';
+      textColor = '#4B5563';
+      label = (status ?? '—').toUpperCase();
     }
   }
 

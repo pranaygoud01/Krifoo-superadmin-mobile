@@ -1,12 +1,13 @@
 import React from 'react';
-import { Modal, View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { Modal, View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, useWindowDimensions } from 'react-native';
 import { Order } from '../types';
 import { Colors } from '../constants/colors';
 import { StatusBadge } from './StatusBadge';
-import { X, Store, User, MapPin, Bike, CreditCard, Phone, ShoppingBag, UtensilsCrossed, Tag, Receipt, CheckCircle2, Printer, Banknote, ChevronDown, ChevronUp, Check } from 'lucide-react-native';
+import { X, Store, User, MapPin, Bike, CreditCard, Phone, ShoppingBag, UtensilsCrossed, Tag, Receipt, CheckCircle2, Printer, Banknote, ChevronDown, ChevronUp, Check, AlertTriangle, Clock } from 'lucide-react-native';
 import { Linking } from 'react-native';
 import { orderService } from '../services/order.service';
-import { printThermalReceipt, getLastPrintJobReport } from '../services/thermal-print.service';
+import { printThermalReceipt, getLastPrintJobReport, getOrderScheduleInfo } from '../services/thermal-print.service';
+import { getSanitizedOrderNotes } from '../services/printer/receipt-document';
 import { useToast } from '../context/ToastContext';
 
 interface OrderDetailModalProps {
@@ -15,6 +16,8 @@ interface OrderDetailModalProps {
   onClose: () => void;
   onAssignDelivery: (order: Order) => void;
   onUpdateStatus?: (orderId: string, status: string) => Promise<void>;
+  onCancelOrder?: (orderId: string) => Promise<void>;
+  paperRollSize?: string;
 }
 
 export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
@@ -23,13 +26,20 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
   onClose,
   onAssignDelivery,
   onUpdateStatus,
+  onCancelOrder,
+  paperRollSize = '58',
 }) => {
+  const { width: windowWidth } = useWindowDimensions();
+  const isTablet = windowWidth >= 768;
+
   const [editingStatus, setEditingStatus] = React.useState(false);
   const [loadingStatus, setLoadingStatus] = React.useState(false);
   const [fetchedOrder, setFetchedOrder] = React.useState<Order | null>(null);
   const [loading, setLoading] = React.useState(false);
   const { showToast } = useToast();
   const [printing, setPrinting] = React.useState(false);
+  const [showCancelConfirm, setShowCancelConfirm] = React.useState(false);
+  const [cancelling, setCancelling] = React.useState(false);
 
   const handlePrint = async () => {
     if (!order) return;
@@ -88,6 +98,8 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
     } else if (!visible) {
       setFetchedOrder(null);
       setEditingStatus(false);
+      setShowCancelConfirm(false);
+      setCancelling(false);
     }
   }, [visible, propOrder?._id]);
 
@@ -105,6 +117,11 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
   ];
 
   const handleStatusSelect = async (newStatus: string) => {
+    if (newStatus === 'cancelled') {
+      setEditingStatus(false);
+      setShowCancelConfirm(true);
+      return;
+    }
     if (!onUpdateStatus || newStatus === order.status) {
       setEditingStatus(false);
       return;
@@ -116,6 +133,28 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
     } finally {
       setLoadingStatus(false);
       setEditingStatus(false);
+    }
+  };
+
+  const handleConfirmCancel = async () => {
+    if (!order) return;
+    setCancelling(true);
+    try {
+      if (onCancelOrder) {
+        await onCancelOrder(order._id);
+      } else if (onUpdateStatus) {
+        await onUpdateStatus(order._id, 'cancelled');
+      } else {
+        await orderService.updateOrderStatus(order._id, 'cancelled');
+        showToast({ title: 'Success', message: "Order status updated to 'cancelled'.", type: 'success' });
+      }
+      setShowCancelConfirm(false);
+      onClose();
+    } catch (err: any) {
+      console.error('Failed cancelling order:', err);
+      showToast({ title: 'Error', message: err?.message || 'Failed to cancel order.', type: 'error' });
+    } finally {
+      setCancelling(false);
     }
   };
 
@@ -132,25 +171,75 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
     : order.customerDetails?.phoneNumber;
 
   const orderTypeRaw = String(order.orderType || (order as any).fulfillmentType || '').toLowerCase();
-  const isDeliveryOrder = orderTypeRaw === 'delivery' || (!orderTypeRaw && !!order.deliveryAddress && typeof order.deliveryAddress === 'object');
+  const domain = String(order.sourceDomain || '').toLowerCase();
+  const notes = typeof order.notes === 'string' ? order.notes.toLowerCase() : '';
+  const custName = (order.customerDetails?.name || (order.customerId as any)?.fullName || '').toLowerCase();
+  const phone = (order.customerDetails?.phoneNumber || (order.customerId as any)?.phoneNumber || '').replace(/\D/g, '');
+  const isDineIn =
+    orderTypeRaw.includes('dine') ||
+    orderTypeRaw.includes('eat') ||
+    Boolean((order as any).tableNumber) ||
+    notes.includes('dine-in') ||
+    notes.includes('dine in') ||
+    notes.includes('table');
+
+  const isTakeaway =
+    !isDineIn && (
+      orderTypeRaw === 'takeaway' ||
+      domain.includes('swaad-takeaway') ||
+      domain.includes('swaadtakeaway') ||
+      notes.includes('takeaway') ||
+      custName.includes('takeaway') ||
+      custName.includes('swaad takeaway') ||
+      phone.includes('7783448291') ||
+      (order as any).appName === 'swaad-takeaway'
+    );
+
+  const isDeliveryOrder = !isTakeaway && !isDineIn && (orderTypeRaw === 'delivery' || (!orderTypeRaw && !!order.deliveryAddress && typeof order.deliveryAddress === 'object'));
 
   const deliveryPartner = typeof order.assignedDeliveryPartnerId === 'object'
     ? order.assignedDeliveryPartnerId
     : undefined;
+  const scheduleInfo = getOrderScheduleInfo(order);
+
+  const cleanAddressString = (text: string) => {
+    if (!text || typeof text !== 'string') return '';
+    return text
+      .split(',')
+      .map(t => t.trim())
+      .filter(t => t.length > 0 && !/hyderabad|telangana/i.test(t))
+      .filter((item, index, arr) => arr.indexOf(item) === index)
+      .join(', ');
+  };
 
   const formatAddress = () => {
     const addr: any = order.deliveryAddress;
     if (!addr) {
       const custAddr: any = order.customerDetails?.address;
       if (typeof custAddr === 'string' && custAddr.trim()) {
-        return custAddr.trim();
+        const cleaned = cleanAddressString(custAddr);
+        return cleaned || custAddr.trim();
       }
-      return 'Self Pickup';
+      return isTakeaway ? 'Takeaway Order' : isDineIn ? 'Dine In (Takeaway)' : 'Self Pickup';
     }
-    if (typeof addr === 'string') return addr.trim() || 'Self Pickup';
-    if (addr.formattedAddress && typeof addr.formattedAddress === 'string' && addr.formattedAddress.trim()) return addr.formattedAddress.trim();
+    if (typeof addr === 'string') {
+      const cleaned = cleanAddressString(addr);
+      return cleaned || addr.trim() || (isTakeaway ? 'Takeaway Order' : isDineIn ? 'Dine In (Takeaway)' : 'Self Pickup');
+    }
+    if (addr.fullAddress && typeof addr.fullAddress === 'string' && addr.fullAddress.trim()) {
+      const cleaned = cleanAddressString(addr.fullAddress);
+      if (cleaned) return cleaned;
+    }
+    if (addr.formattedAddress && typeof addr.formattedAddress === 'string' && addr.formattedAddress.trim()) {
+      const cleaned = cleanAddressString(addr.formattedAddress);
+      if (cleaned) return cleaned;
+    }
+    if (addr.addressLine1 && typeof addr.addressLine1 === 'string' && addr.addressLine1.includes(',')) {
+      const cleaned = cleanAddressString(addr.addressLine1);
+      if (cleaned) return cleaned;
+    }
 
-    const parts = [
+    const rawParts = [
       addr.houseNumber || addr.flatNumber || addr.doorNo,
       addr.addressLine1,
       addr.addressLine2,
@@ -161,7 +250,19 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
       addr.postalCode || addr.postcode || addr.zipCode,
     ].filter(Boolean);
 
-    return parts.length > 0 ? parts.join(', ') : (addr.fullAddress || addr.address || 'Self Pickup');
+    const uniqueParts: string[] = [];
+    rawParts.forEach((p: any) => {
+      const str = String(p).trim();
+      if (
+        str &&
+        !/hyderabad|telangana/i.test(str) &&
+        !uniqueParts.some(u => u.toLowerCase() === str.toLowerCase() || u.toLowerCase().includes(str.toLowerCase()))
+      ) {
+        uniqueParts.push(str);
+      }
+    });
+
+    return uniqueParts.length > 0 ? uniqueParts.join(', ') : (addr.address || (isTakeaway ? 'Takeaway Order' : isDineIn ? 'Dine In (Takeaway)' : 'Self Pickup'));
   };
 
   const addressText = formatAddress();
@@ -174,14 +275,25 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
       : [];
 
   return (
-    <Modal visible={visible} animationType="slide" transparent={true} onRequestClose={onClose}>
-      <View style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
+    <Modal visible={visible} animationType={isTablet ? 'fade' : 'slide'} transparent={true} onRequestClose={onClose}>
+      <View style={[styles.modalOverlay, isTablet && styles.modalOverlayTablet]}>
+        <View style={[styles.modalContent, isTablet && styles.modalContentTablet]}>
           <View style={styles.header}>
             <View>
-              <Text style={styles.headerTitle}>
-                Order #{order.orderNumber || order._id?.substring(0, 8)}
-              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <Text style={styles.headerTitle}>
+                  Order #{order.orderNumber || order._id?.substring(0, 8)}
+                </Text>
+                {isDineIn ? (
+                  <View style={{ backgroundColor: '#F5F3FF', borderColor: '#DDD6FE', borderWidth: 1, paddingHorizontal: 7, paddingVertical: 2, borderRadius: 5 }}>
+                    <Text style={{ fontSize: 10, fontWeight: '800', color: '#7C3AED' }}>DINE IN (TAKEAWAY)</Text>
+                  </View>
+                ) : isTakeaway ? (
+                  <View style={{ backgroundColor: '#FEF3C7', borderColor: '#FDE68A', borderWidth: 1, paddingHorizontal: 7, paddingVertical: 2, borderRadius: 5 }}>
+                    <Text style={{ fontSize: 10, fontWeight: '800', color: '#B45309' }}>TAKEAWAY ORDER</Text>
+                  </View>
+                ) : null}
+              </View>
               <Text style={styles.headerSub}>
                 {order.createdAt ? new Date(order.createdAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : ''}
               </Text>
@@ -204,7 +316,7 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
             {order.status === 'placed' ? (
               <View style={styles.acceptActionsRow}>
                 <TouchableOpacity
-                  style={styles.acceptButton}
+                  style={[styles.acceptButton, { flex: 1 }]}
                   onPress={() => handleStatusSelect('preparing')}
                   disabled={loadingStatus}
                 >
@@ -213,13 +325,6 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
                   ) : (
                     <Text style={styles.acceptButtonText}>Accept Order</Text>
                   )}
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.rejectButton}
-                  onPress={() => handleStatusSelect('cancelled')}
-                  disabled={loadingStatus}
-                >
-                  <Text style={styles.rejectButtonText}>Reject</Text>
                 </TouchableOpacity>
               </View>
             ) : (
@@ -272,20 +377,111 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
               </View>
             )}
 
-            {/* Restaurant Card */}
+            {/* Restaurant & Source Card */}
             <View style={styles.card}>
               <View style={styles.cardHeader}>
                 <Store size={16} color={Colors.primary} />
-                <Text style={styles.cardTitle}>Restaurant Details</Text>
+                <Text style={styles.cardTitle}>Restaurant & Channel</Text>
               </View>
               <Text style={styles.infoName}>{restaurantName}</Text>
+              
+              <View style={{ marginTop: 8, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                {(() => {
+                  const source = (order.orderSource || '').toLowerCase();
+                  const rawDomain = (order.sourceDomain || '').trim();
+                  const restExt = typeof order.restaurantId === 'object' ? (order.restaurantId as any)?.externalWebsiteSettings : undefined;
+                  const restCustomDomain = (restExt?.customDomain || restExt?.domain || '').trim();
+                  const restSubdomain = restExt?.subdomain ? `${restExt.subdomain}.krifoo.co.uk` : '';
+                  const fallbackExtDomain = restCustomDomain || restSubdomain;
+
+                  const isMarketplace = rawDomain.toLowerCase().includes('krifoo.co.uk') || (!rawDomain && source === 'krifoo');
+                  const isExt = !isMarketplace && (source === 'external' || Boolean(rawDomain));
+                  
+                  let domainUrl = 'krifoo.co.uk';
+                  if (isTakeaway) {
+                    domainUrl = 'Swaad App';
+                  } else if (isExt) {
+                    domainUrl = rawDomain && rawDomain !== 'External Website' && rawDomain !== 'External Web'
+                      ? rawDomain
+                      : (fallbackExtDomain || 'swaadcambridge.co.uk');
+                  }
+
+                  if (isTakeaway || isExt) {
+                    return (
+                      <View style={{ backgroundColor: '#FEF3C7', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6, borderWidth: 1, borderColor: '#FDE68A' }}>
+                        <Text style={{ fontSize: 13, fontWeight: '700', color: '#B45309' }}>
+                          {isTakeaway ? '🥡 Swaad App' : `🌐 ${domainUrl}`}
+                        </Text>
+                      </View>
+                    );
+                  }
+                  return (
+                    <View style={{ backgroundColor: '#EFF6FF', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6, borderWidth: 1, borderColor: '#DBEAFE' }}>
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#2563EB' }}>
+                        📱 krifoo.co.uk
+                      </Text>
+                    </View>
+                  );
+                })()}
+              </View>
             </View>
+
+            {/* Scheduled Order Banner (If Scheduled) */}
+            {scheduleInfo.isScheduled && (
+              <View style={styles.scheduledAlertBox}>
+                <View style={styles.scheduledAlertHeader}>
+                  <Clock size={18} color="#B45309" />
+                  <Text style={styles.scheduledAlertTitle}>SCHEDULED ORDER</Text>
+                </View>
+                <Text style={styles.scheduledAlertTime}>
+                  Target Time / Slot: {scheduleInfo.scheduleTimeText}
+                </Text>
+                <Text style={styles.scheduledAlertSubtitle}>
+                  Please do not prepare immediately. Cook closer to scheduled fulfillment time.
+                </Text>
+              </View>
+            )}
 
             {/* Customer & Location */}
             <View style={styles.card}>
-              <View style={styles.cardHeader}>
-                <User size={16} color={Colors.info} />
-                <Text style={styles.cardTitle}>Customer & Location</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+                    <View style={[styles.cardHeader, { marginBottom: 0 }]}>
+                  <User size={16} color={Colors.info} />
+                  <Text style={styles.cardTitle}>Customer & Location</Text>
+                </View>
+                <View
+                  style={[
+                    {
+                      paddingHorizontal: 8,
+                      paddingVertical: 3,
+                      borderRadius: 6,
+                      borderWidth: 1,
+                      alignSelf: 'flex-start',
+                    },
+                    isDeliveryOrder
+                      ? { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }
+                      : isDineIn
+                      ? { backgroundColor: '#F5F3FF', borderColor: '#DDD6FE' }
+                      : isTakeaway
+                      ? { backgroundColor: '#FEF3C7', borderColor: '#FDE68A' }
+                      : { backgroundColor: '#FFF7ED', borderColor: '#FED7AA' },
+                  ]}
+                >
+                  <Text
+                    style={[
+                          { fontSize: 10.5, fontWeight: '800' },
+                      isDeliveryOrder
+                        ? { color: '#2563EB' }
+                        : isDineIn
+                        ? { color: '#7C3AED' }
+                        : isTakeaway
+                        ? { color: '#B45309' }
+                        : { color: '#EA580C' },
+                    ]}
+                  >
+                        {isDeliveryOrder ? '🛵 DELIVERY' : isDineIn ? '🍽️ DINE IN (TAKEAWAY)' : isTakeaway ? '🥡 TAKEAWAY ORDER' : '🛍️ SELF PICKUP'}
+                  </Text>
+                </View>
               </View>
               
               <View style={styles.customerRow}>
@@ -313,12 +509,15 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
                 <Text style={styles.addressText}>{addressText}</Text>
               </View>
 
-              {order.notes ? (
-                <View style={styles.notesBox}>
-                  <Text style={styles.notesTitle}>Special Instructions / Notes:</Text>
-                  <Text style={styles.notesText}>{order.notes}</Text>
-                </View>
-              ) : null}
+                  {(() => {
+                    const cleanNote = getSanitizedOrderNotes(order.notes);
+                    return cleanNote ? (
+                      <View style={styles.notesBox}>
+                        <Text style={styles.notesTitle}>Special Instructions / Notes:</Text>
+                        <Text style={styles.notesText}>{cleanNote}</Text>
+                      </View>
+                    ) : null;
+                  })()}
             </View>
 
             {/* Items List */}
@@ -405,6 +604,15 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
                 </View>
               ) : null}
 
+              {(order.pricing?.onlinePaymentFee) ? (
+                <View style={styles.priceRow}>
+                      <Text style={styles.priceLabel}>Handling Fee:</Text>
+                  <Text style={styles.priceVal}>
+                    £{(order.pricing?.onlinePaymentFee || 0).toFixed(2)}
+                  </Text>
+                </View>
+              ) : null}
+
               {(order.pricing?.platformFee) ? (
                 <View style={styles.priceRow}>
                   <Text style={styles.priceLabel}>Platform Fee:</Text>
@@ -458,31 +666,13 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
                     </Text>
                     <Text style={styles.paymentMethodSub}>
                       {(order.paymentType || 'cash').toLowerCase() === 'cash'
-                        ? 'Pay on fulfillment / COD'
-                        : 'Processed via Stripe'}
+                        ? (isTakeaway || isDineIn ? 'Cash at Counter' : 'Pay on fulfillment / COD')
+                        : (order.paymentType?.toLowerCase() === 'card' && (isTakeaway || isDineIn) ? 'Card at Counter / Terminal' : 'Processed via Stripe')}
                     </Text>
                   </View>
                 </View>
 
-                <View
-                  style={[
-                    styles.paymentStatusBadge,
-                    order.paymentStatus === 'paid' || order.status === 'delivered'
-                      ? { backgroundColor: '#DCFCE7', borderColor: '#86EFAC' }
-                      : { backgroundColor: '#FEF3C7', borderColor: '#FDE68A' },
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.paymentStatusBadgeText,
-                      order.paymentStatus === 'paid' || order.status === 'delivered'
-                        ? { color: '#15803D' }
-                        : { color: '#B45309' },
-                    ]}
-                  >
-                    {order.paymentStatus === 'paid' || order.status === 'delivered' ? 'PAID' : (order.paymentStatus || 'PENDING').toUpperCase()}
-                  </Text>
-                </View>
+                <StatusBadge status={order.paymentStatus || 'pending'} type="payment" />
               </View>
             </View>
 
@@ -533,7 +723,7 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
                   ) : (
                     <>
                       <Printer size={18} color="#FFFFFF" />
-                      <Text style={styles.printReceiptBtnText}>Print Receipt</Text>
+                      <Text style={styles.printReceiptBtnText}>Print Receipt({paperRollSize || '58'}mm)</Text>
                     </>
                   )}
                 </TouchableOpacity>
@@ -545,21 +735,79 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
           </ScrollView>
           )}
 
-          {/* Footer Action for Active Delivery Orders */}
-          {isDeliveryOrder && order.status !== 'delivered' && order.status !== 'cancelled' && (
+          {/* Footer Actions for Active Orders (Assign Delivery & Cancel Order) */}
+          {order.status !== 'delivered' && order.status !== 'cancelled' && (
             <View style={styles.footerAction}>
+              {isDeliveryOrder && (
+                <TouchableOpacity
+                  style={styles.assignDriverBtn}
+                  onPress={() => {
+                    onClose();
+                    onAssignDelivery(order);
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <Bike size={18} color="#FFFFFF" />
+                  <Text style={styles.assignDriverText}>
+                    {deliveryPartner ? 'Reassign Delivery Partner' : 'Assign Delivery Partner'}
+                  </Text>
+                </TouchableOpacity>
+              )}
+
               <TouchableOpacity
-                style={styles.assignDriverBtn}
-                onPress={() => {
-                  onClose();
-                  onAssignDelivery(order);
-                }}
+                style={[
+                  styles.cancelOrderBtn,
+                  isDeliveryOrder && { marginTop: 8 },
+                ]}
+                onPress={() => setShowCancelConfirm(true)}
+                activeOpacity={0.75}
+                disabled={cancelling}
               >
-                <Bike size={18} color="#FFFFFF" />
-                <Text style={styles.assignDriverText}>
-                  {deliveryPartner ? 'Reassign Delivery Partner' : 'Assign Delivery Partner'}
-                </Text>
+                <X size={16} color="#EF4444" />
+                <Text style={styles.cancelOrderBtnText}>Cancel Order</Text>
               </TouchableOpacity>
+            </View>
+          )}
+
+          {/* In-Modal Confirmation to Cancel */}
+          {showCancelConfirm && (
+            <View style={styles.confirmOverlay}>
+              <View style={styles.confirmBox}>
+                <View style={styles.confirmHeaderRow}>
+                  <View style={styles.confirmIconContainer}>
+                    <AlertTriangle size={22} color="#EF4444" />
+                  </View>
+                  <Text style={styles.confirmTitle}>Cancel Order</Text>
+                </View>
+
+                <Text style={styles.confirmMessage}>
+                  Are you sure you want to cancel order #{order.orderNumber || order._id?.substring(0, 8).toUpperCase()}? This action cannot be undone.
+                </Text>
+
+                <View style={styles.confirmBtnRow}>
+                  <TouchableOpacity
+                    style={styles.confirmKeepBtn}
+                    onPress={() => setShowCancelConfirm(false)}
+                    disabled={cancelling}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.confirmKeepBtnText}>Keep Order</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.confirmCancelBtn}
+                    onPress={handleConfirmCancel}
+                    disabled={cancelling}
+                    activeOpacity={0.7}
+                  >
+                    {cancelling ? (
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                    ) : (
+                      <Text style={styles.confirmCancelBtnText}>Yes, Cancel</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </View>
             </View>
           )}
         </View>
@@ -574,12 +822,28 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(17, 24, 28, 0.45)',
     justifyContent: 'flex-end',
   },
+  modalOverlayTablet: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
   modalContent: {
     backgroundColor: Colors.background,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     maxHeight: '90%',
     paddingBottom: 20,
+  },
+  modalContentTablet: {
+    width: '100%',
+    maxWidth: 680,
+    borderRadius: 20,
+    maxHeight: '85%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.18,
+    shadowRadius: 24,
+    elevation: 12,
   },
   header: {
     flexDirection: 'row',
@@ -1042,6 +1306,142 @@ const styles = StyleSheet.create({
     color: Colors.textMuted,
     fontSize: 11,
     marginTop: 1,
+  },
+
+  /* Cancel Order Button & Confirmation Overlay */
+  cancelOrderBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    paddingVertical: 12,
+    borderRadius: 10,
+  },
+  cancelOrderBtnText: {
+    color: '#EF4444',
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  confirmOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(15, 23, 42, 0.55)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    zIndex: 999,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+  },
+  confirmBox: {
+    width: '100%',
+    maxWidth: 340,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: Colors.cardBorder,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.15,
+    shadowRadius: 16,
+    elevation: 8,
+  },
+  confirmHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+    gap: 12,
+  },
+  confirmIconContainer: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    backgroundColor: '#FEF2F2',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  confirmTitle: {
+    color: Colors.text,
+    fontSize: 16,
+    fontWeight: '700',
+    flex: 1,
+  },
+  confirmMessage: {
+    color: Colors.textSubtle,
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '500',
+    marginBottom: 20,
+  },
+  confirmBtnRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+  },
+  confirmKeepBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.cardBorder,
+    backgroundColor: Colors.background,
+    justifyContent: 'center',
+    alignItems: 'center',
+    minWidth: 75,
+  },
+  confirmKeepBtnText: {
+    color: Colors.textMuted,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  confirmCancelBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    backgroundColor: '#EF4444',
+    justifyContent: 'center',
+    alignItems: 'center',
+    minWidth: 85,
+  },
+  confirmCancelBtnText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  scheduledAlertBox: {
+    backgroundColor: '#FEF3C7',
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#F59E0B',
+    padding: 14,
+    marginBottom: 14,
+  },
+  scheduledAlertHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 4,
+  },
+  scheduledAlertTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#92400E',
+    letterSpacing: 0.5,
+  },
+  scheduledAlertTime: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#78350F',
+    marginTop: 2,
+  },
+  scheduledAlertSubtitle: {
+    fontSize: 12,
+    color: '#92400E',
+    marginTop: 4,
+    fontWeight: '500',
   },
 });
 
