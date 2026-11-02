@@ -29,6 +29,7 @@ import { Colors } from '../../constants/colors';
 import { orderService } from '../../services/order.service';
 import { useToast } from '../../context/ToastContext';
 import { Order, OrderStatus } from '../../types';
+import { getItemOptionsList } from '../../services/receipt-customization.service';
 import { Skeleton } from '../../components/Skeleton';
 import {
   Search,
@@ -1142,11 +1143,11 @@ const OrderCardItem: React.FC<OrderCardProps> = ({
                 <Text style={[styles.itemQty, isTablet && { fontSize: 12.5 }]}>{itemQty}x</Text>
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.itemName, isTablet && { fontSize: 12.5 }]} numberOfLines={1}>{itemName}</Text>
-                  {item.customization?.size ? (
-                    <Text style={[styles.itemMeta, isTablet && { fontSize: 11 }]}>Size: {item.customization.size}</Text>
-                  ) : null}
-                  {item.customization?.addOns && item.customization.addOns.length > 0 ? (
-                    <Text style={[styles.itemMeta, isTablet && { fontSize: 11 }]}>+{item.customization.addOns.join(', ')}</Text>
+                  {getItemOptionsList(item).map((opt: string, oIdx: number) => (
+                    <Text key={oIdx} style={[styles.itemMeta, isTablet && { fontSize: 11 }]}>+ {opt}</Text>
+                  ))}
+                  {item.instructions ? (
+                    <Text style={[styles.itemMeta, isTablet && { fontSize: 11 }, { fontStyle: 'italic' }]}>Note: {item.instructions}</Text>
                   ) : null}
                 </View>
                 <Text style={[styles.itemPrice, isTablet && { fontSize: 12.5 }]}>£{itemTotalPrice.toFixed(2)}</Text>

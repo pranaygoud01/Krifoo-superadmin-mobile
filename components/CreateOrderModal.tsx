@@ -37,7 +37,7 @@ import { orderService } from '../services/order.service';
 import { printThermalReceipt } from '../services/thermal-print.service';
 import { MenuItem } from '../types';
 import { useAuth } from '../context/AuthContext';
-import { getCachedStoreProfile, setCachedStoreProfile } from '../services/receipt-customization.service';
+import { getCachedStoreProfile, setCachedStoreProfile, getItemOptionsList } from '../services/receipt-customization.service';
 import { restaurantOwnerService } from '../services/restaurant-owner.service';
 import { restaurantService } from '../services/restaurant.service';
 
@@ -58,6 +58,36 @@ const normalizeUKPhone = (raw?: string | null): string | null => {
   }
   return null;
 };
+
+
+export interface CartEntry {
+  cartKey: string;
+  item: MenuItem;
+  quantity: number;
+  selectedVariants: {
+    groupId: string;
+    variantId: string;
+    variantName?: string;
+    additionalPrice?: number;
+    groupTitle?: string;
+  }[];
+  selectedAddons: {
+    groupId: string;
+    addonId: string;
+    optionTitle?: string;
+    price?: number;
+    groupTitle?: string;
+  }[];
+  selectedWeightVariant?: {
+    variantId?: string;
+    variantName?: string;
+    weight?: number;
+    unit?: string;
+    price?: number;
+  };
+  instructions?: string;
+  unitPrice: number;
+}
 
 interface CreateOrderModalProps {
   visible: boolean;
@@ -101,10 +131,19 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
 
-  // Cart: Map of menuItemId -> { item: MenuItem, quantity: number }
-  const [cart, setCart] = useState<Record<string, { item: MenuItem; quantity: number }>>({});
+  // Cart: Map of cartKey -> CartEntry
+  const [cart, setCart] = useState<Record<string, CartEntry>>({});
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // Customization modal state
+  const [customizingItem, setCustomizingItem] = useState<MenuItem | null>(null);
+  const [customQuantity, setCustomQuantity] = useState(1);
+  const [customSelectedWeightVariant, setCustomSelectedWeightVariant] = useState<any>(null);
+  const [customSelectedVariants, setCustomSelectedVariants] = useState<Record<string, string>>({});
+  const [customSelectedAddons, setCustomSelectedAddons] = useState<Record<string, string[]>>({});
+  const [customInstructions, setCustomInstructions] = useState('');
+  const [customError, setCustomError] = useState<string | null>(null);
 
   // Sync initial channel when modal opens
   useEffect(() => {
@@ -149,6 +188,8 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
       setDeliveryAddress('');
       setNotes('');
       setSearchQuery('');
+      setCustomizingItem(null);
+      setCustomError(null);
     }
   }, [visible, initialChannel]);
 
@@ -194,38 +235,306 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
     });
   }, [menuItems, searchQuery, selectedCategory]);
 
-  const addToCart = (item: MenuItem) => {
-    const id = item._id || (item as any).id;
+  const getItemBasePrice = (item: MenuItem, channelType: 'dine_in' | 'takeaway' | 'delivery'): number => {
+    let p = Number(item.price ?? item.basePrice ?? 0);
+    if (channelType === 'delivery' && item.deliveryPrice != null && !isNaN(Number(item.deliveryPrice))) {
+      p = Number(item.deliveryPrice);
+    } else if (channelType === 'takeaway' && item.collectionPrice != null && !isNaN(Number(item.collectionPrice))) {
+      p = Number(item.collectionPrice);
+    } else if (channelType === 'dine_in' && item.eatInPrice != null && !isNaN(Number(item.eatInPrice))) {
+      p = Number(item.eatInPrice);
+    }
+    return p;
+  };
+
+  const hasCustomizations = (item: MenuItem): boolean => {
+    const hasVariants = Array.isArray(item.variantGroups) && item.variantGroups.length > 0;
+    const hasAddons = Array.isArray(item.addonGroups) && item.addonGroups.length > 0;
+    const hasWeightVariants = Array.isArray(item.weightVariants) && item.weightVariants.length > 1;
+    return Boolean(hasVariants || hasAddons || hasWeightVariants);
+  };
+
+  const getItemCartCount = (itemId: string): number => {
+    return Object.values(cart)
+      .filter((entry) => (entry.item._id || (entry.item as any).id) === itemId)
+      .reduce((sum, entry) => sum + entry.quantity, 0);
+  };
+
+  const generateCartKey = (
+    itemId: string,
+    wv?: any,
+    variants?: { groupId: string; variantId: string }[],
+    addons?: { groupId: string; addonId: string }[],
+    instructions?: string
+  ): string => {
+    const wvKey = wv ? (wv.variantId || wv.variantName || '') : '';
+    const vKey = (variants || [])
+      .map((v) => `${v.groupId}:${v.variantId}`)
+      .sort()
+      .join('|');
+    const aKey = (addons || [])
+      .map((a) => `${a.groupId}:${a.addonId}`)
+      .sort()
+      .join('|');
+    const iKey = (instructions || '').trim().toLowerCase();
+    return `${itemId}__${wvKey}__${vKey}__${aKey}__${iKey}`;
+  };
+
+  const openCustomizationModal = (item: MenuItem) => {
+    setCustomizingItem(item);
+    setCustomQuantity(1);
+    setCustomInstructions('');
+    setCustomError(null);
+
+    // Default weight variant
+    if (Array.isArray(item.weightVariants) && item.weightVariants.length > 0) {
+      const defWv = item.weightVariants.find((w: any) => w.isDefault) || item.weightVariants[0];
+      setCustomSelectedWeightVariant(defWv);
+    } else {
+      setCustomSelectedWeightVariant(null);
+    }
+
+    // Default variant for each variant group (first option)
+    const initialVariants: Record<string, string> = {};
+    if (Array.isArray(item.variantGroups)) {
+      item.variantGroups.forEach((vg: any) => {
+        if (Array.isArray(vg.variants) && vg.variants.length > 0) {
+          initialVariants[vg.groupId] = vg.variants[0].variantId;
+        }
+      });
+    }
+    setCustomSelectedVariants(initialVariants);
+
+    // Addons empty initially
+    const initialAddons: Record<string, string[]> = {};
+    if (Array.isArray(item.addonGroups)) {
+      item.addonGroups.forEach((ag: any) => {
+        initialAddons[ag.groupId] = [];
+      });
+    }
+    setCustomSelectedAddons(initialAddons);
+  };
+
+  const toggleCustomAddon = (group: any, addonId: string) => {
+    const groupId = group.groupId;
+    const max = group.maxSelection || 0;
+    setCustomSelectedAddons((prev) => {
+      const list = prev[groupId] || [];
+      if (list.includes(addonId)) {
+        return { ...prev, [groupId]: list.filter((id) => id !== addonId) };
+      }
+      if (max === 1) {
+        return { ...prev, [groupId]: [addonId] };
+      }
+      if (max > 1 && list.length >= max) {
+        return prev;
+      }
+      return { ...prev, [groupId]: [...list, addonId] };
+    });
+  };
+
+  const customUnitPrice = useMemo(() => {
+    if (!customizingItem) return 0;
+    let base = getItemBasePrice(customizingItem, channel);
+    if (customSelectedWeightVariant) {
+      if (channel === 'delivery' && customSelectedWeightVariant.deliveryPrice != null && !isNaN(Number(customSelectedWeightVariant.deliveryPrice))) {
+        base = Number(customSelectedWeightVariant.deliveryPrice);
+      } else if (channel === 'takeaway' && customSelectedWeightVariant.collectionPrice != null && !isNaN(Number(customSelectedWeightVariant.collectionPrice))) {
+        base = Number(customSelectedWeightVariant.collectionPrice);
+      } else if (channel === 'dine_in' && customSelectedWeightVariant.eatInPrice != null && !isNaN(Number(customSelectedWeightVariant.eatInPrice))) {
+        base = Number(customSelectedWeightVariant.eatInPrice);
+      } else {
+        base = Number(customSelectedWeightVariant.price || 0);
+      }
+    }
+
+    let variantsAdd = 0;
+    if (Array.isArray(customizingItem.variantGroups)) {
+      customizingItem.variantGroups.forEach((vg: any) => {
+        const selId = customSelectedVariants[vg.groupId];
+        if (selId) {
+          const v = vg.variants?.find((x: any) => String(x.variantId) === String(selId));
+          if (v) variantsAdd += Number(v.additionalPrice || 0);
+        }
+      });
+    }
+
+    let addonsAdd = 0;
+    if (Array.isArray(customizingItem.addonGroups)) {
+      customizingItem.addonGroups.forEach((ag: any) => {
+        const selIds = customSelectedAddons[ag.groupId] || [];
+        selIds.forEach((id: string) => {
+          const a = ag.addons?.find((x: any) => String(x.addonId) === String(id));
+          if (a) addonsAdd += Number(a.price || 0);
+        });
+      });
+    }
+
+    let totalUnit = base + variantsAdd + addonsAdd;
+    if (customizingItem.discountPercentage && customizingItem.discountPercentage > 0) {
+      totalUnit = totalUnit * (1 - customizingItem.discountPercentage / 100);
+    }
+    return Math.max(0, totalUnit);
+  }, [customizingItem, channel, customSelectedWeightVariant, customSelectedVariants, customSelectedAddons]);
+
+  const handleConfirmCustomization = () => {
+    if (!customizingItem) return;
+
+    if (Array.isArray(customizingItem.addonGroups)) {
+      for (const group of customizingItem.addonGroups) {
+        const isCompulsory = group.customizationBehavior === 'compulsory' || Boolean(group.minSelection && group.minSelection > 0);
+        const min = group.minSelection ? Math.max(group.minSelection, 1) : (isCompulsory ? 1 : 0);
+        const selectedCount = (customSelectedAddons[group.groupId] || []).length;
+        if (isCompulsory && selectedCount < min) {
+          setCustomError(`Please select at least ${min} option${min > 1 ? 's' : ''} for "${group.groupTitle}".`);
+          return;
+        }
+      }
+    }
+
+    const resolvedVariants: {
+      groupId: string;
+      variantId: string;
+      variantName?: string;
+      additionalPrice?: number;
+      groupTitle?: string;
+    }[] = [];
+    if (Array.isArray(customizingItem.variantGroups)) {
+      customizingItem.variantGroups.forEach((vg: any) => {
+        const selId = customSelectedVariants[vg.groupId];
+        if (selId) {
+          const v = vg.variants?.find((x: any) => String(x.variantId) === String(selId));
+          if (v) {
+            resolvedVariants.push({
+              groupId: vg.groupId,
+              variantId: v.variantId,
+              variantName: v.variantName,
+              additionalPrice: Number(v.additionalPrice || 0),
+              groupTitle: vg.groupTitle,
+            });
+          }
+        }
+      });
+    }
+
+    const resolvedAddons: {
+      groupId: string;
+      addonId: string;
+      optionTitle?: string;
+      price?: number;
+      groupTitle?: string;
+    }[] = [];
+    if (Array.isArray(customizingItem.addonGroups)) {
+      customizingItem.addonGroups.forEach((ag: any) => {
+        const selIds = customSelectedAddons[ag.groupId] || [];
+        selIds.forEach((id: string) => {
+          const a = ag.addons?.find((x: any) => String(x.addonId) === String(id));
+          if (a) {
+            resolvedAddons.push({
+              groupId: ag.groupId,
+              addonId: a.addonId,
+              optionTitle: a.optionTitle,
+              price: Number(a.price || 0),
+              groupTitle: ag.groupTitle,
+            });
+          }
+        });
+      });
+    }
+
+    const itemId = customizingItem._id || (customizingItem as any).id;
+    const cartKey = generateCartKey(
+      itemId,
+      customSelectedWeightVariant,
+      resolvedVariants,
+      resolvedAddons,
+      customInstructions
+    );
+
     setCart((prev) => {
-      const existing = prev[id];
+      const existing = prev[cartKey];
+      const newQty = (existing?.quantity || 0) + customQuantity;
       return {
         ...prev,
-        [id]: { item, quantity: (existing?.quantity || 0) + 1 },
+        [cartKey]: {
+          cartKey,
+          item: customizingItem,
+          quantity: newQty,
+          selectedVariants: resolvedVariants,
+          selectedAddons: resolvedAddons,
+          selectedWeightVariant: customSelectedWeightVariant || undefined,
+          instructions: customInstructions.trim() || undefined,
+          unitPrice: customUnitPrice,
+        },
+      };
+    });
+
+    setCustomizingItem(null);
+  };
+
+  const handleItemPress = (item: MenuItem) => {
+    if (hasCustomizations(item)) {
+      openCustomizationModal(item);
+    } else {
+      addDirectItemToCart(item);
+    }
+  };
+
+  const addDirectItemToCart = (item: MenuItem) => {
+    const id = item._id || (item as any).id;
+    const cartKey = id;
+    let unitPrice = getItemBasePrice(item, channel);
+    if (item.discountPercentage && item.discountPercentage > 0) {
+      unitPrice = unitPrice * (1 - item.discountPercentage / 100);
+    }
+
+    setCart((prev) => {
+      const existing = prev[cartKey];
+      return {
+        ...prev,
+        [cartKey]: {
+          cartKey,
+          item,
+          quantity: (existing?.quantity || 0) + 1,
+          selectedVariants: [],
+          selectedAddons: [],
+          unitPrice,
+        },
       };
     });
   };
 
-  const removeFromCart = (item: MenuItem) => {
-    const id = item._id || (item as any).id;
+  const incrementCartItem = (cartKey: string) => {
     setCart((prev) => {
-      const existing = prev[id];
+      const existing = prev[cartKey];
+      if (!existing) return prev;
+      return {
+        ...prev,
+        [cartKey]: { ...existing, quantity: existing.quantity + 1 },
+      };
+    });
+  };
+
+  const decrementCartItem = (cartKey: string) => {
+    setCart((prev) => {
+      const existing = prev[cartKey];
       if (!existing) return prev;
       if (existing.quantity <= 1) {
         const next = { ...prev };
-        delete next[id];
+        delete next[cartKey];
         return next;
       }
       return {
         ...prev,
-        [id]: { item, quantity: existing.quantity - 1 },
+        [cartKey]: { ...existing, quantity: existing.quantity - 1 },
       };
     });
   };
 
-  const clearCartItem = (id: string) => {
+  const removeCartItem = (cartKey: string) => {
     setCart((prev) => {
       const next = { ...prev };
-      delete next[id];
+      delete next[cartKey];
       return next;
     });
   };
@@ -234,8 +543,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
   const cartEntries = Object.values(cart);
   const totalItemCount = cartEntries.reduce((sum, e) => sum + e.quantity, 0);
   const subtotal = cartEntries.reduce((sum, e) => {
-    const p = Number(e.item.price || (e.item as any).basePrice || 0);
-    return sum + p * e.quantity;
+    return sum + e.unitPrice * e.quantity;
   }, 0);
 
   const handleSubmit = async () => {
@@ -295,8 +603,18 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
           .join(' • '),
         paymentType: paymentType,
         items: cartEntries.map((e) => ({
-          menuItemId: e.item._id,
+          menuItemId: e.item._id || (e.item as any).id,
           quantity: e.quantity,
+          selectedWeightVariant: e.selectedWeightVariant,
+          selectedVariants: (e.selectedVariants || []).map((v) => ({
+            groupId: v.groupId,
+            variantId: v.variantId,
+          })),
+          selectedAddons: (e.selectedAddons || []).map((a) => ({
+            groupId: a.groupId,
+            addonId: a.addonId,
+          })),
+          instructions: e.instructions || '',
         })),
       };
 
@@ -526,8 +844,9 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                   <View style={styles.itemsGrid}>
                     {filteredItems.map((item) => {
                       const id = item._id || (item as any).id;
-                      const cartCount = cart[id]?.quantity || 0;
-                      const price = Number(item.price || (item as any).basePrice || 0);
+                      const cartCount = getItemCartCount(id);
+                      const price = getItemBasePrice(item, channel);
+                      const isCustomizable = hasCustomizations(item);
 
                       return (
                         <TouchableOpacity
@@ -537,13 +856,20 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                             isWideTablet && styles.itemCardWide,
                             cartCount > 0 && styles.itemCardSelected,
                           ]}
-                          onPress={() => addToCart(item)}
+                          onPress={() => handleItemPress(item)}
                           activeOpacity={0.7}
                         >
                           <View style={styles.itemContent}>
-                            <Text style={styles.itemTitle} numberOfLines={1}>
-                              {item.name || item.itemName}
-                            </Text>
+                            <View style={styles.itemTitleRow}>
+                              <Text style={styles.itemTitle} numberOfLines={1}>
+                                {item.name || item.itemName}
+                              </Text>
+                              {isCustomizable ? (
+                                <View style={styles.customBadge}>
+                                  <Text style={styles.customBadgeText}>Options</Text>
+                                </View>
+                              ) : null}
+                            </View>
                             <Text style={styles.itemPriceText}>£{price.toFixed(2)}</Text>
                           </View>
 
@@ -589,7 +915,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                     <Text style={styles.mobileViewCartBtnText}>
                       {cartEntries.length === 0 ? 'Select Dishes' : 'Review & Pay'}
                     </Text>
-                    {cartEntries.length > 0 && <ArrowRight size={14} color="#FFFFFF" />}
+                    {cartEntries.length > 0 ? <ArrowRight size={14} color="#FFFFFF" /> : null}
                   </TouchableOpacity>
                 </View>
               )}
@@ -731,38 +1057,57 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                     </View>
                   ) : (
                     <View style={styles.cartList}>
-                      {cartEntries.map(({ item, quantity }) => {
-                        const id = item._id || (item as any).id;
-                        const price = Number(item.price || (item as any).basePrice || 0);
+                      {cartEntries.map((entry) => {
+                        const options = getItemOptionsList(entry);
 
                         return (
-                          <View key={id} style={styles.cartItemRow}>
+                          <View key={entry.cartKey} style={styles.cartItemRow}>
                             <View style={styles.cartItemInfo}>
                               <Text style={styles.cartItemName} numberOfLines={1}>
-                                {item.name || item.itemName}
+                                {entry.item.name || entry.item.itemName}
                               </Text>
-                              <Text style={styles.cartItemPrice}>£{(price * quantity).toFixed(2)}</Text>
+
+                              {options.length > 0 ? (
+                                <View style={styles.cartItemOptionsList}>
+                                  {options.map((opt, idx) => (
+                                    <Text key={idx} style={styles.cartItemOptionPill}>
+                                      • {opt}
+                                    </Text>
+                                  ))}
+                                </View>
+                              ) : null}
+
+                              {entry.instructions ? (
+                                <Text style={styles.cartItemInstructions} numberOfLines={1}>
+                                  Note: {entry.instructions}
+                                </Text>
+                              ) : null}
+
+                              <Text style={styles.cartItemPrice}>
+                                £{(entry.unitPrice * entry.quantity).toFixed(2)}
+                                {entry.quantity > 1 ? ` (£${entry.unitPrice.toFixed(2)} ea)` : ''}
+                              </Text>
                             </View>
 
                             <View style={styles.qtyControlRow}>
                               <TouchableOpacity
                                 style={styles.qtyBtn}
-                                onPress={() => removeFromCart(item)}
+                                onPress={() => decrementCartItem(entry.cartKey)}
                                 activeOpacity={0.7}
                               >
                                 <Minus size={13} color="#64748B" />
                               </TouchableOpacity>
-                              <Text style={styles.qtyNumber}>{quantity}</Text>
+                              <Text style={styles.qtyNumber}>{entry.quantity}</Text>
                               <TouchableOpacity
                                 style={styles.qtyBtn}
-                                onPress={() => addToCart(item)}
+                                onPress={() => incrementCartItem(entry.cartKey)}
                                 activeOpacity={0.7}
                               >
                                 <Plus size={13} color="#64748B" />
                               </TouchableOpacity>
                               <TouchableOpacity
                                 style={styles.deleteBtn}
-                                onPress={() => clearCartItem(id)}
+                                onPress={() => removeCartItem(entry.cartKey)}
                                 activeOpacity={0.7}
                               >
                                 <Trash2 size={13} color="#EF4444" />
@@ -816,11 +1161,11 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                 </View>
 
                 {/* Error Banner */}
-                {errorMsg && (
+                {Boolean(errorMsg) ? (
                   <View style={styles.errorBox}>
                     <Text style={styles.errorText}>{errorMsg}</Text>
                   </View>
-                )}
+                ) : null}
               </ScrollView>
 
               {/* Total Summary & Confirm Button */}
@@ -852,6 +1197,269 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
           )}
         </View>
       </KeyboardAvoidingView>
+
+        {/* Item Customization Sub-Modal */}
+        {customizingItem ? (
+          <Modal
+            visible={!!customizingItem}
+            animationType="fade"
+            transparent={true}
+            onRequestClose={() => setCustomizingItem(null)}
+          >
+            <View style={styles.customModalOverlay}>
+              <TouchableOpacity
+                style={styles.customModalBackdrop}
+                activeOpacity={1}
+                onPress={() => setCustomizingItem(null)}
+              />
+              <View style={[styles.customModalContainer, isTablet && styles.customModalContainerTablet]}>
+                {/* Custom Modal Header */}
+                <View style={styles.customModalHeader}>
+                  <View style={styles.customHeaderTitleWrap}>
+                    <Text style={styles.customModalTitle} numberOfLines={1}>
+                      {customizingItem.name || customizingItem.itemName}
+                    </Text>
+                    <Text style={styles.customModalBasePrice}>
+                      Base: £{getItemBasePrice(customizingItem, channel).toFixed(2)}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.customCloseBtn}
+                    onPress={() => setCustomizingItem(null)}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  >
+                    <X size={18} color="#64748B" />
+                  </TouchableOpacity>
+                </View>
+
+                {/* Custom Error Banner if compulsory not selected */}
+                {customError ? (
+                  <View style={styles.customErrorBanner}>
+                    <Text style={styles.customErrorText}>{customError}</Text>
+                  </View>
+                ) : null}
+
+                {/* Scrollable Groups */}
+                <ScrollView
+                  style={styles.customScroll}
+                  contentContainerStyle={styles.customScrollContent}
+                  showsVerticalScrollIndicator={true}
+                >
+                  {/* Weight Variants if multiple */}
+                  {Array.isArray(customizingItem.weightVariants) && customizingItem.weightVariants.length > 1 ? (
+                    <View style={styles.customGroupSection}>
+                      <View style={styles.customGroupHeader}>
+                        <Text style={styles.customGroupTitle}>Choose Portion / Size</Text>
+                        <Text style={styles.customGroupRequiredBadge}>Required</Text>
+                      </View>
+                      <View style={styles.customOptionsList}>
+                        {customizingItem.weightVariants.map((wv: any, idx: number) => {
+                          const isSelected =
+                            (customSelectedWeightVariant && (
+                              customSelectedWeightVariant.variantId === wv.variantId ||
+                              customSelectedWeightVariant.variantName === wv.variantName
+                            )) ||
+                            (!customSelectedWeightVariant && idx === 0);
+
+                          const wvPrice = Number(wv.price || 0);
+
+                          return (
+                            <TouchableOpacity
+                              key={wv.variantId || idx}
+                              style={[
+                                styles.customOptionRow,
+                                isSelected && styles.customOptionRowSelected,
+                              ]}
+                              onPress={() => {
+                                setCustomSelectedWeightVariant(wv);
+                                if (customError) setCustomError(null);
+                              }}
+                              activeOpacity={0.7}
+                            >
+                              <View style={styles.customOptionRadio}>
+                                {isSelected ? <View style={styles.customOptionRadioInner} /> : null}
+                              </View>
+                              <View style={styles.customOptionInfo}>
+                                <Text style={[styles.customOptionName, isSelected && styles.customOptionNameSelected]}>
+                                  {wv.variantName || `${wv.weight} ${wv.unit}`}
+                                </Text>
+                                {wv.weight ? (
+                                  <Text style={styles.customOptionSub}>
+                                    {wv.weight} {wv.unit}
+                                  </Text>
+                                ) : null}
+                              </View>
+                              <Text style={[styles.customOptionPrice, isSelected && styles.customOptionPriceSelected]}>
+                                £{wvPrice.toFixed(2)}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                    </View>
+                  ) : null}
+
+                  {/* Variant Groups (Single Select per group) */}
+                  {Array.isArray(customizingItem.variantGroups) && customizingItem.variantGroups.length > 0 ? (
+                    customizingItem.variantGroups.map((vg: any) => {
+                      const selectedVariantId = customSelectedVariants[vg.groupId];
+
+                      return (
+                        <View key={vg.groupId} style={styles.customGroupSection}>
+                          <View style={styles.customGroupHeader}>
+                            <Text style={styles.customGroupTitle}>{vg.groupTitle}</Text>
+                            <Text style={styles.customGroupRequiredBadge}>Select 1</Text>
+                          </View>
+                          <View style={styles.customOptionsList}>
+                            {Array.isArray(vg.variants) &&
+                              vg.variants.map((v: any) => {
+                                const isSelected = selectedVariantId === v.variantId;
+                                const addPrice = Number(v.additionalPrice || 0);
+
+                                return (
+                                  <TouchableOpacity
+                                    key={v.variantId}
+                                    style={[
+                                      styles.customOptionRow,
+                                      isSelected && styles.customOptionRowSelected,
+                                    ]}
+                                    onPress={() => {
+                                      setCustomSelectedVariants((prev) => ({
+                                        ...prev,
+                                        [vg.groupId]: v.variantId,
+                                      }));
+                                      if (customError) setCustomError(null);
+                                    }}
+                                    activeOpacity={0.7}
+                                  >
+                                    <View style={styles.customOptionRadio}>
+                                      {isSelected ? <View style={styles.customOptionRadioInner} /> : null}
+                                    </View>
+                                    <Text style={[styles.customOptionName, isSelected && styles.customOptionNameSelected]}>
+                                      {v.variantName}
+                                    </Text>
+                                    <Text style={[styles.customOptionPrice, isSelected && styles.customOptionPriceSelected]}>
+                                      {addPrice > 0 ? `+£${addPrice.toFixed(2)}` : 'Free'}
+                                    </Text>
+                                  </TouchableOpacity>
+                                );
+                              })}
+                          </View>
+                        </View>
+                      );
+                    })
+                  ) : null}
+
+                  {/* Addon Groups (Multi Select) */}
+                  {Array.isArray(customizingItem.addonGroups) && customizingItem.addonGroups.length > 0 ? (
+                    customizingItem.addonGroups.map((ag: any) => {
+                      const selectedIds = customSelectedAddons[ag.groupId] || [];
+                      const isCompulsory =
+                        ag.customizationBehavior === 'compulsory' || Boolean(ag.minSelection && ag.minSelection > 0);
+                      const min = ag.minSelection ? Math.max(ag.minSelection, 1) : (isCompulsory ? 1 : 0);
+                      const max = ag.maxSelection || 0;
+
+                      return (
+                        <View key={ag.groupId} style={styles.customGroupSection}>
+                          <View style={styles.customGroupHeader}>
+                            <View>
+                              <Text style={styles.customGroupTitle}>{ag.groupTitle}</Text>
+                              <Text style={styles.customGroupSub}>
+                                {isCompulsory
+                                  ? `Required (min ${min}${max ? `, max ${max}` : ''})`
+                                  : max
+                                  ? `Optional (max ${max})`
+                                  : 'Optional (choose any)'}
+                              </Text>
+                            </View>
+                            {isCompulsory ? (
+                              <Text style={styles.customGroupCompulsoryBadge}>Required</Text>
+                            ) : null}
+                          </View>
+                          <View style={styles.customOptionsList}>
+                            {Array.isArray(ag.addons) &&
+                              ag.addons.map((addon: any) => {
+                                const isSelected = selectedIds.includes(addon.addonId);
+                                const addPrice = Number(addon.price || 0);
+
+                                return (
+                                  <TouchableOpacity
+                                    key={addon.addonId}
+                                    style={[
+                                      styles.customOptionRow,
+                                      isSelected && styles.customOptionRowSelected,
+                                    ]}
+                                    onPress={() => {
+                                      toggleCustomAddon(ag, addon.addonId);
+                                      if (customError) setCustomError(null);
+                                    }}
+                                    activeOpacity={0.7}
+                                  >
+                                    <View style={[styles.customOptionCheckbox, isSelected && styles.customOptionCheckboxSelected]}>
+                                      {isSelected ? <Check size={12} color="#FFFFFF" strokeWidth={3} /> : null}
+                                    </View>
+                                    <Text style={[styles.customOptionName, isSelected && styles.customOptionNameSelected]}>
+                                      {addon.optionTitle}
+                                    </Text>
+                                    <Text style={[styles.customOptionPrice, isSelected && styles.customOptionPriceSelected]}>
+                                      {addPrice > 0 ? `+£${addPrice.toFixed(2)}` : 'Free'}
+                                    </Text>
+                                  </TouchableOpacity>
+                                );
+                              })}
+                          </View>
+                        </View>
+                      );
+                    })
+                  ) : null}
+
+                  {/* Special Instructions for Dish */}
+                  <View style={styles.customGroupSection}>
+                    <Text style={styles.customGroupTitle}>Item Instructions (Optional)</Text>
+                    <TextInput
+                      style={styles.customInstructionsInput}
+                      placeholder="e.g. Extra spicy, sauce on the side..."
+                      placeholderTextColor="#94A3B8"
+                      value={customInstructions}
+                      onChangeText={setCustomInstructions}
+                    />
+                  </View>
+                </ScrollView>
+
+                {/* Custom Modal Footer */}
+                <View style={styles.customModalFooter}>
+                  <View style={styles.customQtyRow}>
+                    <TouchableOpacity
+                      style={styles.customQtyBtn}
+                      onPress={() => setCustomQuantity((q) => Math.max(1, q - 1))}
+                      activeOpacity={0.7}
+                    >
+                      <Minus size={15} color="#475569" />
+                    </TouchableOpacity>
+                    <Text style={styles.customQtyText}>{customQuantity}</Text>
+                    <TouchableOpacity
+                      style={styles.customQtyBtn}
+                      onPress={() => setCustomQuantity((q) => q + 1)}
+                      activeOpacity={0.7}
+                    >
+                      <Plus size={15} color="#475569" />
+                    </TouchableOpacity>
+                  </View>
+
+                  <TouchableOpacity
+                    style={styles.customAddBtn}
+                    onPress={handleConfirmCustomization}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.customAddBtnText}>
+                      Add to Ticket • £{(customUnitPrice * customQuantity).toFixed(2)}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          </Modal>
+        ) : null}
     </SafeAreaView>
   </Modal>
   );
@@ -1548,5 +2156,313 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     color: '#FF5C39',
+  },
+
+  itemTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexWrap: 'wrap',
+  },
+  customBadge: {
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 6,
+    paddingVertical: 1.5,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  customBadgeText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#2563EB',
+    textTransform: 'uppercase',
+  },
+  cartItemOptionsList: {
+    marginTop: 2,
+    marginBottom: 2,
+    gap: 1,
+  },
+  cartItemOptionPill: {
+    fontSize: 10.5,
+    color: '#64748B',
+    fontWeight: '600',
+    lineHeight: 14,
+  },
+  cartItemInstructions: {
+    fontSize: 10,
+    fontStyle: 'italic',
+    color: '#D97706',
+    marginTop: 1,
+  },
+  // Customization sub-modal styles
+  customModalOverlay: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(15, 23, 42, 0.55)',
+    padding: 16,
+  },
+  customModalBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
+  customModalContainer: {
+    width: '100%',
+    maxHeight: '85%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    overflow: 'hidden',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.25,
+    shadowRadius: 16,
+    elevation: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  customModalContainerTablet: {
+    maxWidth: 560,
+  },
+  customModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+    backgroundColor: '#FFFFFF',
+  },
+  customHeaderTitleWrap: {
+    flex: 1,
+    marginRight: 12,
+  },
+  customModalTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  customModalBasePrice: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#059669',
+    marginTop: 2,
+  },
+  customCloseBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  customErrorBanner: {
+    backgroundColor: '#FEF2F2',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#FECACA',
+  },
+  customErrorText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#EF4444',
+  },
+  customScroll: {
+    flexGrow: 0,
+  },
+  customScrollContent: {
+    padding: 16,
+    gap: 16,
+  },
+  customGroupSection: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  customGroupHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  customGroupTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#1E293B',
+  },
+  customGroupSub: {
+    fontSize: 10.5,
+    color: '#64748B',
+    marginTop: 1,
+    fontWeight: '500',
+  },
+  customGroupRequiredBadge: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#7C3AED',
+    backgroundColor: '#F5F3FF',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#DDD6FE',
+  },
+  customGroupCompulsoryBadge: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#DC2626',
+    backgroundColor: '#FEF2F2',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#FECACA',
+  },
+  customOptionsList: {
+    gap: 8,
+  },
+  customOptionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 10,
+  },
+  customOptionRowSelected: {
+    borderColor: '#FF5C39',
+    backgroundColor: '#FFF9F7',
+  },
+  customOptionRadio: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 2,
+    borderColor: '#CBD5E1',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  customOptionRadioInner: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#FF5C39',
+  },
+  customOptionCheckbox: {
+    width: 18,
+    height: 18,
+    borderRadius: 5,
+    borderWidth: 1.5,
+    borderColor: '#CBD5E1',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+  },
+  customOptionCheckboxSelected: {
+    backgroundColor: '#FF5C39',
+    borderColor: '#FF5C39',
+  },
+  customOptionInfo: {
+    flex: 1,
+  },
+  customOptionName: {
+    flex: 1,
+    fontSize: 12.5,
+    fontWeight: '600',
+    color: '#1E293B',
+  },
+  customOptionNameSelected: {
+    color: '#0F172A',
+    fontWeight: '700',
+  },
+  customOptionSub: {
+    fontSize: 10.5,
+    color: '#64748B',
+  },
+  customOptionPrice: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  customOptionPriceSelected: {
+    color: '#059669',
+    fontWeight: '800',
+  },
+  customInstructionsInput: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    fontSize: 12,
+    color: '#0F172A',
+    marginTop: 8,
+  },
+  customModalFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+    backgroundColor: '#FFFFFF',
+  },
+  customQtyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+  },
+  customQtyBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  customQtyText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0F172A',
+    minWidth: 20,
+    textAlign: 'center',
+  },
+  customAddBtn: {
+    flex: 1,
+    backgroundColor: '#FF5C39',
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#FF5C39',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  customAddBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '800',
   },
 });

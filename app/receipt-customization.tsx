@@ -34,6 +34,7 @@ import {
   setActiveReceiptTemplateId,
   resetToDefaultTemplate,
   getSampleOrderForPreview,
+  getItemOptionsList,
   TextAlignment,
   PaperWidth,
   ReceiptFontSize,
@@ -2082,11 +2083,11 @@ export default function ReceiptCustomizationScreen() {
                         £{(item.price * item.quantity).toFixed(2)}
                       </Text>
                     </View>
-                    {content.showItemNotes && item.customization?.size ? (
-                      <Text style={[styles.paperText, styles.paperItemNote]}>* Size: {item.customization.size}</Text>
-                    ) : null}
-                    {content.showItemNotes && item.customization?.addOns?.length ? (
-                      <Text style={[styles.paperText, styles.paperItemNote]}>+ {item.customization.addOns.join(', ')}</Text>
+                    {getItemOptionsList(item).map((opt: string, oIdx: number) => (
+                      <Text key={oIdx} style={[styles.paperText, styles.paperItemNote]}>+ {opt}</Text>
+                    ))}
+                    {content.showItemNotes && (item.instructions || item.specialInstructions || item.note) ? (
+                      <Text style={[styles.paperText, styles.paperItemNote]}>* Note: {item.instructions || item.specialInstructions || item.note}</Text>
                     ) : null}
                   </View>
                 ))}

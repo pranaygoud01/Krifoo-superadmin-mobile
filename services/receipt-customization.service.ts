@@ -655,9 +655,23 @@ export function getSampleOrderForPreview(
     paymentStatus: 'pending',
     orderedItems: [
       {
-        name: 'Burger',
-        quantity: 3,
-        price: 2.99,
+        name: 'DOUBLE TROUBLE DEAL',
+        itemName: 'DOUBLE TROUBLE DEAL',
+        quantity: 1,
+        price: 26.45,
+        basePrice: 26.45,
+        itemTotal: 26.45,
+        selectedVariants: [],
+        selectedAddons: [
+          {
+            optionTitle: "Devson's Original",
+            price: 0,
+          },
+          {
+            optionTitle: 'Chicken',
+            price: 2.5,
+          },
+        ],
       },
     ],
     pricing: {
@@ -667,4 +681,90 @@ export function getSampleOrderForPreview(
       total: 10.96,
     },
   };
+}
+
+/**
+ * Resolves all modifiers, variants, and add-ons for an ordered item into clean printable display lines.
+ * Handles:
+ * - selectedVariants: [{ variantName, optionTitle, name, additionalPrice, price, groupTitle }, ...]
+ * - selectedAddons: [{ optionTitle, addonName, name, price, additionalPrice }, ...]
+ * - selectedWeightVariant: { variantName, weight, unit, price }
+ * - customization: { size, addOns }
+ * - options: [...]
+ */
+export function getItemOptionsList(item: any): string[] {
+  const options: string[] = [];
+  if (!item) return options;
+
+  // 1. Weight Variant
+  if (item.selectedWeightVariant) {
+    const wv = item.selectedWeightVariant;
+    const wvName = wv.variantName || wv.name || (wv.weight ? `${wv.weight} ${wv.unit || ''}` : '');
+    const wvPriceNum = Number(wv.additionalPrice ?? wv.price ?? 0);
+    const wvPriceStr = wvPriceNum > 0 ? ` (+£${wvPriceNum.toFixed(2)})` : '';
+    if (wvName) options.push(`${wvName}${wvPriceStr}`.trim());
+  }
+
+  // 2. Selected Variants
+  if (Array.isArray(item.selectedVariants)) {
+    item.selectedVariants.forEach((v: any) => {
+      if (typeof v === 'string' && v.trim()) {
+        options.push(v.trim());
+      } else if (v && typeof v === 'object') {
+        const vName = v.variantName || v.optionTitle || v.name || v.title || v.optionName || '';
+        const vPriceNum = Number(v.additionalPrice ?? v.price ?? 0);
+        const vPriceStr = vPriceNum > 0 ? ` (+£${vPriceNum.toFixed(2)})` : '';
+        const groupPrefix = v.groupTitle ? `${v.groupTitle}: ` : '';
+        if (vName) {
+          options.push(`${groupPrefix}${vName}${vPriceStr}`.trim());
+        }
+      }
+    });
+  }
+
+  // 3. Selected Addons
+  if (Array.isArray(item.selectedAddons)) {
+    item.selectedAddons.forEach((a: any) => {
+      if (typeof a === 'string' && a.trim()) {
+        options.push(a.trim());
+      } else if (a && typeof a === 'object') {
+        const aName = a.optionTitle || a.addonName || a.name || a.title || '';
+        const aPriceNum = Number(a.price ?? a.additionalPrice ?? 0);
+        const aPriceStr = aPriceNum > 0 ? ` (+£${aPriceNum.toFixed(2)})` : '';
+        if (aName) {
+          options.push(`${aName}${aPriceStr}`.trim());
+        }
+      }
+    });
+  }
+
+  // 4. Legacy Customization (size, addOns)
+  if (item.customization?.size) {
+    options.push(`Size: ${item.customization.size}`);
+  }
+  if (Array.isArray(item.customization?.addOns)) {
+    item.customization.addOns.forEach((a: any) => {
+      if (typeof a === 'string' && a.trim()) {
+        options.push(a.trim());
+      } else if (a && typeof a === 'object') {
+        const aName = a.optionTitle || a.addonName || a.name || a.title || '';
+        const aPriceNum = Number(a.price ?? a.additionalPrice ?? 0);
+        const aPriceStr = aPriceNum > 0 ? ` (+£${aPriceNum.toFixed(2)})` : '';
+        if (aName) options.push(`${aName}${aPriceStr}`.trim());
+      }
+    });
+  }
+
+  // 5. Options array fallback
+  if (Array.isArray(item.options)) {
+    item.options.forEach((opt: any) => {
+      if (typeof opt === 'string' && opt.trim()) {
+        options.push(opt.trim());
+      } else if (opt?.name || opt?.optionTitle) {
+        options.push(opt.optionTitle || opt.name);
+      }
+    });
+  }
+
+  return options;
 }

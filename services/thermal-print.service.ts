@@ -8,7 +8,7 @@ import { printEpsonOrderReceipt, testEpsonPrinter, testPrinterAlignmentSlip, dis
 import { buildReceiptDocument, buildDrawerKickDocument, buildCustomizedReceiptDocument, getOrderScheduleInfo, formatScheduleDisplay, getOrderFulfillmentLabel, getSanitizedOrderNotes } from './printer/receipt-document';
 import { resolvePrinter } from './printer/printer-registry';
 import { PrintQueueService } from './printer/print-queue.service';
-import { getActiveReceiptTemplate, ReceiptTemplate, getSampleOrderForPreview, getCachedStoreProfile, setCachedStoreProfile, formatRestaurantAddress, isDummyCustomerPhone } from './receipt-customization.service';
+import { getActiveReceiptTemplate, ReceiptTemplate, getSampleOrderForPreview, getCachedStoreProfile, setCachedStoreProfile, formatRestaurantAddress, isDummyCustomerPhone, getItemOptionsList } from './receipt-customization.service';
 
 export {
   isSunmiAvailable,
@@ -402,8 +402,8 @@ export function generateCustomizedThermalReceiptHtml(order: Partial<Order> & any
         <span style="flex:1; padding:0 6px;">${n}</span>
         <span style="text-align:right;">${formatMoney(p)}</span>
       </div>
-      ${content.showItemNotes && item.customization?.size ? `<div class="item-notes">* Size: ${item.customization.size}</div>` : ''}
-      ${content.showItemNotes && Array.isArray(item.customization?.addOns) && item.customization.addOns.length > 0 ? `<div class="item-notes">+ ${item.customization.addOns.join(', ')}</div>` : ''}
+      ${getItemOptionsList(item).map((opt: string) => `<div class="item-notes">+ ${opt}</div>`).join('')}
+      ${content.showItemNotes && (item.instructions || item.specialInstructions || item.note) ? `<div class="item-notes">* Note: ${item.instructions || item.specialInstructions || item.note}</div>` : ''}
       `;
     }).join('')}
   </div>
@@ -824,32 +824,7 @@ export function generateThermalReceiptHtml(order: Partial<Order> & any, template
                 price = Number(item.price) * qty;
               }
 
-              const optionsList: string[] = [];
-              if (Array.isArray(item.selectedVariants)) {
-                item.selectedVariants.forEach((v: any) => {
-                  if (typeof v === 'string' && v.trim()) optionsList.push(v.trim());
-                  else if (v && typeof v === 'object') {
-                    const vName = v.variantName || v.name || v.title || '';
-                    const vPrice = v.price || v.additionalPrice ? ` (+${formatMoney(v.price || v.additionalPrice)})` : '';
-                    if (vName) optionsList.push(`${vName}${vPrice}`);
-                  }
-                });
-              }
-              if (Array.isArray(item.selectedAddons)) {
-                item.selectedAddons.forEach((a: any) => {
-                  if (typeof a === 'string' && a.trim()) optionsList.push(a.trim());
-                  else if (a && typeof a === 'object') {
-                    const aName = a.addonName || a.name || a.title || '';
-                    const aPrice = a.price || a.additionalPrice ? ` (+${formatMoney(a.price || a.additionalPrice)})` : '';
-                    if (aName) optionsList.push(`${aName}${aPrice}`);
-                  }
-                });
-              }
-              if (item.customization?.size) optionsList.push(`Size: ${item.customization.size}`);
-              if (Array.isArray(item.customization?.addOns)) {
-                item.customization.addOns.forEach((a: string) => { if (a) optionsList.push(a); });
-              }
-
+              const optionsList: string[] = getItemOptionsList(item);
               const itemNote = item.instructions || item.specialInstructions || item.note || '';
 
               return `

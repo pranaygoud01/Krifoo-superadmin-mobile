@@ -1,7 +1,7 @@
 import { Platform } from 'react-native';
 import * as RN from 'react-native';
 import { Order } from '../types';
-import { getActiveReceiptTemplate, ReceiptTemplate, getCachedStoreProfile, formatRestaurantAddress, isDummyCustomerPhone } from './receipt-customization.service';
+import { getActiveReceiptTemplate, ReceiptTemplate, getCachedStoreProfile, formatRestaurantAddress, isDummyCustomerPhone, getItemOptionsList } from './receipt-customization.service';
 import { getOrderScheduleInfo, getSanitizedOrderNotes } from './printer/receipt-document';
 import { getPosPrinterConfig, PosPrinterConfig } from './pos-config.service';
 
@@ -502,60 +502,7 @@ export async function printSunmiOrderReceipt(
       }
       sunmi.setFontWeight(false);
 
-      const optionsList: string[] = [];
-
-      if (Array.isArray(item.selectedVariants)) {
-        item.selectedVariants.forEach((v: any) => {
-          if (typeof v === 'string' && v.trim()) {
-            optionsList.push(v.trim());
-          } else if (v && typeof v === 'object') {
-            const vName = v.variantName || v.name || v.title || v.optionName || '';
-            const vPrice = v.price || v.additionalPrice ? ` (+${formatMoney(v.price || v.additionalPrice)})` : '';
-            if (vName) optionsList.push(`${vName}${vPrice}`);
-          }
-        });
-      }
-
-      if (Array.isArray(item.selectedAddons)) {
-        item.selectedAddons.forEach((a: any) => {
-          if (typeof a === 'string' && a.trim()) {
-            optionsList.push(a.trim());
-          } else if (a && typeof a === 'object') {
-            const aName = a.addonName || a.name || a.title || '';
-            const aPrice = a.price || a.additionalPrice ? ` (+${formatMoney(a.price || a.additionalPrice)})` : '';
-            if (aName) optionsList.push(`${aName}${aPrice}`);
-          }
-        });
-      }
-
-      if (item.customization) {
-        if (item.customization.size) {
-          optionsList.push(`Size: ${item.customization.size}`);
-        }
-        if (Array.isArray(item.customization.addOns)) {
-          item.customization.addOns.forEach((a: any) => {
-            if (typeof a === 'string' && a.trim()) optionsList.push(a.trim());
-            else if (a?.name) optionsList.push(a.name);
-          });
-        }
-      }
-
-      if (Array.isArray(item.options)) {
-        item.options.forEach((opt: any) => {
-          if (typeof opt === 'string' && opt.trim()) optionsList.push(opt.trim());
-          else if (opt?.name) {
-            const optPrice = opt.price ? ` (+${formatMoney(opt.price)})` : '';
-            optionsList.push(`${opt.name}${optPrice}`);
-          }
-        });
-      }
-
-      if (Array.isArray(item.modifiers)) {
-        item.modifiers.forEach((m: any) => {
-          if (typeof m === 'string' && m.trim()) optionsList.push(m.trim());
-          else if (m?.name) optionsList.push(m.name);
-        });
-      }
+      const optionsList: string[] = getItemOptionsList(item);
 
       if (optionsList.length > 0) {
         sunmi.setFontSize(baseFontSize - 2);

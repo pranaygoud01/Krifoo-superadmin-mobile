@@ -1,6 +1,6 @@
 import { Order } from '../../types';
 import { PosPrinterConfig } from '../pos-config.service';
-import { ReceiptTemplate, getCachedStoreProfile, isDummyCustomerPhone } from '../receipt-customization.service';
+import { ReceiptTemplate, getCachedStoreProfile, isDummyCustomerPhone, getItemOptionsList } from '../receipt-customization.service';
 import { buildCustomizedReceiptDocument, getOrderScheduleInfo, getSanitizedOrderNotes } from './receipt-document';
 import { EscPosEncoder } from './encoders/escpos-encoder';
 
@@ -446,30 +446,7 @@ export function buildEscPosReceipt(order: Partial<Order> & any, config: PosPrint
     builder.setSize(1, 1).bold(false);
 
     // Variants & Add-ons
-    const optionsList: string[] = [];
-    if (Array.isArray(item.selectedVariants)) {
-      item.selectedVariants.forEach((v: any) => {
-        if (typeof v === 'string' && v.trim()) optionsList.push(v.trim());
-        else if (v?.name) {
-          const p = v.price || v.additionalPrice ? ` (+${formatMoney(v.price || v.additionalPrice)})` : '';
-          optionsList.push(`${v.name}${p}`);
-        }
-      });
-    }
-    if (Array.isArray(item.selectedAddons)) {
-      item.selectedAddons.forEach((a: any) => {
-        if (typeof a === 'string' && a.trim()) optionsList.push(a.trim());
-        else if (a?.name) {
-          const p = a.price || a.additionalPrice ? ` (+${formatMoney(a.price || a.additionalPrice)})` : '';
-          optionsList.push(`${a.name}${p}`);
-        }
-      });
-    }
-    if (item.customization?.size) optionsList.push(`Size: ${item.customization.size}`);
-    if (Array.isArray(item.customization?.addOns)) {
-      item.customization.addOns.forEach((a: string) => { if (a) optionsList.push(a); });
-    }
-
+    const optionsList: string[] = getItemOptionsList(item);
     if (optionsList.length > 0) {
       optionsList.forEach((opt) => {
         builder.line(`    + ${opt}`);

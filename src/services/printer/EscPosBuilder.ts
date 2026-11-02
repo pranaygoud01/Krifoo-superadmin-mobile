@@ -161,10 +161,22 @@ export function buildOrderEscPosBytes(order: Partial<Order> & any, config: PosPr
     const price = `£${Number(item.itemTotal || item.basePrice || 0).toFixed(2)}`;
     builder.setTextSize(1, 2).setBold(true).threeColumn(qty, name, price, width).setTextSize(1, 1).setBold(false);
 
-    if (item.selectedVariants?.length) {
+    if (Array.isArray(item.selectedVariants)) {
       item.selectedVariants.forEach((v: any) => {
-        builder.text(`   + ${v.name || v}`).newLine();
+        const vName = v.variantName || v.optionTitle || v.name || v.title || (typeof v === 'string' ? v : '');
+        const vPrice = v.additionalPrice || v.price ? ` (+£${Number(v.additionalPrice || v.price).toFixed(2)})` : '';
+        if (vName) builder.text(`   + ${vName}${vPrice}`).newLine();
       });
+    }
+    if (Array.isArray(item.selectedAddons)) {
+      item.selectedAddons.forEach((a: any) => {
+        const aName = a.optionTitle || a.addonName || a.name || a.title || (typeof a === 'string' ? a : '');
+        const aPrice = a.price || a.additionalPrice ? ` (+£${Number(a.price || a.additionalPrice).toFixed(2)})` : '';
+        if (aName) builder.text(`   + ${aName}${aPrice}`).newLine();
+      });
+    }
+    if (item.instructions) {
+      builder.text(`   * Note: ${item.instructions}`).newLine();
     }
   });
 

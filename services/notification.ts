@@ -13,6 +13,21 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { playOrderBuzzSound } from './sound.service';
 import { printThermalReceipt, isAutoPrintEnabled } from './thermal-print.service';
 import { orderService } from './order.service';
+import { STORAGE_KEYS } from '../constants/config';
+
+async function getActiveRestaurantContext(): Promise<{ isOwner: boolean; restaurantId: string | null }> {
+  try {
+    const userStr = await AsyncStorage.getItem(STORAGE_KEYS.ADMIN_USER);
+    if (!userStr) return { isOwner: false, restaurantId: null };
+    const user = JSON.parse(userStr);
+    return {
+      isOwner: user.userType === 'owner',
+      restaurantId: user.restaurantId || user._id || user.id || null,
+    };
+  } catch {
+    return { isOwner: false, restaurantId: null };
+  }
+}
 
 let Notifications: any = null;
 let notificationListener: any = null;
@@ -49,13 +64,32 @@ if (TaskManager && typeof TaskManager.defineTask === 'function') {
         const orderObj = notificationData.order || notificationData.data || (notificationData.orderedItems ? notificationData : null);
         const orderId = notificationData.orderId || notificationData.id || orderObj?._id;
 
+        const notifRestId = notificationData.restaurantId || notificationData.order?.restaurantId || orderObj?.restaurantId;
+        const parsedNotifRestId = typeof notifRestId === 'object' ? notifRestId?._id : notifRestId;
+        const { isOwner, restaurantId: currentRestId } = await getActiveRestaurantContext();
+
+        if (isOwner && currentRestId && parsedNotifRestId && String(currentRestId) !== String(parsedNotifRestId)) {
+          console.log(`[Background Notification] Skipping: Order for restaurant ${parsedNotifRestId}, but active is ${currentRestId}`);
+          return;
+        }
+
         if (orderObj && (orderObj.orderedItems?.length || orderObj.items?.length)) {
+          const orderRestId = typeof orderObj.restaurantId === 'object' ? orderObj.restaurantId?._id : orderObj.restaurantId;
+          if (isOwner && currentRestId && orderRestId && String(currentRestId) !== String(orderRestId)) {
+            console.log(`[Background Notification] Skipping: Payload order restaurant ${orderRestId} !== active ${currentRestId}`);
+            return;
+          }
           console.log('[Background Notification] Printing receipt directly from push payload...');
           await printThermalReceipt(orderObj);
         } else if (orderId) {
           console.log('[Background Notification] Fetching order for background print, ID:', orderId);
           const res = await orderService.getOrderById(orderId);
           if (res.success && res.data) {
+            const fetchedRestId = typeof res.data.restaurantId === 'object' ? (res.data.restaurantId as any)?._id : res.data.restaurantId;
+            if (isOwner && currentRestId && fetchedRestId && String(currentRestId) !== String(fetchedRestId)) {
+              console.log(`[Background Notification] Skipping print: Fetched order restaurant ${fetchedRestId} !== active ${currentRestId}`);
+              return;
+            }
             await printThermalReceipt(res.data);
           }
         }
@@ -104,21 +138,39 @@ try {
           );
 
         if (isNewOrderNotification) {
-          console.log('[Notification] Incoming new order notification received! Triggering 5-sec buzz sound...');
-          playOrderBuzzSound(5000).catch(console.error);
+          const notifRestId = data.restaurantId || data.order?.restaurantId;
+          const parsedNotifRestId = typeof notifRestId === 'object' ? notifRestId?._id : notifRestId;
 
-          // Auto-print thermal receipt if enabled
-          isAutoPrintEnabled().then(async (autoPrint) => {
+          getActiveRestaurantContext().then(async ({ isOwner, restaurantId: currentRestId }) => {
+            if (isOwner && currentRestId && parsedNotifRestId && String(currentRestId) !== String(parsedNotifRestId)) {
+              console.log(`[Notification] Skipping alert: Notification is for restaurant ${parsedNotifRestId}, but active restaurant is ${currentRestId}`);
+              return;
+            }
+
+            console.log('[Notification] Incoming new order notification received! Triggering 5-sec buzz sound...');
+            playOrderBuzzSound(5000).catch(console.error);
+
+            // Auto-print thermal receipt if enabled
+            const autoPrint = await isAutoPrintEnabled();
             if (!autoPrint) return;
             const orderObj = data.order || data.data || (data.orderedItems ? data : null);
             const orderId = data.orderId || data.id || orderObj?._id;
 
             if (orderObj && (orderObj.orderedItems?.length || orderObj.items?.length)) {
+              const orderRestId = typeof orderObj.restaurantId === 'object' ? orderObj.restaurantId?._id : orderObj.restaurantId;
+              if (isOwner && currentRestId && orderRestId && String(currentRestId) !== String(orderRestId)) {
+                return;
+              }
               await printThermalReceipt(orderObj);
             } else if (orderId) {
               try {
                 const res = await orderService.getOrderById(orderId);
                 if (res.success && res.data) {
+                  const fetchedRestId = typeof res.data.restaurantId === 'object' ? (res.data.restaurantId as any)?._id : res.data.restaurantId;
+                  if (isOwner && currentRestId && fetchedRestId && String(currentRestId) !== String(fetchedRestId)) {
+                    console.log(`[Notification] Auto-print skipped: Order restaurant ${fetchedRestId} !== active ${currentRestId}`);
+                    return;
+                  }
                   await printThermalReceipt(res.data);
                 }
               } catch (err) {
@@ -229,6 +281,26 @@ export async function registerPushTokenWithBackend(token: string): Promise<boole
     return false;
   } catch (error) {
     console.error('[Push] Network error registering push token with backend:', error);
+    return false;
+  }
+}
+
+export async function unregisterPushTokenFromBackend(): Promise<boolean> {
+  try {
+    const token = await AsyncStorage.getItem('registered_push_token');
+    if (!token) return true;
+    const res = await apiRequest('/api/notifications/unregister-mobile', {
+      method: 'POST',
+      body: { token },
+    });
+    if (res.success) {
+      console.log('[Push] Unregistered push token with backend successfully.');
+      await AsyncStorage.removeItem('registered_push_token');
+      return true;
+    }
+    return false;
+  } catch (error) {
+    console.error('[Push] Network error unregistering push token with backend:', error);
     return false;
   }
 }

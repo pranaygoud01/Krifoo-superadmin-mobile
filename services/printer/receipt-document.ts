@@ -1,6 +1,6 @@
 import { Order } from '../../types';
 import { PosPrinterConfig } from '../pos-config.service';
-import { ReceiptTemplate, getCachedStoreProfile, formatRestaurantAddress, isDummyCustomerPhone } from '../receipt-customization.service';
+import { ReceiptTemplate, getCachedStoreProfile, formatRestaurantAddress, isDummyCustomerPhone, getItemOptionsList } from '../receipt-customization.service';
 
 export type ReceiptCommand =
   | {
@@ -477,12 +477,14 @@ export function buildReceiptDocument(order: Partial<Order> & any, config?: Parti
       }
     }
 
-    // Customization details (size, add-ons)
-    if (item.customization?.size) {
-      commands.push({ type: 'text', value: `   * Size: ${item.customization.size}`, align: 'left' });
-    }
-    if (Array.isArray(item.customization?.addOns) && item.customization.addOns.length > 0) {
-      commands.push({ type: 'text', value: `   + ${item.customization.addOns.join(', ')}`, align: 'left' });
+    // Customization, Variants & Add-ons
+    const options = getItemOptionsList(item);
+    options.forEach((opt) => {
+      commands.push({ type: 'text', value: `   + ${opt}`, align: 'left' });
+    });
+    const itemInstructions = item.instructions || item.specialInstructions || item.note;
+    if (itemInstructions) {
+      commands.push({ type: 'text', value: `   * Note: ${itemInstructions}`, align: 'left' });
     }
   }
 
@@ -848,14 +850,14 @@ export function buildCustomizedReceiptDocument(
       }
     }
 
-    // Modifiers & Add-ons
-    if (content.showItemNotes) {
-      if (item.customization?.size) {
-        commands.push({ type: 'text', value: `   * Size: ${item.customization.size}`, align: 'left', font });
-      }
-      if (Array.isArray(item.customization?.addOns) && item.customization.addOns.length > 0) {
-        commands.push({ type: 'text', value: `   + ${item.customization.addOns.join(', ')}`, align: 'left', font });
-      }
+    // Modifiers, Variants & Add-ons
+    const options = getItemOptionsList(item);
+    options.forEach((opt) => {
+      commands.push({ type: 'text', value: `   + ${opt}`, align: 'left', font });
+    });
+    const itemInstructions = item.instructions || item.specialInstructions || item.note;
+    if (content.showItemNotes && itemInstructions) {
+      commands.push({ type: 'text', value: `   * Note: ${itemInstructions}`, align: 'left', font });
     }
   }
 

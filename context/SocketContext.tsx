@@ -102,6 +102,17 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
               );
 
             if (isNewOrder) {
+              // Verify restaurant context (if logged in as restaurant owner)
+              const isOwner = user?.userType === 'owner';
+              const currentRestId = user?.restaurantId || user?._id || user?.id;
+              const notifRestId = data.restaurantId || data.order?.restaurantId || orderObj?.restaurantId;
+              const parsedNotifRestId = typeof notifRestId === 'object' ? notifRestId?._id : notifRestId;
+
+              if (isOwner && currentRestId && parsedNotifRestId && String(currentRestId) !== String(parsedNotifRestId)) {
+                console.log(`[Socket] Skipped new order alert for different restaurant: ${parsedNotifRestId} (active: ${currentRestId})`);
+                return;
+              }
+
               console.log('[Socket] New order detected. Triggering 5-sec buzz sound...');
               playOrderBuzzSound(5000).catch(console.error);
 
@@ -112,11 +123,20 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                 const orderId = data.orderId || data.id || orderObj?._id;
 
                 if (orderObj && (orderObj.orderedItems?.length || orderObj.items?.length)) {
+                  const orderRestId = typeof orderObj.restaurantId === 'object' ? orderObj.restaurantId?._id : orderObj.restaurantId;
+                  if (isOwner && currentRestId && orderRestId && String(currentRestId) !== String(orderRestId)) {
+                    return;
+                  }
                   await printThermalReceipt(orderObj);
                 } else if (orderId) {
                   try {
                     const res = await orderService.getOrderById(orderId);
                     if (res.success && res.data) {
+                      const fetchedRestId = typeof res.data.restaurantId === 'object' ? (res.data.restaurantId as any)?._id : res.data.restaurantId;
+                      if (isOwner && currentRestId && fetchedRestId && String(currentRestId) !== String(fetchedRestId)) {
+                        console.log(`[Socket] Auto-print skipped: Order restaurant ${fetchedRestId} !== active ${currentRestId}`);
+                        return;
+                      }
                       await printThermalReceipt(res.data);
                     }
                   } catch (err) {
@@ -195,6 +215,14 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
               // Only trigger sound & auto-print if the newly found order is in 'placed' status
               if (order.status === 'placed') {
+                const isOwner = user?.userType === 'owner';
+                const currentRestId = user?.restaurantId || user?._id || user?.id;
+                const orderRestId = typeof order.restaurantId === 'object' ? order.restaurantId?._id : order.restaurantId;
+
+                if (isOwner && currentRestId && orderRestId && String(currentRestId) !== String(orderRestId)) {
+                  continue;
+                }
+
                 console.log('[OrderSync] 🔔 New order detected from Website/API:', order.orderNumber || order._id);
 
                 // Emit live event so Dashboard and Orders screen update immediately without refresh!

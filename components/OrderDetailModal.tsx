@@ -8,6 +8,7 @@ import { Linking } from 'react-native';
 import { orderService } from '../services/order.service';
 import { printThermalReceipt, getLastPrintJobReport, getOrderScheduleInfo } from '../services/thermal-print.service';
 import { getSanitizedOrderNotes } from '../services/printer/receipt-document';
+import { getItemOptionsList } from '../services/receipt-customization.service';
 import { useToast } from '../context/ToastContext';
 
 interface OrderDetailModalProps {
@@ -564,13 +565,11 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
                     </View>
                     <View style={styles.itemInfo}>
                       <Text style={styles.itemName}>{itemName}</Text>
-                      {item.customization?.size ? (
-                        <Text style={styles.itemMeta}>Size: {item.customization.size}</Text>
-                      ) : null}
-                      {item.customization?.addOns && item.customization.addOns.length > 0 ? (
-                        <Text style={styles.itemMeta}>
-                          Add-ons: {item.customization.addOns.join(', ')}
-                        </Text>
+                      {getItemOptionsList(item).map((opt: string, oIdx: number) => (
+                        <Text key={oIdx} style={styles.itemMeta}>+ {opt}</Text>
+                      ))}
+                      {item.instructions ? (
+                        <Text style={[styles.itemMeta, { fontStyle: 'italic' }]}>Note: {item.instructions}</Text>
                       ) : null}
                     </View>
                     <Text style={styles.itemPrice}>£{itemTotal.toFixed(2)}</Text>

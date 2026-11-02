@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { apiRequest } from './api';
 import { STORAGE_KEYS } from '../constants/config';
 import { SuperAdminUser } from '../types';
+import { unregisterPushTokenFromBackend } from './notification';
 
 export const authService = {
   /**
@@ -92,6 +93,7 @@ export const authService = {
 
   async logout() {
     try {
+      await unregisterPushTokenFromBackend().catch(() => {});
       await apiRequest('/api/auth/logout', { method: 'POST' });
     } catch {
       // ignore
