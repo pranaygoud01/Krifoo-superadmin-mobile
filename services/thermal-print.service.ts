@@ -1340,7 +1340,7 @@ export const SAMPLE_THERMAL_ORDER = {
   },
   restaurantId: {
     _id: 'rest_1',
-    restaurantName: 'Swaad',
+    restaurantName: 'Demo Kitchen',
     phoneNumber: '83a Mill Rd, Cambridge CB1 2AW, UK',
   },
   orderedItems: [

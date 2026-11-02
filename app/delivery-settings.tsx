@@ -30,6 +30,7 @@ export default function DeliverySettingsScreen() {
     chargePerMile: '1',
     maxDeliveryRadius: '10',
     handlingChargesPercentage: '5.0',
+    defaultDeliveryTime: '30',
   });
 
   const loadConfig = async () => {
@@ -43,6 +44,7 @@ export default function DeliverySettingsScreen() {
           chargePerMile: (r.deliverySettings?.chargePerMile ?? 1).toString(),
           maxDeliveryRadius: (r.deliverySettings?.maxDeliveryRadius ?? 10).toString(),
           handlingChargesPercentage: (r.handlingChargesPercentage ?? 5.0).toString(),
+          defaultDeliveryTime: (r.defaultDeliveryTime ?? 30).toString(),
         });
       }
     } catch (e) {
@@ -63,14 +65,20 @@ export default function DeliverySettingsScreen() {
   const handleSave = async () => {
     setSaving(true);
     try {
-      const res = await restaurantOwnerService.updateRestaurantProfile({
+      const payload = {
         handlingChargesPercentage: parseFloat(config.handlingChargesPercentage) || 0,
+        defaultDeliveryTime: parseInt(config.defaultDeliveryTime, 10) || 30,
         deliverySettings: {
           freeDeliveryRadius: parseFloat(config.freeDeliveryRadius) || 0,
           chargePerMile: parseFloat(config.chargePerMile) || 0,
           maxDeliveryRadius: parseFloat(config.maxDeliveryRadius) || 0,
         },
-      });
+      };
+
+      let res = await restaurantOwnerService.updateRestaurantSettings(payload);
+      if (!res.success) {
+        res = await restaurantOwnerService.updateRestaurantProfile(payload);
+      }
 
       if (res.success) {
         Alert.alert('Success', 'Delivery parameters updated successfully.');
@@ -156,6 +164,21 @@ export default function DeliverySettingsScreen() {
                   onChangeText={(val) => handleChange('handlingChargesPercentage', val)}
                 />
               </View>
+            </View>
+
+            <View style={[styles.inputGroup, { marginTop: 4 }]}>
+              <Text style={styles.label}>Expected Delivery Time (Minutes)</Text>
+              <TextInput
+                style={styles.input}
+                keyboardType="numeric"
+                placeholder="e.g. 30"
+                placeholderTextColor={Colors.textMuted}
+                value={config.defaultDeliveryTime}
+                onChangeText={(val) => handleChange('defaultDeliveryTime', val)}
+              />
+              <Text style={styles.helperText}>
+                Standard default expected delivery time applied to new orders. You can customize this per individual order in the Orders board.
+              </Text>
             </View>
           </View>
 
@@ -243,6 +266,12 @@ const styles = StyleSheet.create({
     height: 42,
     fontSize: 13,
     color: Colors.text,
+  },
+  helperText: {
+    fontSize: 11.5,
+    color: Colors.textMuted,
+    marginTop: 5,
+    lineHeight: 16,
   },
   rowInputs: {
     flexDirection: 'row',

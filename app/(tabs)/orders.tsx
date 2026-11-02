@@ -198,18 +198,11 @@ export function getOrderSourceDetails(order: Order): {
   const phone = (order.customerDetails?.phoneNumber || (order.customerId as any)?.phoneNumber || '').replace(/\D/g, '');
   const oType = ((order.orderType || (order as any).deliveryType || '') as string).toLowerCase();
 
-  const isTakeawayApp =
-    oType === 'takeaway' ||
-    rawDomain.toLowerCase().includes('swaad-takeaway') ||
-    rawDomain.toLowerCase().includes('swaadtakeaway') ||
-    custName.includes('takeaway') ||
-    custName.includes('swaad takeaway') ||
-    phone.includes('7783448291');
-
-  if (isTakeawayApp) {
+  const appName = ((order as any).appName || '').trim();
+  if (appName) {
     return {
       isExternal: true,
-      domainUrl: 'Swaad Takeaway App',
+      domainUrl: appName,
     };
   }
 
@@ -229,9 +222,10 @@ export function getOrderSourceDetails(order: Order): {
     source === 'external' ||
     (rawDomain && !rawDomain.toLowerCase().includes('krifoo.co.uk'))
   ) {
+    const restName = typeof order.restaurantId === 'object' ? (order.restaurantId as any)?.restaurantName : '';
     let finalDomain = rawDomain;
     if (!finalDomain || finalDomain === 'External Website' || finalDomain === 'External Web') {
-      finalDomain = fallbackExtDomain || 'swaadcambridge.co.uk';
+      finalDomain = fallbackExtDomain || (restName ? `${restName} App` : 'External Web');
     }
     return {
       isExternal: true,
@@ -342,13 +336,9 @@ function getOrderFulfillmentType(order: Order): 'delivery' | 'pickup' | 'takeawa
 
   const isTakeawayApp =
     oType === 'takeaway' ||
-    domain.includes('swaad-takeaway') ||
-    domain.includes('swaadtakeaway') ||
     app.includes('takeaway') ||
     notes.includes('takeaway') ||
-    custName.includes('takeaway') ||
-    custName.includes('swaad takeaway') ||
-    phone.includes('7783448291');
+    custName.includes('takeaway');
 
   if (oType === 'takeaway' || ((oType === 'pickup' || !oType) && isTakeawayApp)) {
     return 'takeaway';
@@ -448,13 +438,14 @@ export const OrderCardSkeletonItem: React.FC = () => {
         </View>
         <View style={styles.kanbanAmountRow}>
           <Skeleton width={64} height={20} borderRadius={4} />
-          <Skeleton width={44} height={10} borderRadius={3} style={{ marginTop: 4 }} />
+          <Skeleton width={80} height={11} borderRadius={3} style={{ marginTop: 4 }} />
         </View>
       </View>
 
-      {/* Restaurant Title */}
-      <View style={{ marginTop: 8 }}>
-        <Skeleton width="55%" height={14} borderRadius={3} />
+      {/* Restaurant Title & Items */}
+      <View style={[styles.kanbanRestaurantRow, { marginTop: 8 }]}>
+        <Skeleton width="45%" height={14} borderRadius={3} />
+        <Skeleton width={44} height={12} borderRadius={3} />
       </View>
 
       {/* Channel Source Badge */}
@@ -474,7 +465,7 @@ export const OrderCardSkeletonItem: React.FC = () => {
       </View>
 
       {/* Address Block */}
-      <View style={[styles.kanbanAddressRow, isTablet && styles.kanbanAddressRowTablet, { backgroundColor: '#F8FAFC', borderColor: '#E2E8F0' }]}>
+      <View style={[styles.kanbanAddressRow, isTablet && styles.kanbanAddressRowTablet]}>
         <Skeleton width={14} height={14} borderRadius={7} style={{ marginTop: 2 }} />
         <View style={{ flex: 1, gap: 4 }}>
           <Skeleton width="30%" height={10} borderRadius={2} />
@@ -510,6 +501,7 @@ interface OrderCardProps {
   onPrint: (o: Order) => void;
   paperRollSize?: string;
   compact?: boolean;
+  onEditDeliveryTime?: (o: Order) => void;
 }
 
 const OrderCardItem: React.FC<OrderCardProps> = ({
@@ -520,6 +512,7 @@ const OrderCardItem: React.FC<OrderCardProps> = ({
   onPrint,
   paperRollSize = '58',
   compact = false,
+  onEditDeliveryTime,
 }) => {
   const { width: cardScreenWidth } = useWindowDimensions();
   const isTablet = cardScreenWidth >= TABLET_BREAKPOINT && !compact;
@@ -609,7 +602,7 @@ const OrderCardItem: React.FC<OrderCardProps> = ({
               activeOpacity={0.8}
             >
               <UtensilsCrossed size={isTablet ? 15 : compact ? 12 : 13} color="#FFFFFF" />
-              <Text style={[styles.acceptBtnText, isTablet && styles.acceptBtnTextTablet, compact && { fontSize: 11 }]} numberOfLines={1}>Ready to Serve</Text>
+              <Text style={[styles.acceptBtnText, isTablet && styles.acceptBtnTextTablet, compact && { fontSize: 11 }]} numberOfLines={1}>Prepared</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.printIconBtn, isTablet && styles.printIconBtnTablet, compact && { width: 34, height: 32 }]}
@@ -975,12 +968,16 @@ const OrderCardItem: React.FC<OrderCardProps> = ({
 
         <View style={[styles.kanbanAmountRow, compact && { flexShrink: 0, alignItems: 'flex-end' }]}>
           <Text style={[styles.kanbanAmount, isTablet && styles.kanbanAmountTablet, compact && { fontSize: 13 }]}>£{(totalAmount || 0).toFixed(2)}</Text>
-          <Text style={[styles.kanbanItemCount, isTablet && styles.kanbanItemCountTablet, compact && { fontSize: 9 }]}>{itemCount} items</Text>
+          <View style={[styles.kanbanDateRow, { marginTop: 2 }]}>
+            <Clock size={isTablet ? 11 : compact ? 9 : 10} color="#9BA1A6" />
+            <Text style={[styles.kanbanDate, isTablet && { fontSize: 11 }, compact && { fontSize: 9.5 }]}>{formatDateTime(order.createdAt)}</Text>
+          </View>
         </View>
       </View>
 
       <View style={styles.kanbanRestaurantRow}>
-        <Text style={[styles.kanbanRestaurant, isTablet && styles.kanbanRestaurantTablet, compact && { fontSize: 12 }]} numberOfLines={1}>{restaurantName}</Text>
+        <Text style={[styles.kanbanRestaurant, isTablet && styles.kanbanRestaurantTablet, compact && { fontSize: 12 }, { flex: 1, marginRight: 8 }]} numberOfLines={1}>{restaurantName}</Text>
+        <Text style={[styles.kanbanItemCount, isTablet && styles.kanbanItemCountTablet, compact && { fontSize: 9.5 }, { flexShrink: 0 }]}>{itemCount} {itemCount === 1 ? 'item' : 'items'}</Text>
       </View>
 
       <View style={[styles.sourceBadgeContainer, isTablet && styles.sourceBadgeContainerTablet]}>
@@ -990,7 +987,7 @@ const OrderCardItem: React.FC<OrderCardProps> = ({
             numberOfLines={1}
             ellipsizeMode="tail"
           >
-            {sourceDetails.isExternal ? (sourceDetails.domainUrl.includes('Takeaway') ? `🥡 ${sourceDetails.domainUrl}` : `🌐 ${sourceDetails.domainUrl}`) : '📱 krifoo.co.uk'}
+            {sourceDetails.isExternal ? (sourceDetails.domainUrl.includes('Takeaway') ? `🥡${sourceDetails.domainUrl}` : `🌐${sourceDetails.domainUrl}`) : '📱 Krifoo App'}
           </Text>
         </View>
       </View>
@@ -1008,7 +1005,7 @@ const OrderCardItem: React.FC<OrderCardProps> = ({
       </View>
 
       {fulfillmentType === 'delivery' && deliveryAddressText ? (
-        <View style={[styles.kanbanAddressRow, isTablet && styles.kanbanAddressRowTablet, compact && { paddingHorizontal: 6, paddingVertical: 5, marginBottom: 5, gap: 5, minWidth: 0 }]}>
+        <View style={[styles.kanbanAddressRow, isTablet && styles.kanbanAddressRowTablet, compact && { paddingHorizontal: 0, paddingVertical: 1, marginBottom: 5, gap: 5, minWidth: 0 }]}>
           <MapPin size={isTablet ? 15 : compact ? 11 : 13} color="#2563EB" style={[styles.addressPinIcon, compact && { marginTop: 1 }]} />
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text style={[styles.kanbanAddressHeader, isTablet && styles.kanbanAddressHeaderTablet, compact && { fontSize: 9, marginBottom: 0 }]}>DELIVERY ADDRESS:</Text>
@@ -1018,6 +1015,29 @@ const OrderCardItem: React.FC<OrderCardProps> = ({
           </View>
         </View>
       ) : null}
+
+      <View style={[styles.expectedDeliveryRow, isTablet && styles.expectedDeliveryRowTablet, compact && { marginBottom: 4 }]}>
+        <View style={[styles.expectedDeliveryBadge, isTablet && styles.expectedDeliveryBadgeTablet, compact && { paddingHorizontal: 6, paddingVertical: 2.5 }]}>
+          <Clock size={isTablet ? 12 : compact ? 10 : 11} color="#1D4ED8" />
+          <Text style={[styles.expectedDeliveryBadgeText, isTablet && { fontSize: 11 }, compact && { fontSize: 9.5 }]}>
+            Expected: {order.expectedDeliveryTime || order.deliveryTime || 30} mins
+          </Text>
+        </View>
+        {onEditDeliveryTime ? (
+          <TouchableOpacity
+            style={[styles.editDeliveryTimeBtn, isTablet && styles.editDeliveryTimeBtnTablet, compact && { paddingHorizontal: 6, paddingVertical: 2.5 }]}
+            onPress={(e: any) => {
+              e.stopPropagation?.();
+              onEditDeliveryTime(order);
+            }}
+            activeOpacity={0.7}
+          >
+            <Text style={[styles.editDeliveryTimeBtnText, isTablet && { fontSize: 10.5 }, compact && { fontSize: 9 }]}>
+              Edit
+            </Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
 
       <View style={[styles.kanbanTypeRow, isTablet && styles.kanbanTypeRowTablet, compact && { gap: 4, marginBottom: 5 }]}>
         {scheduleInfo.isScheduled && (
@@ -1083,49 +1103,7 @@ const OrderCardItem: React.FC<OrderCardProps> = ({
         )}
       </View>
 
-      <View style={[styles.kanbanFooter, compact && { marginTop: 4 }]}>
-        <View style={styles.kanbanDateRow}>
-          <Clock size={isTablet ? 13 : compact ? 10 : 11} color="#9BA1A6" />
-          <Text style={[styles.kanbanDate, isTablet && { fontSize: 11 }, compact && { fontSize: 9.5 }]}>{formatDateTime(order.createdAt)}</Text>
-        </View>
-        <View
-          style={[
-            styles.orderTypeBadge,
-            compact && { paddingHorizontal: 4, paddingVertical: 1.5 },
-            fulfillmentType === 'delivery'
-              ? { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }
-              : fulfillmentType === 'dine_in'
-              ? { backgroundColor: '#F5F3FF', borderColor: '#DDD6FE' }
-              : fulfillmentType === 'takeaway'
-              ? { backgroundColor: '#FEF3C7', borderColor: '#FDE68A' }
-              : { backgroundColor: '#FFF7ED', borderColor: '#FED7AA' },
-          ]}
-        >
-          <Text
-            style={[
-              styles.orderTypeText,
-              isTablet && { fontSize: 10 },
-              compact && { fontSize: 8 },
-              fulfillmentType === 'delivery'
-                ? { color: '#2563EB' }
-                : fulfillmentType === 'dine_in'
-                ? { color: '#7C3AED' }
-                : fulfillmentType === 'takeaway'
-                ? { color: '#B45309' }
-                : { color: '#EA580C' },
-            ]}
-            numberOfLines={1}
-          >
-            {fulfillmentType === 'delivery'
-              ? 'DELIVERY'
-              : fulfillmentType === 'dine_in'
-                ? 'DINE IN'
-              : fulfillmentType === 'takeaway'
-              ? 'TAKEAWAY'
-              : 'PICKUP'}
-          </Text>
-        </View>
-      </View>
+
 
       <TouchableOpacity style={[styles.viewItemsBtn, isTablet && { marginTop: 12, paddingTop: 10 }, compact && { marginTop: 6, paddingTop: 6 }]} onPress={() => setExpanded(!expanded)} activeOpacity={0.7}>
         <Text style={[styles.viewItemsBtnText, isTablet && { fontSize: 11 }, compact && { fontSize: 9.5 }]}>VIEW ITEMS & NOTES ({itemCount})</Text>
@@ -1274,7 +1252,7 @@ export default function OrdersScreen() {
 
   useEffect(() => {
     if (routeParams?.channel && ['all', 'delivery', 'pickup', 'takeaway', 'dine_in'].includes(routeParams.channel)) {
-      const channelVal = routeParams.channel === 'takeaway' ? 'pickup' : routeParams.channel;
+      const channelVal = routeParams.channel === 'takeaway' ? 'dine_in' : routeParams.channel;
       setTypeFilter(channelVal);
     }
   }, [routeParams?.channel]);
@@ -1335,6 +1313,10 @@ export default function OrdersScreen() {
   const [assignModalVisible, setAssignModalVisible] = useState(false);
   const [cancelModalVisible, setCancelModalVisible] = useState(false);
   const [orderToCancel, setOrderToCancel] = useState<Order | null>(null);
+  const [deliveryTimeModalOpen, setDeliveryTimeModalOpen] = useState(false);
+  const [deliveryTimeOrder, setDeliveryTimeOrder] = useState<Order | null>(null);
+  const [editingDeliveryTimeInput, setEditingDeliveryTimeInput] = useState('30');
+  const [savingDeliveryTime, setSavingDeliveryTime] = useState(false);
 
   const activeFilterCount = useMemo(() => {
     let count = 0;
@@ -1361,7 +1343,7 @@ export default function OrdersScreen() {
     const delivery = orders.filter((o) => getOrderFulfillmentType(o) === 'delivery').length;
     const takeaway = orders.filter((o) => getOrderFulfillmentType(o) === 'takeaway').length;
     const pickup = orders.filter((o) => getOrderFulfillmentType(o) === 'pickup').length;
-    const dineIn = orders.filter((o) => getOrderFulfillmentType(o) === 'dine_in').length;
+    const dineIn = orders.filter((o) => { const f = getOrderFulfillmentType(o); return f === 'dine_in' || f === 'takeaway'; }).length;
 
     const scheduled = orders.filter((o) => getOrderScheduleInfo(o).isScheduled).length;
     const asap = total - scheduled;
@@ -1545,7 +1527,7 @@ export default function OrdersScreen() {
         if (!idMatch && !restMatch && !custMatch && !domainMatch) return false;
       }
       const fType = getOrderFulfillmentType(order);
-      if (typeFilter !== 'all' && fType !== typeFilter) return false;
+      if (typeFilter !== 'all' && (typeFilter === 'dine_in' ? (fType !== 'dine_in' && fType !== 'takeaway') : fType !== typeFilter)) return false;
 
       const isExt = sourceDetails.isExternal;
       if (sourceFilter === 'external' && !isExt) return false;
@@ -1733,6 +1715,49 @@ export default function OrdersScreen() {
     }
   };
 
+  const handleOpenEditDeliveryTime = (order: Order) => {
+    setDeliveryTimeOrder(order);
+    setEditingDeliveryTimeInput(String(order.expectedDeliveryTime || order.deliveryTime || 30));
+    setDeliveryTimeModalOpen(true);
+  };
+
+  const handleSaveDeliveryTime = async (overrideMins?: number) => {
+    if (!deliveryTimeOrder) return;
+    const finalMins = overrideMins !== undefined ? overrideMins : parseInt(editingDeliveryTimeInput, 10);
+    if (isNaN(finalMins) || finalMins < 5 || finalMins > 300) {
+      showToast({ title: 'Invalid Time', message: 'Expected delivery time must be between 5 and 300 minutes.', type: 'error' });
+      return;
+    }
+
+    setSavingDeliveryTime(true);
+    try {
+      const res = await orderService.updateOrderDeliveryTime(deliveryTimeOrder._id, finalMins);
+      if (res.success) {
+        showToast({ title: 'Updated', message: `Expected delivery time set to ${finalMins} minutes.`, type: 'success' });
+        setOrders((prev) =>
+          prev.map((o) =>
+            o._id === deliveryTimeOrder._id
+              ? { ...o, deliveryTime: finalMins, expectedDeliveryTime: finalMins, ...(res.data || {}) }
+              : o
+          )
+        );
+        if (selectedOrder && selectedOrder._id === deliveryTimeOrder._id) {
+          setSelectedOrder((prev) =>
+            prev ? { ...prev, deliveryTime: finalMins, expectedDeliveryTime: finalMins, ...(res.data || {}) } : null
+          );
+        }
+        setDeliveryTimeModalOpen(false);
+        setDeliveryTimeOrder(null);
+      } else {
+        showToast({ title: 'Error', message: res.message || 'Failed to update expected delivery time.', type: 'error' });
+      }
+    } catch (err: any) {
+      showToast({ title: 'Error', message: err?.message || 'Error updating expected delivery time.', type: 'error' });
+    } finally {
+      setSavingDeliveryTime(false);
+    }
+  };
+
   const handlePrintOrder = async (order: Order) => {
     const orderNum = order.orderNumber || order._id?.slice(-5).toUpperCase() || 'Order';
     const orderStatus = order.status;
@@ -1788,12 +1813,7 @@ export default function OrdersScreen() {
               <View style={styles.liveDot} />
               <Text style={styles.liveText}>Live</Text>
             </View>
-          </View>
-          <Text style={[styles.pageSubtitle, isMobile && styles.pageSubtitleMobile]} numberOfLines={1}>
-            {isMobile
-              ? `${activeOrderCount} active order${activeOrderCount !== 1 ? 's' : ''}`
-              : `${activeOrderCount} active order${activeOrderCount !== 1 ? 's' : ''} requiring attention`}
-          </Text>
+            </View>
         </View>
 
         <View style={[styles.headerRightControls, isMobile && styles.headerRightControlsMobile]}>
@@ -1830,9 +1850,7 @@ export default function OrdersScreen() {
             </TouchableOpacity>
           </View>
 
-          <TouchableOpacity style={[styles.refreshBtn, isMobile && styles.refreshBtnMobile]} onPress={onRefresh}>
-            <RefreshCw size={isMobile ? 14 : 16} color={Colors.textSubtle} />
-          </TouchableOpacity>
+
         </View>
       </View>
       )}
@@ -1910,7 +1928,7 @@ export default function OrdersScreen() {
                   activeOpacity={0.7}
                 >
                   <Text style={styles.activeFilterChipText}>
-                    Type: {typeFilter === 'takeaway' ? 'Takeaway' : typeFilter === 'pickup' ? 'Self Pickup' : typeFilter === 'delivery' ? 'Delivery' : typeFilter === 'dine_in' ? 'Dine-In' : typeFilter}
+                      Type: {typeFilter === 'takeaway' || typeFilter === 'dine_in' ? 'Dine-In' : typeFilter === 'pickup' ? 'Self Pickup' : typeFilter === 'delivery' ? 'Delivery' : typeFilter}
                   </Text>
                   <X size={11} color="#FF5C39" />
                 </TouchableOpacity>
@@ -2740,6 +2758,7 @@ export default function OrdersScreen() {
                   onAssignDelivery={(o) => { setSelectedOrder(o); setAssignModalVisible(true); }}
                   onUpdateStatus={handleUpdateStatus}
                   onPrint={handlePrintOrder}
+                  onEditDeliveryTime={handleOpenEditDeliveryTime}
                   paperRollSize={paperRollSize}
                 />
               </View>
@@ -2855,6 +2874,7 @@ export default function OrdersScreen() {
                         onAssignDelivery={(o) => { setSelectedOrder(o); setAssignModalVisible(true); }}
                         onUpdateStatus={handleUpdateStatus}
                         onPrint={handlePrintOrder}
+                        onEditDeliveryTime={handleOpenEditDeliveryTime}
                         paperRollSize={paperRollSize}
                         compact={isCompact}
                       />
@@ -2877,6 +2897,7 @@ export default function OrdersScreen() {
         onCancelOrder={async (orderId) => {
           await executeUpdateStatus(orderId, 'cancelled');
         }}
+        onEditDeliveryTime={handleOpenEditDeliveryTime}
         paperRollSize={paperRollSize}
       />
       <AssignDeliveryModal
@@ -2909,23 +2930,403 @@ export default function OrdersScreen() {
           setOrderToCancel(null);
         }}
       />
+
+      {/* Edit Expected Delivery Time Modal */}
+      <Modal
+        visible={deliveryTimeModalOpen}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => {
+          if (!savingDeliveryTime) {
+            setDeliveryTimeModalOpen(false);
+            setDeliveryTimeOrder(null);
+          }
+        }}
+      >
+        <TouchableOpacity
+          style={[styles.dropdownOverlay, isTablet && styles.modalOverlayTablet]}
+          activeOpacity={1}
+          onPress={() => {
+            if (!savingDeliveryTime) {
+              setDeliveryTimeModalOpen(false);
+              setDeliveryTimeOrder(null);
+            }
+          }}
+        >
+          <TouchableOpacity
+            activeOpacity={1}
+            style={[styles.dtModalContainer, isTablet && styles.dtModalContainerTablet]}
+          >
+            {/* Header */}
+            <View style={styles.dtModalHeader}>
+              <View style={{ flex: 1 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Clock size={18} color="#2563EB" />
+                  <Text style={styles.dtModalTitle}>Expected Delivery Time</Text>
+                </View>
+                {deliveryTimeOrder && (
+                  <Text style={styles.dtModalSubtitle} numberOfLines={1}>
+                    Order #{deliveryTimeOrder.orderNumber || deliveryTimeOrder._id?.substring(0, 7).toUpperCase()} • {getCustomerName(deliveryTimeOrder)}
+                  </Text>
+                )}
+              </View>
+              <TouchableOpacity
+                onPress={() => {
+                  if (!savingDeliveryTime) {
+                    setDeliveryTimeModalOpen(false);
+                    setDeliveryTimeOrder(null);
+                  }
+                }}
+                style={styles.dtModalCloseBtn}
+                disabled={savingDeliveryTime}
+              >
+                <X size={18} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Body */}
+            <View style={styles.dtModalBody}>
+              <Text style={styles.dtSectionLabel}>Set Delivery Time (Minutes)</Text>
+
+              {/* Number Input with Stepper */}
+              <View style={styles.dtInputRow}>
+                <TouchableOpacity
+                  style={styles.dtStepperBtn}
+                  onPress={() => {
+                    const current = parseInt(editingDeliveryTimeInput, 10) || 30;
+                    setEditingDeliveryTimeInput(String(Math.max(5, current - 5)));
+                  }}
+                  disabled={savingDeliveryTime}
+                >
+                  <Minus size={18} color="#1E293B" />
+                </TouchableOpacity>
+
+                <View style={styles.dtInputWrapper}>
+                  <TextInput
+                    style={styles.dtNumberInput}
+                    keyboardType="numeric"
+                    value={editingDeliveryTimeInput}
+                    onChangeText={setEditingDeliveryTimeInput}
+                    editable={!savingDeliveryTime}
+                    selectTextOnFocus
+                  />
+                  <Text style={styles.dtInputSuffix}>mins</Text>
+                </View>
+
+                <TouchableOpacity
+                  style={styles.dtStepperBtn}
+                  onPress={() => {
+                    const current = parseInt(editingDeliveryTimeInput, 10) || 30;
+                    setEditingDeliveryTimeInput(String(Math.min(300, current + 5)));
+                  }}
+                  disabled={savingDeliveryTime}
+                >
+                  <Plus size={18} color="#1E293B" />
+                </TouchableOpacity>
+              </View>
+
+              {/* Quick Presets */}
+              <Text style={[styles.dtSectionLabel, { marginTop: 14 }]}>Quick Presets</Text>
+              <View style={styles.dtPresetsRow}>
+                {[15, 20, 30, 45, 60].map((mins) => {
+                  const isSelected = editingDeliveryTimeInput === String(mins);
+                  return (
+                    <TouchableOpacity
+                      key={mins}
+                      style={[styles.dtPresetPill, isSelected && styles.dtPresetPillActive]}
+                      onPress={() => setEditingDeliveryTimeInput(String(mins))}
+                      disabled={savingDeliveryTime}
+                    >
+                      <Text style={[styles.dtPresetPillText, isSelected && styles.dtPresetPillTextActive]}>
+                        {mins}m
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+            </View>
+
+            {/* Footer */}
+            <View style={styles.dtModalFooter}>
+              <TouchableOpacity
+                style={styles.dtCancelBtn}
+                onPress={() => {
+                  setDeliveryTimeModalOpen(false);
+                  setDeliveryTimeOrder(null);
+                }}
+                disabled={savingDeliveryTime}
+              >
+                <Text style={styles.dtCancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.dtSaveBtn, savingDeliveryTime && { opacity: 0.7 }]}
+                onPress={() => handleSaveDeliveryTime()}
+                disabled={savingDeliveryTime}
+              >
+                {savingDeliveryTime ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.dtSaveBtnText}>Save Time</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F8F9FA' },
-  stickySearchWrapper: {
+  expectedDeliveryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+    gap: 6,
+  },
+  expectedDeliveryRowTablet: {
+    marginBottom: 8,
+  },
+  expectedDeliveryBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    borderRadius: 7,
+    flexShrink: 1,
+  },
+  expectedDeliveryBadgeTablet: {
+    paddingHorizontal: 10,
+    paddingVertical: 4.5,
+    borderRadius: 8,
+  },
+  expectedDeliveryBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#1D4ED8',
+  },
+  editDeliveryTimeBtn: {
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    borderRadius: 7,
+  },
+  editDeliveryTimeBtnTablet: {
+    paddingHorizontal: 10,
+    paddingVertical: 4.5,
+    borderRadius: 8,
+  },
+  editDeliveryTimeBtnText: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: '#334155',
+  },
+  dtModalContainer: {
+    width: '100%',
     backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 16,
+    elevation: 10,
+    paddingBottom: Platform.OS === 'ios' ? 24 : 10,
+  },
+  dtModalContainerTablet: {
+    width: '90%',
+    maxWidth: 460,
+    borderRadius: 16,
+    alignSelf: 'center',
+    marginBottom: 'auto',
+    marginTop: 'auto',
+    paddingBottom: 0,
+  },
+  dtModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 18,
+    paddingTop: 16,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  dtModalTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  dtModalSubtitle: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#64748B',
+    marginTop: 2,
+  },
+  dtModalCloseBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dtModalBody: {
+    padding: 18,
+  },
+  dtSectionLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748B',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 8,
+  },
+  dtInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+    marginVertical: 4,
+  },
+  dtStepperBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 10,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  dtInputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1.5,
+    borderColor: '#CBD5E1',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    height: 48,
+    minWidth: 130,
+    justifyContent: 'center',
+  },
+  dtNumberInput: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#0F172A',
+    textAlign: 'center',
+    padding: 0,
+    minWidth: 45,
+  },
+  dtInputSuffix: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#64748B',
+    marginLeft: 6,
+  },
+  dtPresetsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    width: '100%',
+  },
+  dtPresetPill: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dtPresetPillActive: {
+    backgroundColor: '#2563EB',
+    borderColor: '#2563EB',
+  },
+  dtPresetPillText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#334155',
+  },
+  dtPresetPillTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+  },
+  dtAdjustPill: {
+    flex: 1,
+    paddingVertical: 9,
+    borderRadius: 8,
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dtAdjustPillText: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#1D4ED8',
+  },
+  dtModalFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 10,
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+    backgroundColor: '#F8FAFC',
+  },
+  dtCancelBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: '#E2E8F0',
+  },
+  dtCancelBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  dtSaveBtn: {
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: '#2563EB',
+    minWidth: 100,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dtSaveBtnText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  stickySearchWrapper: {
     zIndex: 20,
     width: '100%',
   },
   stickySearchWrapperElevated: {
-    shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.08,
     shadowRadius: 4,
-    elevation: 4,
+    
   },
   modalsOverlayWrapper: {
     position: 'absolute',
@@ -3719,7 +4120,7 @@ const styles = StyleSheet.create({
   refundedBadgeText: { fontSize: 9, fontWeight: '800', color: '#7C3AED', letterSpacing: 0.5 },
   kanbanAmountRow: { alignItems: 'flex-end' },
   kanbanAmount: { fontSize: 15, fontWeight: '800', color: '#11181C' },
-  kanbanItemCount: { fontSize: 10, color: '#9BA1A6', marginTop: 1 },
+  kanbanItemCount: { fontSize: 11, fontWeight: '600', color: '#687076' },
 
   kanbanDivider: { height: 1, backgroundColor: '#F5F5F5', marginVertical: 10 },
   kanbanCustomerRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
@@ -3730,12 +4131,8 @@ const styles = StyleSheet.create({
   kanbanAddressRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    backgroundColor: '#EFF6FF',
-    borderWidth: 1.5,
-    borderColor: '#BFDBFE',
-    borderRadius: 8,
-    paddingHorizontal: 9,
-    paddingVertical: 7,
+    paddingHorizontal: 0,
+    paddingVertical: 2,
     marginBottom: 8,
     gap: 7,
   },
@@ -3806,7 +4203,7 @@ const styles = StyleSheet.create({
   riderBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#F8F9FA', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 3, borderWidth: 1, borderColor: '#EEEEEE' },
   riderText: { fontSize: 10, color: '#687076' },
   kanbanFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  kanbanDateRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  kanbanDateRow: { flexDirection: 'row', alignItems: 'center', gap: 4, flexShrink: 0 },
   kanbanDate: { fontSize: 10, color: '#9BA1A6' },
   orderTypeBadge: { borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2, borderWidth: 1 },
   orderTypeText: { fontSize: 9, fontWeight: '800', letterSpacing: 0.5 },
@@ -3982,11 +4379,10 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
   kanbanAddressRowTablet: {
-    paddingHorizontal: 11,
-    paddingVertical: 9,
+    paddingHorizontal: 0,
+    paddingVertical: 3,
     marginBottom: 10,
     gap: 8,
-    borderRadius: 9,
   },
   kanbanAddressHeaderTablet: {
     fontSize: 11,
@@ -4091,6 +4487,9 @@ const styles = StyleSheet.create({
   },
   kanbanRestaurantRow: {
     marginTop: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
   kanbanRestaurant: {
     fontSize: 12,

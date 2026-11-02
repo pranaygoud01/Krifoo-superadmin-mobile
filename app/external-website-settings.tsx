@@ -475,7 +475,7 @@ export default function ExternalWebsiteSettingsScreen() {
                       style={styles.textInputWithIcon}
                       value={domain}
                       onChangeText={setDomain}
-                      placeholder="e.g. swaad.orderin.me or order.myshop.co.uk"
+                      placeholder="e.g. order.myrestaurant.co.uk or myrestaurant.com"
                       placeholderTextColor={Colors.textSubtle}
                       autoCapitalize="none"
                       autoCorrect={false}
@@ -489,7 +489,7 @@ export default function ExternalWebsiteSettingsScreen() {
                     style={styles.textInput}
                     value={brandName}
                     onChangeText={setBrandName}
-                    placeholder="e.g. Swaad Indian Cuisine"
+                    placeholder="e.g. Royal Kitchen Cuisine"
                     placeholderTextColor={Colors.textSubtle}
                   />
                 </View>
@@ -609,7 +609,7 @@ export default function ExternalWebsiteSettingsScreen() {
                     style={styles.textInput}
                     value={metaTitle}
                     onChangeText={setMetaTitle}
-                    placeholder="e.g. Swaad - Authentic Indian Takeaway & Delivery"
+                    placeholder="e.g. Delicious Food - Authentic Takeaway & Delivery"
                     placeholderTextColor={Colors.textSubtle}
                   />
                 </View>

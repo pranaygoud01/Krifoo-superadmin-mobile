@@ -18,6 +18,7 @@ interface OrderDetailModalProps {
   onAssignDelivery: (order: Order) => void;
   onUpdateStatus?: (orderId: string, status: string) => Promise<void>;
   onCancelOrder?: (orderId: string) => Promise<void>;
+  onEditDeliveryTime?: (order: Order) => void;
   paperRollSize?: string;
 }
 
@@ -28,6 +29,7 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
   onAssignDelivery,
   onUpdateStatus,
   onCancelOrder,
+  onEditDeliveryTime,
   paperRollSize = '58',
 }) => {
   const { width: windowWidth } = useWindowDimensions();
@@ -187,13 +189,9 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
   const isTakeaway =
     !isDineIn && (
       orderTypeRaw === 'takeaway' ||
-      domain.includes('swaad-takeaway') ||
-      domain.includes('swaadtakeaway') ||
       notes.includes('takeaway') ||
       custName.includes('takeaway') ||
-      custName.includes('swaad takeaway') ||
-      phone.includes('7783448291') ||
-      (order as any).appName === 'swaad-takeaway'
+      Boolean((order as any).appName && String((order as any).appName).toLowerCase().includes('takeaway'))
     );
 
   const isDeliveryOrder = !isTakeaway && !isDineIn && (orderTypeRaw === 'delivery' || (!orderTypeRaw && !!order.deliveryAddress && typeof order.deliveryAddress === 'object'));
@@ -398,20 +396,22 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
                   const isMarketplace = rawDomain.toLowerCase().includes('krifoo.co.uk') || (!rawDomain && source === 'krifoo');
                   const isExt = !isMarketplace && (source === 'external' || Boolean(rawDomain));
                   
+                      const restName = typeof order.restaurantId === 'object' ? (order.restaurantId as any)?.restaurantName : '';
                   let domainUrl = 'krifoo.co.uk';
-                  if (isTakeaway) {
-                    domainUrl = 'Swaad App';
+                      const appName = ((order as any).appName || '').trim();
+                      if (appName) {
+                        domainUrl = appName;
                   } else if (isExt) {
                     domainUrl = rawDomain && rawDomain !== 'External Website' && rawDomain !== 'External Web'
                       ? rawDomain
-                      : (fallbackExtDomain || 'swaadcambridge.co.uk');
+                      : (fallbackExtDomain || (restName ? `${restName} Web` : 'External Web'));
                   }
 
-                  if (isTakeaway || isExt) {
+                      if (isExt || appName) {
                     return (
                       <View style={{ backgroundColor: '#FEF3C7', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6, borderWidth: 1, borderColor: '#FDE68A' }}>
                         <Text style={{ fontSize: 13, fontWeight: '700', color: '#B45309' }}>
-                          {isTakeaway ? '🥡 Swaad App' : `🌐 ${domainUrl}`}
+                          {`🌐 ${domainUrl}`}
                         </Text>
                       </View>
                     );
@@ -435,13 +435,39 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
                   <Text style={styles.scheduledAlertTitle}>SCHEDULED ORDER</Text>
                 </View>
                 <Text style={styles.scheduledAlertTime}>
-                  Target Time / Slot: {scheduleInfo.scheduleTimeText}
+                      Time: {scheduleInfo.scheduleTimeText}
                 </Text>
                 <Text style={styles.scheduledAlertSubtitle}>
-                  Please do not prepare immediately. Cook closer to scheduled fulfillment time.
+                    Cook closer to scheduled fulfillment time.
                 </Text>
               </View>
             )}
+
+                {/* Expected Delivery Time Card */}
+                <View style={styles.deliveryTimeCard}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+                      <View style={styles.deliveryTimeIconCircle}>
+                        <Clock size={18} color="#2563EB" />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.deliveryTimeLabel}>EXPECTED DELIVERY TIME</Text>
+                        <Text style={styles.deliveryTimeValue}>
+                          {order.expectedDeliveryTime || order.deliveryTime || 30} mins
+                        </Text>
+                      </View>
+                    </View>
+                    {onEditDeliveryTime ? (
+                      <TouchableOpacity
+                        style={styles.editDeliveryTimeBtn}
+                        onPress={() => onEditDeliveryTime(order)}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={styles.editDeliveryTimeBtnText}>Edit Time</Text>
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
+                </View>
 
             {/* Customer & Location */}
             <View style={styles.card}>
@@ -1435,6 +1461,45 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#78350F',
     marginTop: 2,
+  },
+  deliveryTimeCard: {
+    backgroundColor: '#EFF6FF',
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#BFDBFE',
+    padding: 14,
+    marginBottom: 14,
+  },
+  deliveryTimeIconCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#DBEAFE',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  deliveryTimeLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#1E40AF',
+    letterSpacing: 0.5,
+  },
+  deliveryTimeValue: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#1E3A8A',
+    marginTop: 2,
+  },
+  editDeliveryTimeBtn: {
+    backgroundColor: '#2563EB',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 8,
+  },
+  editDeliveryTimeBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12.5,
+    fontWeight: '700',
   },
   scheduledAlertSubtitle: {
     fontSize: 12,

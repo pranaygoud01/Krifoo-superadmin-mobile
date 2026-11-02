@@ -396,7 +396,7 @@ export default function RestaurantDetailsScreen() {
             <Text style={styles.inputLabel}>Custom Domain / Hostname</Text>
             <TextInput
               style={styles.textInput}
-              placeholder="e.g. swaadcambridge.co.uk"
+              placeholder="e.g. myrestaurant.co.uk"
               placeholderTextColor={Colors.textSubtle}
               autoCapitalize="none"
               value={extDomain}
@@ -408,7 +408,7 @@ export default function RestaurantDetailsScreen() {
             <Text style={styles.inputLabel}>Brand Display Name</Text>
             <TextInput
               style={styles.textInput}
-              placeholder="e.g. Swaad Cambridge"
+              placeholder="e.g. Demo Kitchen"
               placeholderTextColor={Colors.textSubtle}
               value={extBrandName}
               onChangeText={setExtBrandName}

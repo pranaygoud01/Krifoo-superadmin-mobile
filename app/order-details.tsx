@@ -8,6 +8,9 @@ import {
   ActivityIndicator,
   Platform,
   Linking,
+  Modal,
+  TextInput,
+  useWindowDimensions,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Header } from '../components/Header';
@@ -33,6 +36,9 @@ import {
   ChevronDown,
   ChevronUp,
   Clock,
+  Minus,
+  Plus,
+  X,
 } from 'lucide-react-native';
 import { printThermalReceipt, isAutoPrintEnabled, getLastPrintJobReport, getOrderScheduleInfo } from '../services/thermal-print.service';
 import { getSanitizedOrderNotes } from '../services/printer/receipt-document';
@@ -61,6 +67,11 @@ export default function OrderDetailsScreen() {
   const [assignModalVisible, setAssignModalVisible] = useState(false);
   const [printing, setPrinting] = useState(false);
   const [paperRollSize, setPaperRollSize] = useState<string>('58');
+  const { width: windowWidth } = useWindowDimensions();
+  const isTablet = windowWidth >= 768;
+  const [deliveryTimeModalOpen, setDeliveryTimeModalOpen] = useState(false);
+  const [editingDeliveryTimeInput, setEditingDeliveryTimeInput] = useState('30');
+  const [savingDeliveryTime, setSavingDeliveryTime] = useState(false);
 
   useEffect(() => {
     const loadPaperRollSize = async () => {
@@ -78,6 +89,31 @@ export default function OrderDetailsScreen() {
     };
     loadPaperRollSize();
   }, []);
+
+  const handleSaveDeliveryTime = async (overrideMins?: number) => {
+    if (!order) return;
+    const finalMins = overrideMins !== undefined ? overrideMins : parseInt(editingDeliveryTimeInput, 10);
+    if (isNaN(finalMins) || finalMins < 5 || finalMins > 300) {
+      showToast({ title: 'Invalid Time', message: 'Expected delivery time must be between 5 and 300 minutes.', type: 'error' });
+      return;
+    }
+
+    setSavingDeliveryTime(true);
+    try {
+      const res = await orderService.updateOrderDeliveryTime(order._id, finalMins);
+      if (res.success) {
+        showToast({ title: 'Updated', message: `Expected delivery time set to ${finalMins} minutes.`, type: 'success' });
+        setOrder((prev) => (prev ? { ...prev, deliveryTime: finalMins, expectedDeliveryTime: finalMins, ...(res.data || {}) } : null));
+        setDeliveryTimeModalOpen(false);
+      } else {
+        showToast({ title: 'Error', message: res.message || 'Failed to update expected delivery time.', type: 'error' });
+      }
+    } catch (err: any) {
+      showToast({ title: 'Error', message: err?.message || 'Error updating expected delivery time.', type: 'error' });
+    } finally {
+      setSavingDeliveryTime(false);
+    }
+  };
 
   const handlePrintReceipt = async () => {
     if (!order) return;
@@ -275,13 +311,9 @@ export default function OrderDetailsScreen() {
   const isTakeaway =
     !isDineIn && (
       orderTypeRaw === 'takeaway' ||
-      domain.includes('swaad-takeaway') ||
-      domain.includes('swaadtakeaway') ||
       notes.includes('takeaway') ||
       custName.includes('takeaway') ||
-      custName.includes('swaad takeaway') ||
-      phone.includes('7783448291') ||
-      (order as any).appName === 'swaad-takeaway'
+      Boolean((order as any).appName && String((order as any).appName).toLowerCase().includes('takeaway'))
     );
 
   const isDeliveryOrder = !isTakeaway && !isDineIn && (orderTypeRaw === 'delivery' || (!orderTypeRaw && !!order.deliveryAddress && typeof order.deliveryAddress === 'object'));
@@ -439,6 +471,33 @@ export default function OrderDetailsScreen() {
           </View>
         )}
 
+        {/* Expected Delivery Time Card */}
+        <View style={styles.deliveryTimeCard}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+              <View style={styles.deliveryTimeIconCircle}>
+                <Clock size={18} color="#2563EB" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.deliveryTimeLabel}>EXPECTED DELIVERY TIME</Text>
+                <Text style={styles.deliveryTimeValue}>
+                  {order.expectedDeliveryTime || order.deliveryTime || 30} mins
+                </Text>
+              </View>
+            </View>
+            <TouchableOpacity
+              style={styles.editDeliveryTimeBtn}
+              onPress={() => {
+                setEditingDeliveryTimeInput(String(order.expectedDeliveryTime || order.deliveryTime || 30));
+                setDeliveryTimeModalOpen(true);
+              }}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.editDeliveryTimeBtnText}>Edit Time</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
         {/* Scheduled Order Banner */}
         {scheduleInfo.isScheduled && (
           <View style={styles.scheduledAlertBox}>
@@ -447,10 +506,10 @@ export default function OrderDetailsScreen() {
               <Text style={styles.scheduledAlertTitle}>SCHEDULED ORDER</Text>
             </View>
             <Text style={styles.scheduledAlertTime}>
-              Target Time / Slot: {scheduleInfo.scheduleTimeText}
+              Time: {scheduleInfo.scheduleTimeText}
             </Text>
             <Text style={styles.scheduledAlertSubtitle}>
-              Please do not prepare immediately. Cook closer to scheduled fulfillment time.
+              Cook closer to scheduled fulfillment time.
             </Text>
           </View>
         )}
@@ -568,8 +627,8 @@ export default function OrderDetailsScreen() {
                   {getItemOptionsList(item).map((opt: string, oIdx: number) => (
                     <Text key={oIdx} style={styles.itemMeta}>+ {opt}</Text>
                   ))}
-                  {item.instructions ? (
-                    <Text style={[styles.itemMeta, { fontStyle: 'italic' }]}>Note: {item.instructions}</Text>
+                  {(item as any).instructions ? (
+                    <Text style={[styles.itemMeta, { fontStyle: 'italic' }]}>Note: {(item as any).instructions}</Text>
                   ) : null}
                 </View>
                 <Text style={styles.itemPrice}>£{itemTotal.toFixed(2)}</Text>
@@ -722,6 +781,143 @@ export default function OrderDetailsScreen() {
         onClose={() => setAssignModalVisible(false)}
         onConfirmAssign={handleAssignConfirm}
       />
+
+      {/* Edit Expected Delivery Time Modal (Full Width on Mobile) */}
+      <Modal
+        visible={deliveryTimeModalOpen}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => {
+          if (!savingDeliveryTime) {
+            setDeliveryTimeModalOpen(false);
+          }
+        }}
+      >
+        <TouchableOpacity
+          style={[styles.dtModalOverlay, isTablet && styles.dtModalOverlayTablet]}
+          activeOpacity={1}
+          onPress={() => {
+            if (!savingDeliveryTime) {
+              setDeliveryTimeModalOpen(false);
+            }
+          }}
+        >
+          <TouchableOpacity
+            activeOpacity={1}
+            style={[styles.dtModalContainer, isTablet && styles.dtModalContainerTablet]}
+          >
+            {/* Header */}
+            <View style={styles.dtModalHeader}>
+              <View style={{ flex: 1 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Clock size={18} color="#2563EB" />
+                  <Text style={styles.dtModalTitle}>Expected Delivery Time</Text>
+                </View>
+                <Text style={styles.dtModalSubtitle} numberOfLines={1}>
+                  Order #{order.orderNumber || order._id?.substring(0, 7).toUpperCase()} • {customerName}
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => {
+                  if (!savingDeliveryTime) {
+                    setDeliveryTimeModalOpen(false);
+                  }
+                }}
+                style={styles.dtModalCloseBtn}
+                disabled={savingDeliveryTime}
+              >
+                <X size={18} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Body */}
+            <View style={styles.dtModalBody}>
+              <Text style={styles.dtSectionLabel}>Set Delivery Time (Minutes)</Text>
+
+              {/* Number Input with Stepper */}
+              <View style={styles.dtInputRow}>
+                <TouchableOpacity
+                  style={styles.dtStepperBtn}
+                  onPress={() => {
+                    const current = parseInt(editingDeliveryTimeInput, 10) || 30;
+                    setEditingDeliveryTimeInput(String(Math.max(5, current - 5)));
+                  }}
+                  disabled={savingDeliveryTime}
+                >
+                  <Minus size={18} color="#1E293B" />
+                </TouchableOpacity>
+
+                <View style={styles.dtInputWrapper}>
+                  <TextInput
+                    style={styles.dtNumberInput}
+                    keyboardType="numeric"
+                    value={editingDeliveryTimeInput}
+                    onChangeText={setEditingDeliveryTimeInput}
+                    editable={!savingDeliveryTime}
+                    selectTextOnFocus
+                  />
+                  <Text style={styles.dtInputSuffix}>mins</Text>
+                </View>
+
+                <TouchableOpacity
+                  style={styles.dtStepperBtn}
+                  onPress={() => {
+                    const current = parseInt(editingDeliveryTimeInput, 10) || 30;
+                    setEditingDeliveryTimeInput(String(Math.min(300, current + 5)));
+                  }}
+                  disabled={savingDeliveryTime}
+                >
+                  <Plus size={18} color="#1E293B" />
+                </TouchableOpacity>
+              </View>
+
+              {/* Quick Presets */}
+              <Text style={[styles.dtSectionLabel, { marginTop: 14 }]}>Quick Presets</Text>
+              <View style={styles.dtPresetsRow}>
+                {[15, 20, 30, 45, 60].map((mins) => {
+                  const isSelected = editingDeliveryTimeInput === String(mins);
+                  return (
+                    <TouchableOpacity
+                      key={mins}
+                      style={[styles.dtPresetPill, isSelected && styles.dtPresetPillActive]}
+                      onPress={() => setEditingDeliveryTimeInput(String(mins))}
+                      disabled={savingDeliveryTime}
+                    >
+                      <Text style={[styles.dtPresetPillText, isSelected && styles.dtPresetPillTextActive]}>
+                        {mins}m
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+            </View>
+
+            {/* Footer */}
+            <View style={styles.dtModalFooter}>
+              <TouchableOpacity
+                style={styles.dtCancelBtn}
+                onPress={() => setDeliveryTimeModalOpen(false)}
+                disabled={savingDeliveryTime}
+              >
+                <Text style={styles.dtCancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.dtSaveBtn, savingDeliveryTime && { opacity: 0.7 }]}
+                onPress={() => handleSaveDeliveryTime()}
+                disabled={savingDeliveryTime}
+              >
+                {savingDeliveryTime ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.dtSaveBtnText}>Save Time</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
     </View>
   );
 }
@@ -1086,5 +1282,241 @@ const styles = StyleSheet.create({
     color: '#92400E',
     marginTop: 4,
     fontWeight: '500',
+  },
+  deliveryTimeCard: {
+    backgroundColor: '#EFF6FF',
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#BFDBFE',
+    padding: 14,
+    marginBottom: 14,
+  },
+  deliveryTimeIconCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#DBEAFE',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  deliveryTimeLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#1E40AF',
+    letterSpacing: 0.5,
+  },
+  deliveryTimeValue: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#1E3A8A',
+    marginTop: 2,
+  },
+  editDeliveryTimeBtn: {
+    backgroundColor: '#2563EB',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 8,
+  },
+  editDeliveryTimeBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12.5,
+    fontWeight: '700',
+  },
+  dtModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+  },
+  dtModalOverlayTablet: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  dtModalContainer: {
+    width: '100%',
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 16,
+    elevation: 10,
+    paddingBottom: Platform.OS === 'ios' ? 24 : 10,
+  },
+  dtModalContainerTablet: {
+    width: '90%',
+    maxWidth: 460,
+    borderRadius: 16,
+    alignSelf: 'center',
+    marginBottom: 'auto',
+    marginTop: 'auto',
+    paddingBottom: 0,
+  },
+  dtModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 18,
+    paddingTop: 16,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  dtModalTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  dtModalSubtitle: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#64748B',
+    marginTop: 2,
+  },
+  dtModalCloseBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dtModalBody: {
+    padding: 18,
+  },
+  dtSectionLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748B',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 8,
+  },
+  dtInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+    marginVertical: 4,
+  },
+  dtStepperBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 10,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  dtInputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1.5,
+    borderColor: '#CBD5E1',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    height: 48,
+    minWidth: 130,
+    justifyContent: 'center',
+  },
+  dtNumberInput: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#0F172A',
+    textAlign: 'center',
+    padding: 0,
+    minWidth: 45,
+  },
+  dtInputSuffix: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#64748B',
+    marginLeft: 6,
+  },
+  dtPresetsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    width: '100%',
+  },
+  dtPresetPill: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dtPresetPillActive: {
+    backgroundColor: '#2563EB',
+    borderColor: '#2563EB',
+  },
+  dtPresetPillText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#334155',
+  },
+  dtPresetPillTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+  },
+  dtAdjustPill: {
+    flex: 1,
+    paddingVertical: 9,
+    borderRadius: 8,
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dtAdjustPillText: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#1D4ED8',
+  },
+  dtModalFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 10,
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+    backgroundColor: '#F8FAFC',
+  },
+  dtCancelBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: '#E2E8F0',
+  },
+  dtCancelBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  dtSaveBtn: {
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: '#2563EB',
+    minWidth: 100,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dtSaveBtnText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#FFFFFF',
   },
 });

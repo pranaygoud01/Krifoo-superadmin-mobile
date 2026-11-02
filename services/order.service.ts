@@ -193,6 +193,30 @@ export const orderService = {
    * GET restaurant dashboard stats.
    * Restaurant Owner only.
    */
+  /**
+   * Update expected delivery time for an order.
+   * If Super Admin: calls PATCH /api/admin/orders/:orderId/delivery-time
+   * If Restaurant Owner: calls PATCH /api/orders/:orderId/delivery-time
+   */
+  async updateOrderDeliveryTime(
+    orderId: string,
+    deliveryTime: number
+  ): Promise<{ success: boolean; message?: string; data?: Order }> {
+    const { isOwner } = await getUserContext();
+    const url = isOwner
+      ? `/api/orders/${orderId}/delivery-time`
+      : `/api/admin/orders/${orderId}/delivery-time`;
+
+    return apiRequest(url, {
+      method: 'PATCH',
+      body: { deliveryTime, expectedDeliveryTime: deliveryTime },
+    });
+  },
+
+  /**
+   * GET restaurant dashboard stats.
+   * Restaurant Owner only.
+   */
   async getRestaurantStats(): Promise<{ success: boolean; data?: any; message?: string }> {
     return apiRequest('/api/orders/restaurant/stats');
   },

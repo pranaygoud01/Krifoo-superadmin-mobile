@@ -211,6 +211,7 @@ export interface Order {
   isScheduled?: boolean;
   scheduledFor?: string;
   deliveryTime?: number;
+  expectedDeliveryTime?: number;
   createdAt: string;
   updatedAt?: string;
 

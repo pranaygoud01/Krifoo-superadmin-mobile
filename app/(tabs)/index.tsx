@@ -76,16 +76,24 @@ function getOrderFulfillmentType(order: Order): 'delivery' | 'pickup' | 'takeawa
   }
 
   const custName = (order.customerDetails?.name || (order.customerId as any)?.fullName || '').toLowerCase();
+  if (
+    oType === 'pickup' ||
+    oType === 'collection' ||
+    notes.includes('pickup') ||
+    notes.includes('collection') ||
+    notes.includes('self pickup') ||
+    addr1.includes('pickup')
+  ) {
+    return 'pickup';
+  }
+
   const isTakeawayApp =
     oType === 'takeaway' ||
-    domain.includes('swaad-takeaway') ||
-    domain.includes('swaadtakeaway') ||
     app.includes('takeaway') ||
     notes.includes('takeaway') ||
     custName.includes('takeaway');
 
   if (isTakeawayApp) return 'takeaway';
-  if (oType === 'pickup') return 'pickup';
   return 'delivery';
 }
 
@@ -169,7 +177,7 @@ function getOrderNextAction(order: Order): OrderNextAction | null {
 const STATUS_PICKER_OPTIONS: { id: string; label: string; color: string }[] = [
   { id: 'placed', label: 'Placed (New Order)', color: '#D97706' },
   { id: 'preparing', label: 'In Kitchen / Preparing', color: '#7C3AED' },
-  { id: 'ready_for_pickup', label: 'Ready for Pickup / Takeaway', color: '#EA580C' },
+  { id: 'ready_for_pickup', label: 'Ready for Pickup', color: '#EA580C' },
   { id: 'out_for_delivery', label: 'Out for Delivery', color: '#2563EB' },
   { id: 'delivered', label: 'Delivered / Completed', color: '#059669' },
   { id: 'cancelled', label: 'Cancelled', color: '#DC2626' },
@@ -265,7 +273,7 @@ export default function DashboardScreen() {
   // Live Counts for Order Terminal channels
   const orderTerminalCounts = useMemo(() => {
     let inStore = 0;
-    let takeaway = 0;
+    let pickup = 0;
     let delivery = 0;
 
     orders.forEach((o) => {
@@ -278,30 +286,35 @@ export default function DashboardScreen() {
         oType === 'dinein' ||
         oType === 'eatin' ||
         oType === 'eat_in' ||
+        oType === 'takeaway' ||
         (o as any).tableNumber ||
         notes.includes('eat-in') ||
         notes.includes('dine-in') ||
+        notes.includes('dine in') ||
+        notes.includes('takeaway') ||
         notes.includes('table') ||
         addr1.startsWith('table')
       ) {
         inStore++;
       } else if (
-        oType === 'takeaway' ||
         oType === 'pickup' ||
         oType === 'collection' ||
-        notes.includes('takeaway') ||
-        notes.includes('pickup')
+        notes.includes('pickup') ||
+        notes.includes('collection') ||
+        notes.includes('self pickup') ||
+        addr1.includes('pickup') ||
+        addr1.includes('collection')
       ) {
-        takeaway++;
+        pickup++;
       } else if (oType === 'delivery') {
         delivery++;
       } else {
         if (o.deliveryAddress) delivery++;
-        else takeaway++;
+        else pickup++;
       }
     });
 
-    return { inStore, takeaway, delivery };
+    return { inStore, pickup, delivery };
   }, [orders]);
 
   const loadDashboardData = async () => {
@@ -1311,7 +1324,7 @@ export default function DashboardScreen() {
                             </Text>
                           </View>
                           <View style={[styles.gridIllustrationBadge, { backgroundColor: '#FFF0EC', borderColor: '#FED7AA' }, isTablet && styles.gridIllustrationBadgeTablet]}>
-                              <ShoppingBag size={isTablet ? 24 : 20} color="#EA580C" />
+                            <Plus size={isTablet ? 24 : 20} color="#EA580C" />
                             </View>
                         </TouchableOpacity>
 
@@ -1342,9 +1355,9 @@ export default function DashboardScreen() {
                         </TouchableOpacity>
                       </View>
 
-                      {/* Pair 2: Takeaway Orders & Delivery Orders */}
+                      {/* Pair 2: Pickup Orders & Delivery Orders */}
                       <View style={[styles.gridContainer, isSmallScreen && { gap: 8 }, isTablet && styles.gridContainerTablet]}>
-                        {/* 3. Takeaway Orders Card */}
+                        {/* 3. Pickup Orders Card */}
                         <TouchableOpacity
                           style={[styles.gridCard, isSmallScreen && { padding: 11, minHeight: 80 }, isTablet && styles.gridCardTablet]}
                           onPress={() => router.push({ pathname: '/(tabs)/orders', params: { channel: 'pickup' } })}
@@ -1353,20 +1366,20 @@ export default function DashboardScreen() {
                           <View style={[styles.gridCardTextContainer, isSmallScreen && { paddingRight: 32 }]}>
                             <View style={styles.orderBadgeWrapper}>
                               <View style={[styles.channelBadge, { backgroundColor: '#FFF7ED', borderColor: '#FED7AA' }]}>
-                                <Text style={[styles.channelBadgeText, { color: '#EA580C' }]}>TAKEAWAY</Text>
+                                <Text style={[styles.channelBadgeText, { color: '#EA580C' }]}>PICKUP</Text>
                               </View>
                             </View>
                             <Text style={[styles.gridTitle, isTablet && styles.gridTitleTablet]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
-                              Takeaway Orders
+                              Pickup Orders
                             </Text>
                             <Text style={[styles.gridSub, isTablet && styles.gridSubTablet]} numberOfLines={2} ellipsizeMode="tail">
-                              {orderTerminalCounts.takeaway > 0
-                                ? `${orderTerminalCounts.takeaway} active • Pickup`
+                              {orderTerminalCounts.pickup > 0
+                                ? `${orderTerminalCounts.pickup} active • Pickup`
                                 : 'Pickup & collection'}
                             </Text>
                           </View>
                           <View style={[styles.gridIllustrationBadge, { backgroundColor: '#FFF7ED', borderColor: '#FED7AA' }, isTablet && styles.gridIllustrationBadgeTablet]}>
-                              <Utensils size={isTablet ? 24 : 20} color="#EA580C" />
+                            <ShoppingBag size={isTablet ? 24 : 20} color="#EA580C" />
                             </View>
                         </TouchableOpacity>
 

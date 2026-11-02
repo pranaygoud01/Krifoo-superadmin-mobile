@@ -196,13 +196,9 @@ export function getOrderFulfillmentLabel(order: any): string {
 
   const isTakeaway =
     rawFType.includes('TAKEAWAY') ||
-    domain.includes('swaad-takeaway') ||
-    domain.includes('swaadtakeaway') ||
     notes.includes('takeaway') ||
     custName.includes('takeaway') ||
-    custName.includes('swaad takeaway') ||
-    phone.includes('7783448291') ||
-    (order as any).appName === 'swaad-takeaway';
+    Boolean((order as any).appName && String((order as any).appName).toLowerCase().includes('takeaway'));
 
   if (isTakeaway) return 'TAKEAWAY';
   if (rawFType.includes('PICKUP') || rawFType.includes('COLLECT')) return 'PICKUP';
@@ -376,13 +372,9 @@ export function buildReceiptDocument(order: Partial<Order> & any, config?: Parti
   const phone = (order.customerDetails?.phoneNumber || (order.customerId as any)?.phoneNumber || '').replace(/\D/g, '');
   const isTakeaway =
     rawFType.includes('TAKEAWAY') ||
-    domain.includes('swaad-takeaway') ||
-    domain.includes('swaadtakeaway') ||
     notes.includes('takeaway') ||
     custName.includes('takeaway') ||
-    custName.includes('swaad takeaway') ||
-    phone.includes('7783448291') ||
-    (order as any).appName === 'swaad-takeaway';
+    Boolean((order as any).appName && String((order as any).appName).toLowerCase().includes('takeaway'));
 
   const isDineIn =
     rawFType.includes('DINE') ||
@@ -747,13 +739,9 @@ export function buildCustomizedReceiptDocument(
   const customPhone = (order.customerDetails?.phoneNumber || (order.customerId as any)?.phoneNumber || '').replace(/\D/g, '');
   const isCustomTakeaway =
     fulfillmentType.includes('TAKEAWAY') ||
-    customDomain.includes('swaad-takeaway') ||
-    customDomain.includes('swaadtakeaway') ||
     customNotes.includes('takeaway') ||
     customCustName.includes('takeaway') ||
-    customCustName.includes('swaad takeaway') ||
-    customPhone.includes('7783448291') ||
-    (order as any).appName === 'swaad-takeaway';
+    Boolean((order as any).appName && String((order as any).appName).toLowerCase().includes('takeaway'));
 
   const badgeText = isDineIn
     ? `[ DINE IN (TAKEAWAY) ${tableNum ? `TABLE ${tableNum}` : ''} ]`

@@ -559,7 +559,7 @@ export default function OperationSettingsScreen() {
                 <View style={{ flex: 1 }}>
                   <Text style={styles.bannerInfoTitle}>Standalone Website Order Acceptance</Text>
                   <Text style={styles.bannerInfoSub}>
-                    Control which payment and fulfillment options are available to customers on your direct website (e.g. Swaad Cambridge).
+                    Control which payment and fulfillment options are available to customers on your direct website (e.g. Your Restaurant Website).
                   </Text>
                 </View>
               </View>
