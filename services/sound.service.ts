@@ -1,7 +1,8 @@
 import { Vibration, Platform, AppState } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Audio } from 'expo-av';
+import { Audio, InterruptionModeIOS, InterruptionModeAndroid } from 'expo-av';
+import { Asset } from 'expo-asset';
 import { LocalSounds, getOrderBuzzPlaybackSource } from '@/constants/local-assets';
 
 export const SOUND_SETTINGS_KEY = '@krifoo_admin_sound_settings';
@@ -65,12 +66,15 @@ export async function saveSoundSettings(settings: Partial<SoundSettings>): Promi
 /**
  * Configure audio mode to ensure sound plays loudly even if device is on silent/vibrate
  */
-async function configureAudio() {
+export async function configureAudio() {
   try {
     await Audio.setAudioModeAsync({
+      allowsRecordingIOS: false,
       playsInSilentModeIOS: true,
-      staysActiveInBackground: false,
+      staysActiveInBackground: true,    // Keep iOS audio session alive for alert sounds
+      interruptionModeIOS: InterruptionModeIOS.DoNotMix,
       shouldDuckAndroid: true,
+      interruptionModeAndroid: InterruptionModeAndroid.DoNotMix,
       playThroughEarpieceAndroid: false,
     });
   } catch (err) {
@@ -194,16 +198,29 @@ export async function playOrderBuzzSound(
 
     if (requestId !== currentRequestId) return false;
 
-    const sourcesToTry: any[] = Platform.OS === 'android'
-      ? [
-          { uri: 'android.resource://com.krifoo.admin/raw/order_buzz' },
-          { uri: 'order_buzz' },
-          LocalSounds.orderBuzz,
-        ]
-      : [
-          LocalSounds.orderBuzz,
-          { uri: 'order_buzz.wav' },
-        ];
+    const sourcesToTry: any[] = [];
+    if (Platform.OS === 'android') {
+      sourcesToTry.push(
+        { uri: 'android.resource://com.krifoo.admin/raw/order_buzz' },
+        { uri: 'order_buzz' },
+        LocalSounds.orderBuzz
+      );
+    } else {
+      // iOS: resolve local file path from bundled asset for reliable offline playback
+      try {
+        const asset = Asset.fromModule(LocalSounds.orderBuzz);
+        if (!asset.localUri) {
+          await asset.downloadAsync();
+        }
+        if (asset.localUri) {
+          sourcesToTry.push({ uri: asset.localUri });
+        }
+      } catch (err) {
+        console.warn('[SoundService] Failed resolving iOS asset localUri:', err);
+      }
+      sourcesToTry.push(LocalSounds.orderBuzz);
+      sourcesToTry.push({ uri: 'order_buzz.wav' });
+    }
 
     let sound: any = null;
     let loadError: any = null;
@@ -218,7 +235,7 @@ export async function playOrderBuzzSound(
             volume: settings.volume,
           },
           null,
-          false // downloadFirst = false prevents any network download attempt
+          Platform.OS === 'ios' // downloadFirst = true on iOS ensures bundled asset is cached and ready
         );
         sound = result.sound;
         break;

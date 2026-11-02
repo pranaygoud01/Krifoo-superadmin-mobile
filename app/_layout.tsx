@@ -23,9 +23,11 @@ import { FontSizeProvider, globalFontScale } from '../context/FontSizeContext';
 import { SocketProvider } from '../context/SocketContext';
 import { ConnectionBanner } from '../components/ConnectionBanner';
 import { initAppOrientation } from '../services/orientation.service';
+import { configureAudio } from '../services/sound.service';
 
 // Initialize screen orientation preference
 initAppOrientation().catch(() => {});
+configureAudio().catch(() => {});
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
 // Global font family mapper

@@ -28,7 +28,10 @@
         "NSLocalNetworkUsageDescription": "This app requires Local Network access to discover and print receipts on network printers (Epson TM-m30III).",
         "NSAppTransportSecurity": {
           "NSAllowsArbitraryLoads": true
-        }
+        },
+        "UIBackgroundModes": [
+          "audio"
+        ]
       }
     },
     "android": {
