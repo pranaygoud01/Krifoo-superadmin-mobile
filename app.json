@@ -52,6 +52,7 @@
         "ACCESS_COARSE_LOCATION",
         "ACCESS_NETWORK_STATE",
         "CHANGE_WIFI_MULTICAST_STATE",
+        "android.permission.INTERNET",
         "INTERNET",
         "woyou.aidlservice.jiuiv5.permission.PRINT"
       ]
@@ -68,15 +69,7 @@
           "microphonePermission": false
         }
       ],
-      [
-        "expo-asset",
-        {
-          "assets": [
-            "./assets",
-            "./assets/sounds"
-          ]
-        }
-      ],
+      "expo-asset",
       [
         "expo-splash-screen",
         {
