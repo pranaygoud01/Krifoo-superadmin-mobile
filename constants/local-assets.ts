@@ -1,3 +1,4 @@
+import type { ImageSourcePropType } from 'react-native';
 import { Asset } from 'expo-asset';
 
 /**
@@ -30,11 +31,116 @@ export const LocalImages = {
   kpiCashOrders: require('@/assets/kpi_cash_orders.png'),
   kpiOnlineCard: require('@/assets/kpi_online_card.png'),
   kpiFulfillmentRate: require('@/assets/kpi_fulfillment_rate.png'),
-};
+  image: require('@/assets/food.png'),
+  login_bg: require('@/assets/login_cover.jpg'),
+  krifoo_logo: require('@/assets/logo.png'),
+} as const;
 
 export const LocalSounds = {
   orderBuzz: require('@/assets/sounds/order_buzz.wav'),
-};
+} as const;
+
+export function normalizeAssetPath(value?: string | null) {
+  if (!value) return '';
+  return value.trim().replace(/\\/g, '/');
+}
+
+export function isRemoteMediaUrl(value?: string | null) {
+  const normalized = normalizeAssetPath(value);
+  return Boolean(normalized) && /^(https?:|data:|blob:|file:|content:)/i.test(normalized);
+}
+
+function getAssetMapKey(value: string) {
+  const clean = value
+    .split('?')[0]
+    .split('#')[0]
+    .replace(/^@\/assets\//, '')
+    .replace(/^\.\/assets\//, '')
+    .replace(/^\/assets\//, '')
+    .replace(/^assets\//, '')
+    .replace(/\.[^/.]+$/, '')
+    .replace(/[^a-zA-Z0-9_]/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .replace(/_+/g, '_');
+
+  if (!clean) {
+    return { direct: '', kebab: '', camel: '', pascal: '', snake: '' };
+  }
+
+  const normalized = clean
+    .replace(/_([a-z])/g, (_, c) => c.toUpperCase())
+    .replace(/^([a-z])/, (_, c) => c.toUpperCase());
+
+  return {
+    direct: clean,
+    kebab: clean,
+    camel: normalized,
+    pascal: normalized,
+    snake: clean,
+  };
+}
+
+function lookupLocalAsset<T extends Record<string, any>>(registry: T, value?: string | null) {
+  const normalized = normalizeAssetPath(value);
+  if (!normalized) return null;
+
+  const keyVariants = getAssetMapKey(normalized);
+  const candidates = new Set<string>([
+    keyVariants.direct,
+    keyVariants.camel,
+    keyVariants.pascal,
+    keyVariants.snake,
+    keyVariants.camel.charAt(0).toLowerCase() + keyVariants.camel.slice(1),
+  ]);
+
+  for (const candidate of candidates) {
+    const asset = registry[candidate as keyof T];
+    if (asset) return asset;
+  }
+
+  return null;
+}
+
+export function resolveImageSource(
+  value?: string | null,
+  fallback: ImageSourcePropType = LocalImages.image,
+): ImageSourcePropType {
+  const normalized = normalizeAssetPath(value);
+
+  if (!normalized) {
+    return fallback;
+  }
+
+  if (isRemoteMediaUrl(normalized) || normalized.startsWith('//')) {
+    return { uri: normalized.startsWith('//') ? `https:${normalized}` : normalized };
+  }
+
+  const mappedAsset = lookupLocalAsset(LocalImages, normalized);
+  if (mappedAsset) {
+    return mappedAsset;
+  }
+
+  return { uri: normalized };
+}
+
+export function resolveAudioSource(source?: string | null) {
+  const normalized = normalizeAssetPath(source);
+
+  if (!normalized) {
+    return null;
+  }
+
+  if (isRemoteMediaUrl(normalized)) {
+    return { uri: normalized };
+  }
+
+  const mappedAsset = lookupLocalAsset(LocalSounds, normalized);
+  if (mappedAsset) {
+    return mappedAsset;
+  }
+
+  return { uri: normalized };
+}
 
 export async function getOrderBuzzPlaybackSource() {
   const asset = Asset.fromModule(LocalSounds.orderBuzz);

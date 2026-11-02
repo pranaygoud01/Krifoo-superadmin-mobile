@@ -1,4 +1,6 @@
+import type { ImageSourcePropType } from 'react-native';
 import { DEFAULT_API_URL } from '../constants/config';
+import { LocalImages, resolveImageSource } from '../constants/local-assets';
 
 /**
  * Safely resolves any image input (object, relative path, protocol-relative URL, or full URL)
@@ -17,6 +19,17 @@ export function resolveImageUrl(rawUrl?: any): string | null {
   if (typeof url !== 'string') return null;
   url = url.trim();
   if (!url) return null;
+
+  // Local Expo asset refs are bundled with `require()` and must not be converted into backend URLs.
+  if (
+    url.startsWith('@/assets/') ||
+    url.startsWith('./assets/') ||
+    url.startsWith('/assets/') ||
+    url.startsWith('assets/') ||
+    url.startsWith('~assets/')
+  ) {
+    return null;
+  }
 
   // Protocol-relative URLs (e.g. //res.cloudinary.com/...)
   if (url.startsWith('//')) {
@@ -46,5 +59,24 @@ export function resolveImageUrl(rawUrl?: any): string | null {
   // Fallback for paths without leading slash: e.g. "uploads/restaurant.png"
   const base = DEFAULT_API_URL.replace(/\/+$/, '');
   return `${base}/${url}`;
+}
+
+export function resolveMediaImageSource(
+  rawUrl?: any,
+  fallback: ImageSourcePropType = LocalImages.image,
+): ImageSourcePropType {
+  const localSource = resolveImageSource(rawUrl, fallback);
+  if (typeof rawUrl === 'string' && (
+    rawUrl.startsWith('@/assets/') ||
+    rawUrl.startsWith('./assets/') ||
+    rawUrl.startsWith('/assets/') ||
+    rawUrl.startsWith('assets/') ||
+    rawUrl.startsWith('~assets/')
+  )) {
+    return localSource;
+  }
+
+  const resolvedUrl = resolveImageUrl(rawUrl);
+  return resolvedUrl ? { uri: resolvedUrl } : fallback;
 }
 
