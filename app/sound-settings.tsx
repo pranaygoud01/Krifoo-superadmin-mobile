@@ -271,7 +271,14 @@ export default function SoundSettingsScreen() {
       setIsTestingSound(false);
     } else {
       setIsTestingSound(true);
-      await playOrderBuzzSound(settings.durationSeconds * 1000);
+      const played = await playOrderBuzzSound(settings.durationSeconds * 1000);
+      if (!played && settings.enabled) {
+        showToast({
+          title: 'Audio Notice',
+          message: 'Sound alert triggered with vibration fallback.',
+          type: 'info',
+        });
+      }
       const timer = setTimeout(() => {
         setIsTestingSound(false);
       }, settings.durationSeconds * 1000 + 300);

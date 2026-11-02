@@ -15,7 +15,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { Image } from 'expo-image';
-import { resolveImageUrl } from '../services/image.helper';
+import { resolveImageUrl, resolveMediaImageSource } from '../services/image.helper';
 import { Header } from '../components/Header';
 import { Colors } from '../constants/colors';
 import { categoryService } from '../services/category.service';
@@ -250,9 +250,9 @@ export default function CategoriesScreen() {
           }
           renderItem={({ item }) => (
             <View style={styles.categoryCard}>
-              {resolveImageUrl(item.imageUrl) ? (
+              {resolveMediaImageSource(item.imageUrl) ? (
                 <Image
-                  source={{ uri: resolveImageUrl(item.imageUrl)! }}
+                  source={resolveMediaImageSource(item.imageUrl)!}
                   style={styles.categoryThumb}
                   contentFit="cover"
                   transition={200}

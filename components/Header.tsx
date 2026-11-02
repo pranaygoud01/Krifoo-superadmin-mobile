@@ -7,9 +7,10 @@ import {
   Alert,
   DeviceEventEmitter,
   useWindowDimensions,
+  type ImageSourcePropType,
 } from 'react-native';
 import { Image } from 'expo-image';
-import { resolveImageUrl } from '../services/image.helper';
+import { resolveImageUrl, resolveMediaImageSource } from '../services/image.helper';
 import { LocalImages } from '@/constants/local-assets';
 import { useRouter, useSegments } from 'expo-router';
 import { ArrowLeft, Bell, Settings, User, Store } from 'lucide-react-native';
@@ -49,7 +50,7 @@ export const Header: React.FC<HeaderProps> = ({
   const isTablet = windowWidth >= 768;
 
   // Resolve restaurant logo from user object or props
-  const extractUserLogo = React.useCallback((): string | null => {
+  const extractUserLogo = React.useCallback((): ImageSourcePropType | null => {
     if (isSuperAdmin) return null;
     let raw: any = null;
     if (propRestaurantLogo) raw = propRestaurantLogo;
@@ -64,24 +65,24 @@ export const Header: React.FC<HeaderProps> = ({
     else if (user?.restaurant?.logoUrl) raw = user.restaurant.logoUrl;
     else if (user?.restaurant?.imageUrl) raw = user.restaurant.imageUrl;
 
-    return resolveImageUrl(raw);
+    return resolveMediaImageSource(raw);
   }, [isSuperAdmin, propRestaurantLogo, user]);
 
-  const [storeLogoUrl, setStoreLogoUrl] = React.useState<string | null>(extractUserLogo());
+  const [storeLogoSource, setStoreLogoSource] = React.useState<ImageSourcePropType | null>(extractUserLogo());
   const [imageError, setImageError] = React.useState<boolean>(false);
   const [localImageError, setLocalImageError] = React.useState<boolean>(false);
 
   // Fetch store logo if not present on user object
   React.useEffect(() => {
     if (isSuperAdmin) {
-      setStoreLogoUrl(null);
+      setStoreLogoSource(null);
       setImageError(false);
       return;
     }
 
     const immediateLogo = extractUserLogo();
     if (immediateLogo) {
-      setStoreLogoUrl(immediateLogo);
+      setStoreLogoSource(immediateLogo);
       setImageError(false);
       return;
     }
@@ -93,7 +94,7 @@ export const Header: React.FC<HeaderProps> = ({
         if (!isMounted) return;
         if (res.success && res.data) {
           const r = res.data;
-          const remoteLogo = resolveImageUrl(
+          const remoteLogo = resolveMediaImageSource(
             r.logoUrl ||
             r.externalWebsiteSettings?.logoUrl ||
             r.imageUrl ||
@@ -101,7 +102,7 @@ export const Header: React.FC<HeaderProps> = ({
             r.image
           );
           if (remoteLogo) {
-            setStoreLogoUrl(remoteLogo);
+            setStoreLogoSource(remoteLogo);
             setImageError(false);
           }
         }
@@ -222,9 +223,9 @@ export const Header: React.FC<HeaderProps> = ({
           <View style={styles.titleContainer}>
             {title === 'Krifoo Admin' ? (
               <View style={[styles.profileSection, isTablet && styles.profileSectionTablet]}>
-                {!isSuperAdmin && storeLogoUrl && !imageError ? (
+                {!isSuperAdmin && storeLogoSource && !imageError ? (
                   <Image
-                    source={{ uri: storeLogoUrl }}
+                    source={storeLogoSource}
                     style={[styles.headerLogo, styles.headerRestaurantLogo, isTablet && styles.headerLogoTablet]}
                     contentFit="cover"
                     transition={200}

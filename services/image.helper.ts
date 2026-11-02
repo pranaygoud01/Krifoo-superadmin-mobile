@@ -47,10 +47,9 @@ export function resolveImageUrl(rawUrl?: any): string | null {
     return url;
   }
 
-  // Full HTTP/HTTPS URLs
+// Full HTTP/HTTPS URLs: Upgrade any insecure HTTP (Cloudinary, backend, etc.) to secure HTTPS
   if (url.startsWith('http://') || url.startsWith('https://')) {
-    // Upgrade krifoo domain to secure HTTPS
-    if (url.startsWith('http://') && url.includes('krifoo.co.uk')) {
+    if (url.startsWith('http://')) {
       return url.replace('http://', 'https://');
     }
     return url;
@@ -63,20 +62,42 @@ export function resolveImageUrl(rawUrl?: any): string | null {
 
 export function resolveMediaImageSource(
   rawUrl?: any,
-  fallback: ImageSourcePropType = LocalImages.image,
-): ImageSourcePropType {
-  const localSource = resolveImageSource(rawUrl, fallback);
-  if (typeof rawUrl === 'string' && (
-    rawUrl.startsWith('@/assets/') ||
-    rawUrl.startsWith('./assets/') ||
-    rawUrl.startsWith('/assets/') ||
-    rawUrl.startsWith('assets/') ||
-    rawUrl.startsWith('~assets/')
-  )) {
-    return localSource;
+  fallback?: ImageSourcePropType | null,
+): ImageSourcePropType | null {
+  if (!rawUrl) {
+    return fallback ?? null;
   }
 
-  const resolvedUrl = resolveImageUrl(rawUrl);
-  return resolvedUrl ? { uri: resolvedUrl } : fallback;
+  // Bundled local asset required directly (number)
+  if (typeof rawUrl === 'number') {
+    return rawUrl;
+  }
+
+  // Object with uri
+  if (typeof rawUrl === 'object' && rawUrl.uri && typeof rawUrl.uri === 'string') {
+    const resolved = resolveImageUrl(rawUrl.uri);
+    return resolved ? { ...rawUrl, uri: resolved } : (fallback ?? null);
+  }
+
+  // Object with url or secure_url
+  let cleanCandidate = rawUrl;
+  if (typeof rawUrl === 'object') {
+    cleanCandidate = rawUrl.secure_url || rawUrl.url || rawUrl.uri || null;
+  }
+
+  if (typeof cleanCandidate === 'string') {
+    // Check if it matches a bundled local asset name (e.g. "assets/food.png", "food.png", "logo.png")
+    const localAsset = resolveImageSource(cleanCandidate, null as any);
+    if (localAsset && typeof localAsset === 'number') {
+      return localAsset;
+    }
+
+    const resolved = resolveImageUrl(cleanCandidate);
+    if (resolved) {
+      return { uri: resolved };
+    }
+  }
+
+  return fallback ?? null;
 }
 

@@ -1,4 +1,6 @@
-const { withAndroidManifest, withAndroidStyles } = require('expo/config-plugins');
+const { withAndroidManifest, withAndroidStyles, withDangerousMod } = require('expo/config-plugins');
+const fs = require('fs');
+const path = require('path');
 
 module.exports = function withDeviceCompatibility(config) {
   // 1. Manifest adjustments: hardware compatibility, queries, and large screen resizability
@@ -150,6 +152,32 @@ module.exports = function withDeviceCompatibility(config) {
     }
     return config;
   });
+
+  // 3. Raw audio resources & ProGuard preservation: copy order_buzz.wav and keep.xml to res/raw
+  config = withDangerousMod(config, [
+    'android',
+    async (config) => {
+      const projectRoot = config.modRequest.projectRoot;
+      const rawDir = path.resolve(projectRoot, 'android/app/src/main/res/raw');
+      if (!fs.existsSync(rawDir)) {
+        fs.mkdirSync(rawDir, { recursive: true });
+      }
+
+      // Copy order_buzz.wav if present in assets/sounds
+      const soundSource = path.resolve(projectRoot, 'assets/sounds/order_buzz.wav');
+      const soundDest = path.resolve(rawDir, 'order_buzz.wav');
+      if (fs.existsSync(soundSource)) {
+        fs.copyFileSync(soundSource, soundDest);
+      }
+
+      // Write keep.xml to prevent R8/ProGuard from stripping raw audio resources
+      const keepDest = path.resolve(rawDir, 'keep.xml');
+      const keepXml = `<?xml version="1.0" encoding="utf-8"?>\n<resources xmlns:tools="http://schemas.android.com/tools"\n    tools:shrinkMode="safe"\n    tools:keep="@drawable/*,@mipmap/*,@raw/*" />\n`;
+      fs.writeFileSync(keepDest, keepXml, 'utf8');
+
+      return config;
+    },
+  ]);
 
   return config;
 };

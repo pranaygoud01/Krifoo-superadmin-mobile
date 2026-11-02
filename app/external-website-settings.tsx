@@ -12,7 +12,7 @@ import {
   Platform,
 } from 'react-native';
 import { Image } from 'expo-image';
-import { resolveImageUrl } from '../services/image.helper';
+import { resolveImageUrl, resolveMediaImageSource } from '../services/image.helper';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Header } from '../components/Header';
 import { Colors } from '../constants/colors';
@@ -504,10 +504,10 @@ export default function ExternalWebsiteSettingsScreen() {
                     placeholderTextColor={Colors.textSubtle}
                     autoCapitalize="none"
                   />
-                  {resolveImageUrl(logoUrl) ? (
+                  {resolveMediaImageSource(logoUrl) ? (
                     <View style={styles.imageThumbnailRow}>
                       <Image
-                        source={{ uri: resolveImageUrl(logoUrl)! }}
+                        source={resolveMediaImageSource(logoUrl)!}
                         style={styles.logoPreview}
                         contentFit="cover"
                         transition={200}
@@ -528,9 +528,9 @@ export default function ExternalWebsiteSettingsScreen() {
                     placeholderTextColor={Colors.textSubtle}
                     autoCapitalize="none"
                   />
-                  {resolveImageUrl(heroBannerUrl) ? (
+                  {resolveMediaImageSource(heroBannerUrl) ? (
                     <Image
-                      source={{ uri: resolveImageUrl(heroBannerUrl)! }}
+                      source={resolveMediaImageSource(heroBannerUrl)!}
                       style={styles.bannerPreview}
                       contentFit="cover"
                       transition={200}

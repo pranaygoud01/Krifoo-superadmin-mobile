@@ -13,7 +13,7 @@ import {
   KeyboardAvoidingView,
 } from 'react-native';
 import { Image } from 'expo-image';
-import { resolveImageUrl } from '../services/image.helper';
+import { resolveImageUrl, resolveMediaImageSource } from '../services/image.helper';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Header } from '../components/Header';
 import { Colors } from '../constants/colors';
@@ -553,8 +553,8 @@ export default function AddEditMenuScreen() {
                 <TouchableOpacity style={styles.imageBox} onPress={pickImage} activeOpacity={0.88}>
                   {imageUri ? (
                     <Image source={{ uri: imageUri }} style={styles.imagePreview} contentFit="cover" transition={200} />
-                  ) : resolveImageUrl(existingImageUrl) ? (
-                    <Image source={{ uri: resolveImageUrl(existingImageUrl)! }} style={styles.imagePreview} contentFit="cover" transition={200} />
+                  ) : resolveMediaImageSource(existingImageUrl) ? (
+                    <Image source={resolveMediaImageSource(existingImageUrl)!} style={styles.imagePreview} contentFit="cover" transition={200} />
                   ) : (
                     <View style={styles.imagePlaceholder}>
                       <View style={styles.uploadIconCircle}>

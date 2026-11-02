@@ -18,7 +18,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useAuth } from '../../context/AuthContext';
 import { Image } from 'expo-image';
-import { resolveImageUrl } from '../../services/image.helper';
+import { resolveImageUrl, resolveMediaImageSource } from '../../services/image.helper';
 import { Colors } from '../../constants/colors';
 import { ErrorState } from '../../components/ErrorState';
 import { ApiErrorType } from '../../services/api';
@@ -367,7 +367,7 @@ export default function MenuScreen() {
     const itemName = item.itemName || item.name || 'Unnamed Item';
     const itemPrice = item.basePrice ?? item.price ?? 0;
     const itemCategory = item.categories?.[0]?.categoryName || item.category || 'General';
-    const imageUrl = resolveImageUrl(item.displayImageUrl || item.displayImage);
+    const imageSource = resolveMediaImageSource(item.displayImageUrl || item.displayImage);
     const discount = item.discountPercentage || 0;
     const discountedPrice = discount > 0 ? itemPrice * (1 - discount / 100) : itemPrice;
 
@@ -381,9 +381,9 @@ export default function MenuScreen() {
         {/* Top Section */}
         <View style={styles.menuCardTop}>
           <View style={styles.thumbWrapper}>
-            {imageUrl ? (
+            {imageSource ? (
               <Image
-                source={{ uri: imageUrl }}
+                source={imageSource}
                 style={styles.itemThumbnail}
                 contentFit="cover"
                 transition={200}

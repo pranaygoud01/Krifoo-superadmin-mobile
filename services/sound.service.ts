@@ -2,7 +2,7 @@ import { Vibration, Platform, AppState } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Audio } from 'expo-av';
-import { getOrderBuzzPlaybackSource } from '@/constants/local-assets';
+import { LocalSounds, getOrderBuzzPlaybackSource } from '@/constants/local-assets';
 
 export const SOUND_SETTINGS_KEY = '@krifoo_admin_sound_settings';
 
@@ -119,19 +119,19 @@ export async function stopOrderBuzzSound(): Promise<void> {
 export async function playOrderBuzzSound(
   overrideDurationMs?: number,
   eventType?: 'order' | 'booking' | 'cancellation'
-): Promise<void> {
+): Promise<boolean> {
   const settings = await getSoundSettings();
 
   // Check master switch
   if (!settings.enabled) {
     console.log('[SoundService] Sound alerts are disabled.');
-    return;
+    return false;
   }
 
   // Check event-specific switches
-  if (eventType === 'order' && !settings.notifyOrders) return;
-  if (eventType === 'booking' && !settings.notifyBookings) return;
-  if (eventType === 'cancellation' && !settings.notifyCancellations) return;
+  if (eventType === 'order' && !settings.notifyOrders) return false;
+  if (eventType === 'booking' && !settings.notifyBookings) return false;
+  if (eventType === 'cancellation' && !settings.notifyCancellations) return false;
 
   const durationMs = overrideDurationMs || (settings.durationSeconds * 1000);
   const now = Date.now();
@@ -139,7 +139,7 @@ export async function playOrderBuzzSound(
   // Debounce rapid duplicate calls (within 1.5s) to avoid overlapping audio loops
   if (now - lastPlayTimestamp < 1500 && activeSound) {
     console.log('[SoundService] Buzz alert already playing, skipping duplicate trigger.');
-    return;
+    return false;
   }
   lastPlayTimestamp = now;
 
@@ -172,7 +172,7 @@ export async function playOrderBuzzSound(
     }
 
     // If another request started while we were stopping, abort
-    if (requestId !== currentRequestId) return;
+    if (requestId !== currentRequestId) return false;
 
     console.log(`[SoundService] Triggering ${durationMs}ms order buzz alert (Vol: ${settings.volume})...`);
 
@@ -192,23 +192,52 @@ export async function playOrderBuzzSound(
     // 3. Audio setup & playback
     await configureAudio();
 
-    if (requestId !== currentRequestId) return;
+    if (requestId !== currentRequestId) return false;
 
-    const { sound } = await Audio.Sound.createAsync(
-      await getOrderBuzzPlaybackSource(),
-      {
-        shouldPlay: false,
-        isLooping: true,
-        volume: settings.volume,
+    const sourcesToTry: any[] = Platform.OS === 'android'
+      ? [
+          { uri: 'android.resource://com.krifoo.admin/raw/order_buzz' },
+          { uri: 'order_buzz' },
+          LocalSounds.orderBuzz,
+        ]
+      : [
+          LocalSounds.orderBuzz,
+          { uri: 'order_buzz.wav' },
+        ];
+
+    let sound: any = null;
+    let loadError: any = null;
+
+    for (const sourceCandidate of sourcesToTry) {
+      try {
+        const result = await Audio.Sound.createAsync(
+          sourceCandidate,
+          {
+            shouldPlay: false,
+            isLooping: true,
+            volume: settings.volume,
+          },
+          null,
+          false // downloadFirst = false prevents any network download attempt
+        );
+        sound = result.sound;
+        break;
+      } catch (err) {
+        console.warn('[SoundService] Source candidate failed, trying fallback:', sourceCandidate, err);
+        loadError = err;
       }
-    );
+    }
+
+    if (!sound) {
+      throw loadError || new Error('All audio playback sources failed to load');
+    }
 
     // If stopped/cancelled while loading the asset, immediately unload
     if (requestId !== currentRequestId) {
       try {
         await sound.unloadAsync();
       } catch (e) {}
-      return;
+      return false;
     }
 
     activeSound = sound;
@@ -222,6 +251,7 @@ export async function playOrderBuzzSound(
       }
     }, durationMs);
 
+    return true;
   } catch (error) {
     console.error('[SoundService] Error playing order buzz sound:', error);
     // Fallback vibration if enabled
@@ -236,6 +266,7 @@ export async function playOrderBuzzSound(
     buzzTimeout = setTimeout(async () => {
       await stopOrderBuzzSound();
     }, durationMs);
+    return false;
   }
 }
 

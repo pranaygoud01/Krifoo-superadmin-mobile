@@ -15,7 +15,7 @@ import {
   Keyboard,
 } from 'react-native';
 import { Image } from 'expo-image';
-import { resolveImageUrl } from '../services/image.helper';
+import { resolveImageUrl, resolveMediaImageSource } from '../services/image.helper';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
@@ -2800,10 +2800,10 @@ export default function ReceiptCustomizationScreen() {
               </Text>
 
               {/* Current Logo Preview */}
-              {currentTemplate.content.logoUrl ? (
+              {resolveMediaImageSource(currentTemplate.content.logoUrl) ? (
                 <View style={{ alignItems: 'center', marginVertical: 10, padding: 10, backgroundColor: '#F8FAFC', borderRadius: 10, borderWidth: 1, borderColor: '#E2E8F0' }}>
                   <Image
-                    source={{ uri: resolveImageUrl(currentTemplate.content.logoUrl)! }}
+                    source={resolveMediaImageSource(currentTemplate.content.logoUrl)!}
                     style={[
                       { width: 72, height: 72 },
                       currentTemplate.content.logoShape === 'circle' && { borderRadius: 36, overflow: 'hidden' },

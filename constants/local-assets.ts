@@ -1,4 +1,4 @@
-import type { ImageSourcePropType } from 'react-native';
+import { Platform, type ImageSourcePropType } from 'react-native';
 import { Asset } from 'expo-asset';
 
 /**
@@ -142,13 +142,10 @@ export function resolveAudioSource(source?: string | null) {
   return { uri: normalized };
 }
 
-export async function getOrderBuzzPlaybackSource() {
-  const asset = Asset.fromModule(LocalSounds.orderBuzz);
-  if (!asset.downloaded) {
-    await asset.downloadAsync();
-  }
-  if (asset.localUri) {
-    return { uri: asset.localUri };
+export function getOrderBuzzPlaybackSource() {
+  if (Platform.OS === 'android') {
+    // Direct Android native raw resource bundled in the APK (zero-network, offline-ready)
+    return { uri: 'android.resource://com.krifoo.admin/raw/order_buzz' };
   }
   return LocalSounds.orderBuzz;
 }

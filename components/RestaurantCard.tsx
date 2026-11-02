@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Switch } from 'react-native';
 import { Image } from 'expo-image';
-import { resolveImageUrl } from '../services/image.helper';
+import { resolveImageUrl, resolveMediaImageSource } from '../services/image.helper';
 import { Restaurant } from '../types';
 import { Colors } from '../constants/colors';
 import { StatusBadge } from './StatusBadge';
@@ -38,14 +38,20 @@ export const RestaurantCard: React.FC<RestaurantCardProps> = ({
 
   const isActive: boolean = restaurant.isActive ?? false;
 
-  const resolvedImageUrl = resolveImageUrl(restaurant.imageUrl);
+  const imageSource = resolveMediaImageSource(
+    restaurant.imageUrl ||
+    (restaurant as any).logoUrl ||
+    (restaurant as any).logo ||
+    restaurant.externalWebsiteSettings?.heroBannerUrl ||
+    restaurant.externalWebsiteSettings?.logoUrl
+  );
 
   return (
     <View style={styles.card}>
       <View style={styles.header}>
-        {resolvedImageUrl ? (
+        {imageSource ? (
           <Image
-            source={{ uri: resolvedImageUrl }}
+            source={imageSource}
             style={styles.image}
             contentFit="cover"
             transition={200}

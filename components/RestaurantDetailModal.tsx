@@ -11,7 +11,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { Image } from 'expo-image';
-import { resolveImageUrl } from '../services/image.helper';
+import { resolveImageUrl, resolveMediaImageSource } from '../services/image.helper';
 import { Restaurant, VerificationStatus } from '../types';
 import { Colors } from '../constants/colors';
 import { StatusBadge } from './StatusBadge';
@@ -86,19 +86,28 @@ export const RestaurantDetailModal: React.FC<RestaurantDetailModalProps> = ({
           <ScrollView style={styles.scrollBody} showsVerticalScrollIndicator={false}>
             {/* Banner & Basic Info */}
             <View style={styles.bannerRow}>
-              {resolveImageUrl(restaurant.imageUrl) ? (
-                <Image
-                  source={{ uri: resolveImageUrl(restaurant.imageUrl)! }}
-                  style={styles.bannerImage}
-                  contentFit="cover"
-                  transition={200}
-                  cachePolicy="memory-disk"
-                />
-              ) : (
-                <View style={[styles.bannerImage, styles.imagePlaceholder]}>
-                  <Text style={styles.placeholderText}>{restaurant.restaurantName?.charAt(0)}</Text>
-                </View>
-              )}
+              {(() => {
+                const bannerSource = resolveMediaImageSource(
+                  restaurant.imageUrl ||
+                  (restaurant as any).logoUrl ||
+                  (restaurant as any).logo ||
+                  restaurant.externalWebsiteSettings?.heroBannerUrl ||
+                  restaurant.externalWebsiteSettings?.logoUrl
+                );
+                return bannerSource ? (
+                  <Image
+                    source={bannerSource}
+                    style={styles.bannerImage}
+                    contentFit="cover"
+                    transition={200}
+                    cachePolicy="memory-disk"
+                  />
+                ) : (
+                  <View style={[styles.bannerImage, styles.imagePlaceholder]}>
+                    <Text style={styles.placeholderText}>{restaurant.restaurantName?.charAt(0)}</Text>
+                  </View>
+                );
+              })()}
               <View style={styles.bannerInfo}>
                 <Text style={styles.restaurantName}>{restaurant.restaurantName}</Text>
                 <Text style={styles.ownerText}>Owner: {restaurant.ownerName || 'Not specified'}</Text>
