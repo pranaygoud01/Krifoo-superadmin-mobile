@@ -91,12 +91,20 @@ export const authService = {
     });
   },
 
+  /** Removes the locally persisted session so a relaunch cannot restore it. */
+  async clearSession() {
+    await AsyncStorage.multiRemove([STORAGE_KEYS.ADMIN_TOKEN, STORAGE_KEYS.ADMIN_USER]).catch(() => {});
+  },
+
   async logout() {
     try {
       await unregisterPushTokenFromBackend().catch(() => {});
       await apiRequest('/api/auth/logout', { method: 'POST' });
     } catch {
       // ignore
+    } finally {
+      // Always drop the local session, even if the server is unreachable
+      await this.clearSession();
     }
   },
 

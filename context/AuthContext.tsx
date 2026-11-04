@@ -1,6 +1,8 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { DeviceEventEmitter } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { authService } from '../services/auth.service';
+import { SESSION_EXPIRED_EVENT } from '../services/api';
 import { STORAGE_KEYS } from '../constants/config';
 import { setupPushNotifications } from '../services/notification';
 
@@ -60,6 +62,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     migrateApiUrl().then(loadUser);
+  }, []);
+
+  // Server rejected our token: drop the session; AuthGate routes back to login
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener(SESSION_EXPIRED_EVENT, () => {
+      console.warn('[AuthContext] Session expired (401). Signing out.');
+      authService.clearSession().finally(() => setUser(null));
+    });
+    return () => sub.remove();
   }, []);
 
   const login = async (email: string, password: string) => {

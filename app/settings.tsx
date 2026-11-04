@@ -44,16 +44,22 @@ import {
 import RestaurantSettingsScreen from './restaurant-settings';
 
 export default function SettingsScreen() {
+  const { user } = useAuth();
+
+  // Restaurant owners get store-specific settings. Kept as separate components so
+  // a role change (e.g. logout -> user = null) never changes the hook order.
+  if (user && user.userType !== 'super_admin') {
+    return <RestaurantSettingsScreen />;
+  }
+  return <SuperAdminSettingsScreen />;
+}
+
+function SuperAdminSettingsScreen() {
   const { user, logout } = useAuth();
   const { showToast } = useToast();
   const router = useRouter();
   const { width } = useWindowDimensions();
   const isTablet = width >= 768;
-
-  // If logged in as restaurant owner, render store-specific settings
-  if (user && user.userType !== 'super_admin') {
-    return <RestaurantSettingsScreen />;
-  }
 
   const [logoutModalVisible, setLogoutModalVisible] = useState(false);
   const [deleteAccountModalVisible, setDeleteAccountModalVisible] = useState(false);

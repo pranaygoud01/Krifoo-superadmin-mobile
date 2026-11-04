@@ -14,6 +14,7 @@ import { playOrderBuzzSound } from './sound.service';
 import { printThermalReceipt, isAutoPrintEnabled } from './thermal-print.service';
 import { orderService } from './order.service';
 import { STORAGE_KEYS } from '../constants/config';
+import { claimOrderAlert } from './order-alert-registry';
 
 async function getActiveRestaurantContext(): Promise<{ isOwner: boolean; restaurantId: string | null }> {
   try {
@@ -70,6 +71,11 @@ if (TaskManager && typeof TaskManager.defineTask === 'function') {
 
         if (isOwner && currentRestId && parsedNotifRestId && String(currentRestId) !== String(parsedNotifRestId)) {
           console.log(`[Background Notification] Skipping: Order for restaurant ${parsedNotifRestId}, but active is ${currentRestId}`);
+          return;
+        }
+
+        if (!claimOrderAlert(orderId)) {
+          console.log(`[Background Notification] Order ${orderId} already alerted. Skipping print.`);
           return;
         }
 
@@ -147,14 +153,19 @@ try {
               return;
             }
 
+            const orderObj = data.order || data.data || (data.orderedItems ? data : null);
+            const orderId = data.orderId || data.id || orderObj?._id;
+            if (!claimOrderAlert(orderId)) {
+              console.log(`[Notification] Order ${orderId} already alerted via another channel. Skipping.`);
+              return;
+            }
+
             console.log('[Notification] Incoming new order notification received! Triggering 5-sec buzz sound...');
             playOrderBuzzSound(5000).catch(console.error);
 
             // Auto-print thermal receipt if enabled
             const autoPrint = await isAutoPrintEnabled();
             if (!autoPrint) return;
-            const orderObj = data.order || data.data || (data.orderedItems ? data : null);
-            const orderId = data.orderId || data.id || orderObj?._id;
 
             if (orderObj && (orderObj.orderedItems?.length || orderObj.items?.length)) {
               const orderRestId = typeof orderObj.restaurantId === 'object' ? orderObj.restaurantId?._id : orderObj.restaurantId;
@@ -255,7 +266,7 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
         projectId,
       });
       token = tokenData.data;
-      console.log('[Push] Device Push Token captured:', token);
+      console.log('[Push] Device push token captured.');
     } catch (error) {
       console.error('[Push] Error fetching Expo push token:', error);
     }
@@ -309,7 +320,7 @@ export async function setupPushNotifications(): Promise<void> {
   try {
     const token = await registerForPushNotificationsAsync();
     if (token) {
-      console.log('[Push] Registering token with backend:', token);
+      console.log('[Push] Registering token with backend.');
       await registerPushTokenWithBackend(token);
     }
   } catch (err) {

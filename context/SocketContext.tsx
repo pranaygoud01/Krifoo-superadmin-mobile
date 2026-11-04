@@ -5,6 +5,7 @@ import { getApiBaseUrl, getAuthToken } from '../services/api';
 import { playOrderBuzzSound } from '../services/sound.service';
 import { printThermalReceipt, isAutoPrintEnabled } from '../services/thermal-print.service';
 import { orderService } from '../services/order.service';
+import { claimOrderAlert, markOrdersSeen } from '../services/order-alert-registry';
 
 interface SocketContextType {
   socket: WebSocket | null;
@@ -57,7 +58,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         // Replace http/https with ws/wss
         const wsUrl = baseUrl.replace(/^http/, 'ws') + `?token=${token}`;
 
-        console.log('[Socket] Connecting to url:', wsUrl);
+        // Never log wsUrl itself: it carries the auth token
+        console.log('[Socket] Connecting to:', baseUrl);
         ws = new WebSocket(wsUrl);
         socketRef.current = ws;
 
@@ -79,7 +81,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         ws.onmessage = (event) => {
           try {
             const data = JSON.parse(event.data);
-            console.log('[Socket] Received message type:', data.type, data);
+            console.log('[Socket] Received message type:', data.type);
             DeviceEventEmitter.emit('websocket_message', data);
 
             // Trigger 5-second buzz sound and vibration only for genuine NEW orders (status: 'placed')
@@ -113,6 +115,12 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                 return;
               }
 
+              const orderId = data.orderId || data.id || orderObj?._id;
+              if (!claimOrderAlert(orderId)) {
+                console.log(`[Socket] Order ${orderId} already alerted via another channel. Skipping.`);
+                return;
+              }
+
               console.log('[Socket] New order detected. Triggering 5-sec buzz sound...');
               playOrderBuzzSound(5000).catch(console.error);
 
@@ -120,7 +128,6 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
               isAutoPrintEnabled().then(async (autoPrint) => {
                 if (!autoPrint) return;
                 console.log('[Socket] Auto-print enabled. Generating thermal receipt...');
-                const orderId = data.orderId || data.id || orderObj?._id;
 
                 if (orderObj && (orderObj.orderedItems?.length || orderObj.items?.length)) {
                   const orderRestId = typeof orderObj.restaurantId === 'object' ? orderObj.restaurantId?._id : orderObj.restaurantId;
@@ -174,7 +181,6 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     // Live Order Polling & Sync Loop (Intelligent fallback when WebSocket is inactive or on reconnect)
     let orderSyncInterval: any = null;
-    const knownOrderIds = new Set<string>();
     let isFirstPoll = true;
     let isSyncing = false;
     let lastPollTime = 0;
@@ -201,18 +207,15 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           const freshOrders = res.data;
 
           if (isFirstPoll) {
-            freshOrders.forEach((o) => {
-              if (o._id) knownOrderIds.add(o._id);
-            });
+            // Backlog that existed before this session started: don't re-alert it
+            markOrdersSeen(freshOrders.map((o) => o._id));
             isFirstPoll = false;
             return;
           }
 
           // Check if any fresh order is newly placed and not yet seen
           for (const order of freshOrders) {
-            if (order._id && !knownOrderIds.has(order._id)) {
-              knownOrderIds.add(order._id);
-
+            if (order._id) {
               // Only trigger sound & auto-print if the newly found order is in 'placed' status
               if (order.status === 'placed') {
                 const isOwner = user?.userType === 'owner';
@@ -220,6 +223,11 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                 const orderRestId = typeof order.restaurantId === 'object' ? order.restaurantId?._id : order.restaurantId;
 
                 if (isOwner && currentRestId && orderRestId && String(currentRestId) !== String(orderRestId)) {
+                  continue;
+                }
+
+                // Already alerted by the WebSocket or a push notification
+                if (!claimOrderAlert(order._id)) {
                   continue;
                 }
 

@@ -16,7 +16,8 @@
     "build:prod:android": "eas build --platform android --profile production",
     "build:prod:ios": "eas build --platform ios --profile production",
     "build:prod:all": "eas build --platform all --profile production",
-    "postinstall": "patch-package"
+    "postinstall": "patch-package",
+    "test": "jest"
   },
   "dependencies": {
     "@expo-google-fonts/inter-tight": "^0.4.2",
@@ -72,11 +73,29 @@
   },
   "devDependencies": {
     "@expo/config-plugins": "~54.0.4",
+    "@testing-library/react-native": "^14.1.0",
+    "@types/jest": "29.5.14",
     "@types/react": "~19.1.0",
     "eslint": "^9.25.0",
     "eslint-config-expo": "~10.0.0",
+    "jest": "~29.7.0",
+    "jest-expo": "~54.0.18",
     "patch-package": "^8.0.1",
     "typescript": "~5.9.2"
   },
-  "private": true
+  "private": true,
+  "jest": {
+    "preset": "jest-expo",
+    "setupFiles": [
+      "<rootDir>/jest.setup.ts"
+    ],
+    "testPathIgnorePatterns": [
+      "/node_modules/",
+      "/android/",
+      "/ios/"
+    ],
+    "moduleNameMapper": {
+      "^lucide-react-native$": "<rootDir>/node_modules/lucide-react-native/dist/cjs/lucide-react-native.js"
+    }
+  }
 }

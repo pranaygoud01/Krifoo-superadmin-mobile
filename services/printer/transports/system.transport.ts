@@ -1,4 +1,5 @@
 import { PrinterTransport, TransportResult } from './transport.types';
+import { printHtmlWithSystemDialog } from '../system-print';
 
 let Print: any = null;
 try {
@@ -34,15 +35,9 @@ export class SystemTransport implements PrinterTransport {
 
       // Format as thermal receipt (width: 226pt for 80mm roll, 164pt for 58mm roll)
       const targetWidth = this.paperWidth === '58mm' ? 164 : 226;
-      try {
-        const file = await Print.printToFileAsync({
-          html,
-          width: targetWidth,
-        });
-        await Print.printAsync({ uri: file.uri });
-      } catch (fileErr) {
-        // Fallback to direct printAsync if file generation is not supported
-        await Print.printAsync({ html });
+      const outcome = await printHtmlWithSystemDialog(html, targetWidth);
+      if (outcome === 'cancelled') {
+        return { ok: false, kind: 'protocol_error', detail: 'Print cancelled.' };
       }
       return { ok: true, rawResponse: 'system_print_spooled' };
     } catch (err: any) {

@@ -22,6 +22,7 @@ import { Text, StyleSheet, Platform } from 'react-native';
 import { FontSizeProvider, globalFontScale } from '../context/FontSizeContext';
 import { SocketProvider } from '../context/SocketContext';
 import { ConnectionBanner } from '../components/ConnectionBanner';
+import { AuthGate } from '../components/AuthGate';
 import { initAppOrientation } from '../services/orientation.service';
 import { configureAudio } from '../services/sound.service';
 
@@ -100,6 +101,7 @@ export default function RootLayout() {
             <SocketProvider>
               <StatusBar style="dark" />
               <ConnectionBanner />
+              <AuthGate />
               <Stack
                 screenOptions={{
                   headerShown: false,

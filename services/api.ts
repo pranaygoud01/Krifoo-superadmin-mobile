@@ -56,6 +56,20 @@ export async function setApiBaseUrl(url: string): Promise<void> {
   await AsyncStorage.setItem(STORAGE_KEYS.API_BASE_URL, normalized);
 }
 
+/** Emitted when an authenticated request is rejected with 401 (expired/revoked token). */
+export const SESSION_EXPIRED_EVENT = 'auth_session_expired';
+
+/**
+ * A 401 only means "session expired" when we actually sent a token to a
+ * non-auth endpoint. Login/logout endpoints legitimately return 401 for
+ * wrong credentials and must not force a logout.
+ */
+function notifyIfSessionExpired(statusCode: number, token: string | null, path: string) {
+  if (statusCode === 401 && token && !path.startsWith('/api/auth/')) {
+    DeviceEventEmitter.emit(SESSION_EXPIRED_EVENT, { path });
+  }
+}
+
 export async function getAuthToken(): Promise<string | null> {
   try {
     return await AsyncStorage.getItem(STORAGE_KEYS.ADMIN_TOKEN);
@@ -176,6 +190,8 @@ export async function apiRequest<T = any>(
     // Check Content-Type before parsing JSON
     const contentType = response.headers.get('content-type') || '';
     const isJson = contentType.includes('application/json');
+
+    notifyIfSessionExpired(response.status, token, path);
 
     if (!isJson) {
       const text = await response.text();

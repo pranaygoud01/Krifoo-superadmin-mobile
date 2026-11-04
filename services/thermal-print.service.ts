@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as Print from 'expo-print';
+import { printHtmlWithSystemDialog } from './printer/system-print';
 import { Order } from '../types';
 import { isSunmiAvailable, printSunmiOrderReceipt } from './sunmi-printer.service';
 import { getPosPrinterConfig, savePosPrinterConfig, PosPrinterConfig, POS_BRANDS, getBrandOption, getBrandName, profileFromConfig } from './pos-config.service';
@@ -1216,33 +1216,22 @@ export async function printThermalReceipt(
       console.log(`[PRINT ATTEMPT] Dispatching to System Print Spooler (PDF / AirPrint ${template.layout.paperWidth})...`);
       try {
         const html = generateThermalReceiptHtml(order, template);
-        const file = await Print.printToFileAsync({
-          html,
-          width: paperWidthPoints,
-        });
-
-        await Print.printAsync({
-          uri: file.uri,
-        });
+        const outcome = await printHtmlWithSystemDialog(html, paperWidthPoints);
+        if (outcome === 'cancelled') {
+          // User dismissed the AirPrint / system dialog: expected, not a failure.
+          // Stop here so remaining copies don't reopen the dialog.
+          console.log(`[PRINT CANCELLED] Order #${orderNum}: system print dialog was dismissed.`);
+          printError = 'Print cancelled.';
+          success = false;
+          break;
+        }
         driverUsed = 'system_spooler';
         driverLabel = `System Print Spooler (AirPrint / ${template.layout.paperWidth})`;
         success = true;
-      } catch (fallbackErr: any) {
-        console.warn('[PRINT FALLBACK] PrintToFileAsync failed, trying direct printAsync:', fallbackErr);
-        try {
-          const html = generateThermalReceiptHtml(order, template);
-          await Print.printAsync({
-            html,
-            width: paperWidthPoints,
-          });
-          driverUsed = 'system_spooler';
-          driverLabel = `System Print Spooler (Direct ${template.layout.paperWidth})`;
-          success = true;
-        } catch (directErr: any) {
-          console.error('[PRINT ERROR] All print attempts failed:', directErr);
-          printError = directErr?.message || fallbackErr?.message || 'Print spooler failed';
-          success = false;
-        }
+      } catch (spoolerErr: any) {
+        console.warn('[PRINT ERROR] System print spooler failed:', spoolerErr);
+        printError = spoolerErr?.message || 'Print spooler failed';
+        success = false;
       }
     }
 
