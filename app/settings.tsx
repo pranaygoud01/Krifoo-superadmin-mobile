@@ -7,6 +7,7 @@ import {
   TextInput,
   TouchableOpacity,
   ActivityIndicator,
+  Alert,
   useWindowDimensions,
   Platform,
 } from 'react-native';
@@ -14,11 +15,13 @@ import { useRouter } from 'expo-router';
 import { Header } from '../components/Header';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { useAuth } from '../context/AuthContext';
+import { authService } from '../services/auth.service';
 import { useToast } from '../context/ToastContext';
 import { Colors } from '../constants/colors';
 import {
   ShieldCheck,
   LogOut,
+  Trash2,
   Grid,
   Truck,
   Bell,
@@ -53,6 +56,30 @@ export default function SettingsScreen() {
   }
 
   const [logoutModalVisible, setLogoutModalVisible] = useState(false);
+  const [deleteAccountModalVisible, setDeleteAccountModalVisible] = useState(false);
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
+
+  const handleDeleteAccountConfirm = async () => {
+    setIsDeletingAccount(true);
+    try {
+      const res = await authService.deleteAccount(false);
+      if (res.success) {
+        setDeleteAccountModalVisible(false);
+        await logout();
+        Alert.alert(
+          'Account Deleted',
+          'Your account and associated data have been permanently deleted.'
+        );
+        router.replace('/login');
+      } else {
+        Alert.alert('Error', res.message || 'Failed to delete account.');
+      }
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'An error occurred while deleting account.');
+    } finally {
+      setIsDeletingAccount(false);
+    }
+  };
   const [appOrientation, setAppOrientation] = useState<AppOrientation>('portrait');
   const [isChangingOrientation, setIsChangingOrientation] = useState(false);
 
@@ -371,6 +398,27 @@ export default function SettingsScreen() {
           </TouchableOpacity>
         </View>
 
+        {/* SECTION 4: ACCOUNT MANAGEMENT */}
+        <Text style={[styles.sectionHeader, { color: Colors.danger }]}>ACCOUNT MANAGEMENT</Text>
+        <View style={[styles.cardGroup, { borderColor: '#FEE2E2' }]}>
+          <TouchableOpacity
+            style={styles.groupItem}
+            onPress={() => setDeleteAccountModalVisible(true)}
+            activeOpacity={0.7}
+          >
+            <View style={[styles.itemIconBadge, { backgroundColor: '#FEF2F2' }]}>
+              <Trash2 size={18} color={Colors.danger} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.itemTitle, { color: Colors.danger }]}>Delete Account</Text>
+              <Text style={styles.itemSubtitle}>
+                Permanently delete your account and personal profile data
+              </Text>
+            </View>
+            <ChevronRight size={18} color={Colors.danger} />
+          </TouchableOpacity>
+        </View>
+
         {/* Logout Button Card */}
         <TouchableOpacity
           style={styles.logoutCard}
@@ -385,7 +433,19 @@ export default function SettingsScreen() {
       </ScrollView>
 
       {/* Logout Confirm Modal */}
+            {/* Delete Account Confirm Modal */}
       <ConfirmModal
+        visible={deleteAccountModalVisible}
+        title="Delete Account"
+        message="Are you sure you want to permanently delete your account? This action cannot be undone. All your account and profile data will be permanently erased."
+        confirmText="Delete Account"
+        cancelText="Cancel"
+        isDestructive={true}
+        onConfirm={handleDeleteAccountConfirm}
+        onClose={() => setDeleteAccountModalVisible(false)}
+      />
+
+<ConfirmModal
         visible={logoutModalVisible}
         title="Logout"
         message="Are you sure you want to sign out from the Super Admin portal?"

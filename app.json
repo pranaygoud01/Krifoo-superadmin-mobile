@@ -3,7 +3,7 @@
     "name": "Krifoo Admin",
     "slug": "krifoo-admin",
     "owner": "krifoos-app",
-    "version": "1.0.19",
+    "version": "1.0.20",
     "orientation": "default",
     "icon": "./assets/logo.png",
     "scheme": "krifooadmin",
@@ -31,7 +31,9 @@
         },
         "UIBackgroundModes": [
           "audio"
-        ]
+        ],
+        "NSPhotoLibraryUsageDescription": "Krifoo Admin requires access to your photo library to allow store managers to upload dish photos, menu item images, restaurant logos, and receipt attachments.",
+        "NSCameraUsageDescription": "Krifoo Admin requires camera access to allow store staff to photograph menu items and scan order verification QR codes."
       }
     },
     "android": {
@@ -121,7 +123,14 @@
           }
         }
       ],
-      "expo-task-manager"
+      "expo-task-manager",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Krifoo Admin requires access to your photo library to allow store managers to upload dish photos, menu item images, restaurant logos, and receipt attachments.",
+          "cameraPermission": "Krifoo Admin requires camera access to allow store staff to photograph menu items and scan order verification QR codes."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

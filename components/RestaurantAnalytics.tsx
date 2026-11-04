@@ -283,7 +283,9 @@ export interface AnalyticsRestaurantProps {
     totalIncome: number;
   };
   restaurantName?: string;
+  restaurantId?: string;
   onNavigateOrders?: () => void;
+  onClose?: () => void;
 }
 
 export type RestaurantAnalyticsProps = AnalyticsRestaurantProps;
@@ -298,7 +300,9 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
   initialOrders,
   ownerStats,
   restaurantName = 'Restaurant',
+  restaurantId,
   onNavigateOrders,
+  onClose,
 }) => {
   const { width: windowWidth } = useWindowDimensions();
   const isSmallScreen = windowWidth < 375;
@@ -474,10 +478,33 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
         ]);
 
         if (ordersRes.status === 'fulfilled' && ordersRes.value.success) {
-          const list = ordersRes.value.data || (ordersRes.value as any).orders || [];
+          let list = ordersRes.value.data || (ordersRes.value as any).orders || [];
+          if (restaurantId) {
+            list = list.filter((o: any) => {
+              const rId =
+                o.restaurantId?._id ||
+                o.restaurantId?.id ||
+                o.restaurantId ||
+                (o.restaurant as any)?._id ||
+                (o.restaurant as any)?.id;
+              return String(rId) === String(restaurantId);
+            });
+          }
           setTimeframeOrders(list);
         } else if (tf === 'all' && initialOrders.length > 0) {
-          setTimeframeOrders(initialOrders);
+          let list = initialOrders;
+          if (restaurantId) {
+            list = list.filter((o: any) => {
+              const rId =
+                o.restaurantId?._id ||
+                o.restaurantId?.id ||
+                o.restaurantId ||
+                (o.restaurant as any)?._id ||
+                (o.restaurant as any)?.id;
+              return String(rId) === String(restaurantId);
+            });
+          }
+          setTimeframeOrders(list);
         }
 
         if (menuRes.status === 'fulfilled' && menuRes.value.success && Array.isArray(menuRes.value.data)) {
@@ -489,7 +516,18 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
           setTopDishes(dishes.slice(0, 5));
         } else {
           // Fallback: derive top dishes from orders
-          const fallbackList = ordersRes.status === 'fulfilled' && ordersRes.value.data ? ordersRes.value.data : initialOrders;
+          let fallbackList = ordersRes.status === 'fulfilled' && ordersRes.value.data ? ordersRes.value.data : initialOrders;
+          if (restaurantId) {
+            fallbackList = fallbackList.filter((o: any) => {
+              const rId =
+                o.restaurantId?._id ||
+                o.restaurantId?.id ||
+                o.restaurantId ||
+                (o.restaurant as any)?._id ||
+                (o.restaurant as any)?.id;
+              return String(rId) === String(restaurantId);
+            });
+          }
           const dishMap = new Map<string, TopDishItem>();
           fallbackList.forEach((o) => {
             if (o.status === 'cancelled') return;
@@ -513,7 +551,7 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
         setLoading(false);
       }
     },
-    [getTimeframeBounds, initialOrders, customStartDate, customEndDate]
+    [getTimeframeBounds, initialOrders, customStartDate, customEndDate, restaurantId]
   );
 
   const handleApplyCustomRange = () => {
@@ -533,15 +571,27 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
 
   useEffect(() => {
     fetchAnalyticsData(timeframe);
-  }, [timeframe, fetchAnalyticsData]);
+  }, [timeframe, fetchAnalyticsData, restaurantId]);
 
   useEffect(() => {
     if (initialOrders && initialOrders.length > 0) {
       if (timeframe === 'all') {
-        setTimeframeOrders(initialOrders);
+        let list = initialOrders;
+        if (restaurantId) {
+          list = list.filter((o: any) => {
+            const rId =
+              o.restaurantId?._id ||
+              o.restaurantId?.id ||
+              o.restaurantId ||
+              (o.restaurant as any)?._id ||
+              (o.restaurant as any)?.id;
+            return String(rId) === String(restaurantId);
+          });
+        }
+        setTimeframeOrders(list);
       }
     }
-  }, [initialOrders, timeframe]);
+  }, [initialOrders, timeframe, restaurantId]);
 
   // Compute analytics
   const analytics = useMemo(() => {

@@ -98,7 +98,14 @@ export const authService = {
     } catch {
       // ignore
     }
-    await AsyncStorage.removeItem(STORAGE_KEYS.ADMIN_TOKEN);
-    await AsyncStorage.removeItem(STORAGE_KEYS.ADMIN_USER);
+  },
+
+  async deleteAccount(isOwner = false): Promise<{ success: boolean; message?: string }> {
+    const url = isOwner ? '/api/restaurants/me' : '/api/users/account';
+    const res = await apiRequest(url, { method: 'DELETE' });
+    if (res.success) {
+      await this.logout();
+    }
+    return res;
   },
 };

@@ -27,6 +27,7 @@ import {
   Shield,
   ChevronRight,
   LogOut,
+  Trash2,
   Globe,
 } from 'lucide-react-native';
 
@@ -38,6 +39,30 @@ export default function RestaurantSettingsScreen() {
 
   const [loading, setLoading] = useState(false);
   const [logoutModalVisible, setLogoutModalVisible] = useState(false);
+  const [deleteAccountModalVisible, setDeleteAccountModalVisible] = useState(false);
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
+
+  const handleDeleteAccountConfirm = async () => {
+    setIsDeletingAccount(true);
+    try {
+      const res = await restaurantOwnerService.deleteAccount();
+      if (res.success) {
+        setDeleteAccountModalVisible(false);
+        await logout();
+        Alert.alert(
+          'Account Deleted',
+          'Your store account, products, and associated data have been permanently deleted.'
+        );
+        router.replace('/login');
+      } else {
+        Alert.alert('Error', res.message || 'Failed to delete account. Please contact support.');
+      }
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'An error occurred while deleting account.');
+    } finally {
+      setIsDeletingAccount(false);
+    }
+  };
   const [restaurantId, setRestaurantId] = useState<string>('');
 
   const [storeSummary, setStoreSummary] = useState({
@@ -365,6 +390,27 @@ export default function RestaurantSettingsScreen() {
             </TouchableOpacity>
           </View>
 
+          {/* SECTION 5: ACCOUNT ACTIONS */}
+          <Text style={[styles.sectionHeader, { color: Colors.danger }]}>ACCOUNT MANAGEMENT</Text>
+          <View style={[styles.cardGroup, { borderColor: '#FEE2E2' }]}>
+            <TouchableOpacity
+              style={styles.groupItem}
+              onPress={() => setDeleteAccountModalVisible(true)}
+              activeOpacity={0.7}
+            >
+              <View style={[styles.itemIconBadge, { backgroundColor: '#FEF2F2' }]}>
+                <Trash2 size={18} color={Colors.danger} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.itemTitle, { color: Colors.danger }]}>Delete Account</Text>
+                <Text style={styles.itemSubtitle}>
+                  Permanently delete your store account, products, and personal data
+                </Text>
+              </View>
+              <ChevronRight size={18} color={Colors.danger} />
+            </TouchableOpacity>
+          </View>
+
           {/* Logout Button */}
           <TouchableOpacity
             style={styles.logoutCard}
@@ -377,7 +423,19 @@ export default function RestaurantSettingsScreen() {
         </ScrollView>
       )}
 
+            {/* Delete Account Confirm Modal */}
       <ConfirmModal
+        visible={deleteAccountModalVisible}
+        title="Delete Account"
+        message="Are you sure you want to permanently delete your store account? This action cannot be undone. All your store profile, menu items, orders history, and account data will be permanently erased."
+        confirmText="Delete Account"
+        cancelText="Cancel"
+        isDestructive={true}
+        onConfirm={handleDeleteAccountConfirm}
+        onClose={() => setDeleteAccountModalVisible(false)}
+      />
+
+<ConfirmModal
         visible={logoutModalVisible}
         title="Logout"
         message="Are you sure you want to log out?"

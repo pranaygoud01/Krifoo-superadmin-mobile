@@ -13,9 +13,11 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Header } from '../../components/Header';
 import { StatCard } from '../../components/StatCard';
 import { StatusBadge } from '../../components/StatusBadge';
+import { RestaurantAnalytics } from '../../components/RestaurantAnalytics';
 import { CreateOrderModal } from '../../components/CreateOrderModal';
 import { ErrorState } from '../../components/ErrorState';
 import { ApiErrorType } from '../../services/api';
@@ -219,6 +221,10 @@ export default function DashboardScreen() {
 
   const [updatingOrderId, setUpdatingOrderId] = useState<string | null>(null);
   const [statusPickerOrder, setStatusPickerOrder] = useState<Order | null>(null);
+
+  // Individual Restaurant Analytics Modal & Selection State
+  const [selectedAnalyticsRestaurantId, setSelectedAnalyticsRestaurantId] = useState<string | null>(null);
+  const [showAnalyticsModal, setShowAnalyticsModal] = useState<boolean>(false);
 
   const handleUpdateOrderStatus = async (order: Order, newStatus: string) => {
     if (!order?._id) return;
@@ -570,6 +576,50 @@ export default function DashboardScreen() {
         return 'Selected Range';
     }
   }, [superTimeframe, customStartDate, customEndDate]);
+
+  // Selected restaurant for individual performance analytics
+  const activeAnalyticsRestaurant = useMemo(() => {
+    if (!restaurants || restaurants.length === 0) return null;
+    if (selectedAnalyticsRestaurantId) {
+      const found = restaurants.find(
+        (r) => (r._id || (r as any).id) === selectedAnalyticsRestaurantId
+      );
+      if (found) return found;
+    }
+    return restaurants[0];
+  }, [restaurants, selectedAnalyticsRestaurantId]);
+
+  // Scoped orders for active analytics restaurant
+  const activeAnalyticsOrders = useMemo(() => {
+    if (!activeAnalyticsRestaurant) return [];
+    const targetId = activeAnalyticsRestaurant._id || (activeAnalyticsRestaurant as any).id;
+    return orders.filter((o: any) => {
+      const rId =
+        o.restaurantId?._id ||
+        o.restaurantId?.id ||
+        o.restaurantId ||
+        (o.restaurant as any)?._id ||
+        (o.restaurant as any)?.id;
+      return String(rId) === String(targetId);
+    });
+  }, [activeAnalyticsRestaurant, orders]);
+
+  // Scoped summary stats for active analytics restaurant
+  const activeAnalyticsStats = useMemo(() => {
+    if (!activeAnalyticsRestaurant) {
+      return { totalOrders: 0, totalDelivered: 0, totalCancelled: 0, totalIncome: 0 };
+    }
+    const totalOrders = activeAnalyticsOrders.length;
+    const totalDelivered = activeAnalyticsOrders.filter((o) => o.status === 'delivered').length;
+    const totalCancelled = activeAnalyticsOrders.filter((o) => o.status === 'cancelled').length;
+    const totalIncome = activeAnalyticsOrders
+      .filter((o) => o.status === 'delivered')
+      .reduce((sum, o) => {
+        const amt = o.pricing?.totalAmount ?? o.pricing?.total ?? o.totalAmount ?? o.totalPrice ?? 0;
+        return sum + amt;
+      }, 0);
+    return { totalOrders, totalDelivered, totalCancelled, totalIncome };
+  }, [activeAnalyticsRestaurant, activeAnalyticsOrders]);
 
   // Helper for generating calendar month days
   const calendarDays = useMemo(() => {
@@ -1139,138 +1189,226 @@ export default function DashboardScreen() {
             </View>
 
 
-            {/* 6. All Stores Selected Range Performance Table */}
-            <View style={styles.topRestCard}>
-              <View style={styles.topRestHeaderRow}>
-                <View style={styles.sectionTitleGroup}>
-                  <Award size={18} color="#EA580C" />
-                  <Text style={styles.topRestTitle}>Store Performance</Text>
-                  <TouchableOpacity
-                    style={styles.rangePillBadge}
-                    onPress={() => {
-                      setPickerStartDate(customStartDate);
-                      setPickerEndDate(customEndDate);
-                      setCalendarMonth(new Date(customStartDate));
-                      setDateRangeModalVisible(true);
-                    }}
-                    activeOpacity={0.7}
-                  >
-                    {/* <Calendar size={11} color="#EA580C" style={{ marginRight: 3 }} /> */}
-                    <Text style={styles.rangePillBadgeText}>{selectedRangeLabel}</Text>
-                  </TouchableOpacity>
-                </View>
-
-              </View>
-
-              <View style={styles.storeTableCard}>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                      <View style={[styles.tableInner, isTablet && styles.tableInnerTablet]}>
-                    {/* Table Header */}
-                    <View style={styles.tableHeaderRow}>
-                      <Text style={[styles.tableHeaderCell, styles.colRestaurant, { textAlign: 'left' }]}>RESTAURANT</Text>
-                      <Text style={[styles.tableHeaderCell, styles.colOrders]}>TOTAL ORDERS</Text>
-                      <Text style={[styles.tableHeaderCell, styles.colDelivered]}>DELIVERED</Text>
-                      <Text style={[styles.tableHeaderCell, styles.colIncome]}>TOTAL INCOME</Text>
+                {/* 6. Analytics Card button to see all the individual restaurant performance */}
+                <View style={[styles.analyticsHubCard, isTablet && styles.analyticsHubCardTablet]}>
+                  {/* Header */}
+                  <View style={styles.analyticsHubHeader}>
+                    <View style={styles.analyticsHubTitleGroup}>
+                      <View style={styles.analyticsIconBadge}>
+                        <BarChart3 size={18} color="#4F46E5" />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <View style={styles.analyticsTitleRow}>
+                          <Text style={styles.analyticsHubTitle}>Restaurant Analytics</Text>
+                          <View style={styles.analyticsLivePill}>
+                            <View style={styles.analyticsLiveDot} />
+                            <Text style={styles.analyticsLiveText}>LIVE</Text>
+                          </View>
+                        </View>
+                        <Text style={styles.analyticsHubSubtitle} numberOfLines={1}>
+                          Individual store performance, sales & lifecycle metrics
+                        </Text>
+                      </View>
                     </View>
 
-                    {/* Table Body */}
-                    {restaurantTableData.length === 0 ? (
-                      <View style={styles.tableEmptyBox}>
-                        <ShoppingBag size={24} color={Colors.cardBorder} />
-                        <Text style={styles.tableEmptyText}>No restaurant data available</Text>
-                      </View>
-                    ) : (
-                      restaurantTableData.map((row, idx) => (
-                        <TouchableOpacity
-                          key={row.id + idx}
-                          style={[styles.tableRow, idx % 2 === 1 && styles.tableRowAlt]}
-                          activeOpacity={0.7}
-                          onPress={() => {
-                            if (row.id && row.id !== 'unknown') {
-                              router.push({
-                                pathname: '/restaurant-details',
-                                params: { restaurantId: row.id },
-                              });
-                            }
-                          }}
-                        >
-                          {/* Restaurant Name & Status */}
-                          <View style={[styles.tableCell, styles.colRestaurant, styles.cellRestaurantGroup]}>
+                    {/* Store count badge */}
+                    <View style={styles.storeCountBadge}>
+                      <Store size={12} color="#4F46E5" />
+                      <Text style={styles.storeCountBadgeText}>{restaurants.length} Stores</Text>
+                    </View>
+                  </View>
+
+                  {/* Horizontal Store Selector Ribbon */}
+                  {restaurants.length > 0 && (
+                    <View style={styles.analyticsStoreRibbonWrapper}>
+                      <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        contentContainerStyle={styles.analyticsStoreRibbon}
+                      >
+                        {restaurants.map((r) => {
+                          const rId = r._id || (r as any).id;
+                          const isCur =
+                            (activeAnalyticsRestaurant?._id || (activeAnalyticsRestaurant as any)?.id) === rId;
+                          return (
+                            <TouchableOpacity
+                              key={rId}
+                              style={[
+                                styles.storeSelectorChip,
+                                isCur && styles.storeSelectorChipActive,
+                              ]}
+                              onPress={() => setSelectedAnalyticsRestaurantId(rId)}
+                              activeOpacity={0.75}
+                            >
                             <View
                               style={[
-                                styles.statusDot,
-                                { backgroundColor: row.isActive !== false ? '#10B981' : '#9CA3AF' },
+                                  styles.storeStatusDot,
+                                  { backgroundColor: r.isActive ? '#10B981' : '#94A3B8' },
                               ]}
                             />
-                            <Text style={styles.restaurantCellName} numberOfLines={1}>
-                              {row.name}
-                            </Text>
-                          </View>
-
-                          {/* Total Orders */}
-                          <View style={[styles.tableCell, styles.colOrders]}>
-                            <View style={styles.orderBadgePill}>
-                              <Text style={styles.orderBadgePillText}>{row.totalOrders}</Text>
-                            </View>
-                          </View>
-
-                          {/* Delivered */}
-                          <View style={[styles.tableCell, styles.colDelivered]}>
-                            <View
-                              style={[
-                                styles.deliveredBadgePill,
-                                row.deliveredOrders > 0 && styles.deliveredBadgePillActive,
-                              ]}
-                            >
-
                               <Text
                                 style={[
-                                  styles.deliveredBadgePillText,
-                                  row.deliveredOrders > 0 && styles.deliveredBadgePillTextActive,
+                                  styles.storeSelectorChipText,
+                                  isCur && styles.storeSelectorChipTextActive,
                                 ]}
+                                numberOfLines={1}
                               >
-                                {row.deliveredOrders}
-                              </Text>
-                            </View>
-                          </View>
-
-                          {/* Total Income */}
-                          <View style={[styles.tableCell, styles.colIncome]}>
-                            <Text style={styles.incomeCellText}>
-                              £{row.totalIncome.toFixed(2)}
+                                {r.restaurantName || (r as any).name || 'Store'}
                             </Text>
-                          </View>
-                        </TouchableOpacity>
-                      ))
-                    )}
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </ScrollView>
+                    </View>
+                  )}
 
-                    {/* Summary Footer Row */}
-                    {restaurantTableData.length > 0 && (
-                      <View style={styles.tableFooterRow}>
-                        <View style={[styles.tableCell, styles.colRestaurant]}>
-                          <Text style={styles.tableFooterLabel}>
-                            All Stores ({restaurantTableData.length})
+                  {/* Selected Store Highlight Preview Box */}
+                  {activeAnalyticsRestaurant && (
+                    <View style={styles.selectedStorePreviewBox}>
+                      <View style={styles.selectedStoreTopRow}>
+                        <View style={styles.selectedStoreInfo}>
+                          <Text style={styles.selectedStoreName} numberOfLines={1}>
+                            {activeAnalyticsRestaurant.restaurantName || (activeAnalyticsRestaurant as any).name}
+                          </Text>
+                          <Text style={styles.selectedStoreSub} numberOfLines={1}>
+                            {(typeof activeAnalyticsRestaurant.address === 'object' ? activeAnalyticsRestaurant.address?.city : activeAnalyticsRestaurant.address) ||
+                              activeAnalyticsRestaurant.cuisineTypes?.join(', ') ||
+                              'Active Merchant Partner'}
                           </Text>
                         </View>
-                        <View style={[styles.tableCell, styles.colOrders]}>
-                          <Text style={styles.tableFooterValue}>{tableTotals.totalOrders}</Text>
-                        </View>
-                        <View style={[styles.tableCell, styles.colDelivered]}>
-                          <Text style={[styles.tableFooterValue, { color: '#059669' }]}>
-                            {tableTotals.deliveredOrders}
-                          </Text>
-                        </View>
-                        <View style={[styles.tableCell, styles.colIncome]}>
-                          <Text style={[styles.tableFooterValue, styles.tableFooterIncome]}>
-                            £{tableTotals.totalIncome.toFixed(2)}
+                        <View
+                          style={[
+                            styles.storeActiveBadge,
+                            {
+                              backgroundColor: activeAnalyticsRestaurant.isActive ? '#ECFDF5' : '#F1F5F9',
+                              borderColor: activeAnalyticsRestaurant.isActive ? '#A7F3D0' : '#CBD5E1',
+                            },
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.storeActiveBadgeText,
+                              { color: activeAnalyticsRestaurant.isActive ? '#065F46' : '#64748B' },
+                            ]}
+                          >
+                            {activeAnalyticsRestaurant.isActive ? 'Active' : 'Offline'}
                           </Text>
                         </View>
                       </View>
-                    )}
-                  </View>
-                </ScrollView>
-              </View>
-            </View>
+
+                      {/* 3 Quick Metric Pills */}
+                      <View style={styles.selectedStoreMetricsRow}>
+                        <View style={styles.previewMetricPill}>
+                          <Text style={styles.previewMetricLabel}>Revenue</Text>
+                          <Text style={[styles.previewMetricValue, { color: '#059669' }]} numberOfLines={1}>
+                            £{activeAnalyticsStats.totalIncome.toFixed(2)}
+                          </Text>
+                        </View>
+                        <View style={styles.previewMetricPill}>
+                          <Text style={styles.previewMetricLabel}>Total Orders</Text>
+                          <Text style={[styles.previewMetricValue, { color: '#1E293B' }]} numberOfLines={1}>
+                            {activeAnalyticsStats.totalOrders}
+                          </Text>
+                        </View>
+                        <View style={styles.previewMetricPill}>
+                          <Text style={styles.previewMetricLabel}>Fulfilled</Text>
+                          <Text style={[styles.previewMetricValue, { color: '#2563EB' }]} numberOfLines={1}>
+                            {activeAnalyticsStats.totalDelivered}
+                          </Text>
+                        </View>
+                      </View>
+
+                      {/* Primary CTA: Open Restaurant Analytics */}
+                      <TouchableOpacity
+                        style={styles.openAnalyticsBtn}
+                        onPress={() => setShowAnalyticsModal(true)}
+                        activeOpacity={0.85}
+                      >
+                        <BarChart3 size={17} color="#FFFFFF" style={{ marginRight: 8 }} />
+                        <Text style={styles.openAnalyticsBtnText} numberOfLines={1}>
+                          View {activeAnalyticsRestaurant.restaurantName || 'Store'} Analytics
+                        </Text>
+                        <ChevronRight size={17} color="#FFFFFF" style={{ marginLeft: 'auto' }} />
+                      </TouchableOpacity>
+                    </View>
+                  )}
+
+                  {/* Comprehensive Store Performance Leaderboard */}
+                  {restaurantTableData.length > 0 && (
+                    <View style={styles.storeLeaderboardSection}>
+                      <View style={styles.leaderboardHeader}>
+                        <Text style={styles.leaderboardTitle}>Individual Store Leaderboard</Text>
+                        <Text style={styles.leaderboardSub}>
+                          Tap Analytics on any store to inspect deep metrics
+                        </Text>
+                      </View>
+
+                      <View style={styles.leaderboardList}>
+                        {restaurantTableData.slice(0, 6).map((item, idx) => {
+                          const isItemActive =
+                            item.id ===
+                            (activeAnalyticsRestaurant?._id || (activeAnalyticsRestaurant as any)?.id);
+                          return (
+                            <View
+                              key={item.id}
+                              style={[
+                                styles.leaderboardRow,
+                                isItemActive && styles.leaderboardRowSelected,
+                                idx === Math.min(restaurantTableData.length, 6) - 1 && { borderBottomWidth: 0 },
+                              ]}
+                            >
+                              <View style={styles.leaderboardRankBadge}>
+                                <Text style={styles.leaderboardRankText}>#{idx + 1}</Text>
+                              </View>
+
+                              <View style={styles.leaderboardStoreInfo}>
+                                <Text style={styles.leaderboardStoreName} numberOfLines={1}>
+                                  {item.name}
+                                </Text>
+                                <Text style={styles.leaderboardStoreSub} numberOfLines={1}>
+                                  {item.totalOrders} orders • {item.deliveredOrders} delivered
+                                </Text>
+                              </View>
+
+                              <View style={styles.leaderboardRevenueBox}>
+                                <Text style={styles.leaderboardRevenueText} numberOfLines={1}>
+                                  £{item.totalIncome.toFixed(2)}
+                                </Text>
+                              </View>
+
+                              <TouchableOpacity
+                                style={[
+                                  styles.rowAnalyticsBtn,
+                                  isItemActive && styles.rowAnalyticsBtnActive,
+                                ]}
+                                onPress={() => {
+                                  setSelectedAnalyticsRestaurantId(item.id);
+                                  setShowAnalyticsModal(true);
+                                }}
+                                activeOpacity={0.8}
+                              >
+                                <BarChart3
+                                  size={12}
+                                  color={isItemActive ? '#FFFFFF' : '#4F46E5'}
+                                  style={{ marginRight: 4 }}
+                                />
+                                <Text
+                                  style={[
+                                    styles.rowAnalyticsBtnText,
+                                    isItemActive && styles.rowAnalyticsBtnTextActive,
+                                  ]}
+                                >
+                                  Analytics
+                                </Text>
+                              </TouchableOpacity>
+                            </View>
+                          );
+                        })}
+                      </View>
+                    </View>
+                  )}
+                </View>
+
           </>
         ) : (
           /* ================= RESTAURANT OWNER DASHBOARD ================= */
@@ -1879,6 +2017,117 @@ export default function DashboardScreen() {
           </View>
         </TouchableOpacity>
       </Modal>
+
+      {/* JSX_ANALYTICS_MODAL_CONTAINER */}
+      <Modal
+        visible={showAnalyticsModal}
+        animationType="slide"
+        presentationStyle="fullScreen"
+        onRequestClose={() => setShowAnalyticsModal(false)}
+      >
+        <SafeAreaView style={styles.analyticsModalSafeArea} edges={['top', 'bottom']}>
+          {/* Top Modal Header */}
+          <View style={[styles.analyticsModalHeader, isTablet && styles.analyticsModalHeaderTablet]}>
+            <TouchableOpacity
+              style={styles.modalCloseCircle}
+              onPress={() => setShowAnalyticsModal(false)}
+              activeOpacity={0.7}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            >
+              <X size={20} color="#0F172A" />
+            </TouchableOpacity>
+
+            <View style={styles.modalHeaderTitleGroup}>
+              <View style={styles.modalHeaderTitleRow}>
+                <Text style={styles.modalHeaderTitle} numberOfLines={1}>
+                  {activeAnalyticsRestaurant?.restaurantName || (activeAnalyticsRestaurant as any)?.name || 'Restaurant'}
+                </Text>
+                <View style={styles.modalLiveBadge}>
+                  <View style={styles.modalLiveDot} />
+                  <Text style={styles.modalLiveText}>Live</Text>
+                </View>
+              </View>
+              <Text style={styles.modalHeaderSub} numberOfLines={1}>
+                Performance, Sales Breakdown & Operational Lifecycle
+              </Text>
+            </View>
+
+            <TouchableOpacity
+              style={styles.modalDoneBtn}
+              onPress={() => setShowAnalyticsModal(false)}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.modalDoneBtnText}>Done</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Quick Restaurant Switcher inside Modal */}
+          {restaurants.length > 1 && (
+            <View style={styles.modalStoreSwitchBar}>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.modalStoreSwitchRibbon}
+              >
+                {restaurants.map((r) => {
+                  const rId = r._id || (r as any).id;
+                  const isCur =
+                    (activeAnalyticsRestaurant?._id || (activeAnalyticsRestaurant as any)?.id) === rId;
+                  return (
+                    <TouchableOpacity
+                      key={rId}
+                      style={[
+                        styles.modalStoreSwitchPill,
+                        isCur && styles.modalStoreSwitchPillActive,
+                      ]}
+                      onPress={() => setSelectedAnalyticsRestaurantId(rId)}
+                      activeOpacity={0.75}
+                    >
+                      <View
+                        style={[
+                          styles.storeStatusDot,
+                          { backgroundColor: r.isActive ? '#10B981' : '#94A3B8' },
+                        ]}
+                      />
+                      <Text
+                        style={[
+                          styles.modalStoreSwitchPillText,
+                          isCur && styles.modalStoreSwitchPillTextActive,
+                        ]}
+                        numberOfLines={1}
+                      >
+                        {r.restaurantName || (r as any).name}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          )}
+
+          {/* Modal Scrollable Body */}
+          <ScrollView
+            style={styles.analyticsModalBody}
+            contentContainerStyle={[
+              styles.analyticsModalBodyContent,
+              isTablet && styles.analyticsModalBodyContentTablet,
+            ]}
+            showsVerticalScrollIndicator={false}
+          >
+            <RestaurantAnalytics
+              initialOrders={activeAnalyticsOrders}
+              ownerStats={activeAnalyticsStats}
+              restaurantName={activeAnalyticsRestaurant?.restaurantName || (activeAnalyticsRestaurant as any)?.name || 'Restaurant'}
+              restaurantId={activeAnalyticsRestaurant?._id || (activeAnalyticsRestaurant as any)?.id}
+              onNavigateOrders={() => {
+                setShowAnalyticsModal(false);
+                router.push('/(tabs)/orders');
+              }}
+              onClose={() => setShowAnalyticsModal(false)}
+            />
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
     </View>
   );
 }
@@ -2260,11 +2509,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#EEEEEE',
     marginBottom: 14,
-    shadowColor: '#000',
-    shadowOpacity: 0.03,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 1,
   },
   quickDockHeaderTitle: {
     fontSize: 12.5,
@@ -2787,11 +3031,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    shadowColor: '#0F172A',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
   },
   quickActionBarTablet: {
     paddingVertical: 18,
@@ -3404,5 +3643,443 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '800',
     color: '#FFFFFF',
+  },
+
+  /* Individual Restaurant Analytics Hub Card */
+  analyticsHubCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 16,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.05,
+    shadowRadius: 12,
+    elevation: 2,
+  },
+  analyticsHubCardTablet: {
+    padding: 22,
+    borderRadius: 24,
+  },
+  analyticsHubHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 14,
+  },
+  analyticsHubTitleGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+    marginRight: 8,
+  },
+  analyticsIconBadge: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    backgroundColor: '#EEF2FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#C7D2FE',
+  },
+  analyticsTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  analyticsHubTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0F172A',
+    letterSpacing: -0.3,
+  },
+  analyticsLivePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#EEF2FF',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 10,
+    gap: 4,
+    borderWidth: 1,
+    borderColor: '#C7D2FE',
+  },
+  analyticsLiveDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#4F46E5',
+  },
+  analyticsLiveText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#4F46E5',
+    letterSpacing: 0.4,
+  },
+  analyticsHubSubtitle: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  storeCountBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  storeCountBadgeText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#334155',
+  },
+  analyticsStoreRibbonWrapper: {
+    marginBottom: 14,
+  },
+  analyticsStoreRibbon: {
+    gap: 8,
+    paddingVertical: 2,
+  },
+  storeSelectorChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 13,
+    paddingVertical: 7,
+    borderRadius: 20,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  storeSelectorChipActive: {
+    backgroundColor: '#4F46E5',
+    borderColor: '#4F46E5',
+  },
+  storeStatusDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+  },
+  storeSelectorChipText: {
+    fontSize: 12.5,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  storeSelectorChipTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+  selectedStorePreviewBox: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginBottom: 14,
+  },
+  selectedStoreTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  selectedStoreInfo: {
+    flex: 1,
+    marginRight: 10,
+  },
+  selectedStoreName: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  selectedStoreSub: {
+    fontSize: 11.5,
+    color: '#64748B',
+    marginTop: 1,
+  },
+  storeActiveBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  storeActiveBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  selectedStoreMetricsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 12,
+  },
+  previewMetricPill: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    alignItems: 'center',
+  },
+  previewMetricLabel: {
+    fontSize: 10.5,
+    fontWeight: '600',
+    color: '#64748B',
+    marginBottom: 2,
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+  previewMetricValue: {
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  openAnalyticsBtn: {
+    backgroundColor: '#4F46E5',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    shadowColor: '#4F46E5',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  openAnalyticsBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13.5,
+    fontWeight: '700',
+  },
+  storeLeaderboardSection: {
+    marginTop: 4,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  },
+  leaderboardHeader: {
+    marginBottom: 10,
+  },
+  leaderboardTitle: {
+    fontSize: 13.5,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  leaderboardSub: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 1,
+  },
+  leaderboardList: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
+    overflow: 'hidden',
+  },
+  leaderboardRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F8FAFC',
+    gap: 10,
+  },
+  leaderboardRowSelected: {
+    backgroundColor: '#F5F3FF',
+  },
+  leaderboardRankBadge: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  leaderboardRankText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#475569',
+  },
+  leaderboardStoreInfo: {
+    flex: 1,
+  },
+  leaderboardStoreName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  leaderboardStoreSub: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 1,
+  },
+  leaderboardRevenueBox: {
+    alignItems: 'flex-end',
+    marginRight: 4,
+  },
+  leaderboardRevenueText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#059669',
+  },
+  rowAnalyticsBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#EEF2FF',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#C7D2FE',
+  },
+  rowAnalyticsBtnActive: {
+    backgroundColor: '#4F46E5',
+    borderColor: '#4F46E5',
+  },
+  rowAnalyticsBtnText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#4F46E5',
+  },
+  rowAnalyticsBtnTextActive: {
+    color: '#FFFFFF',
+  },
+
+  /* Individual Restaurant Analytics Fullscreen Modal */
+  analyticsModalSafeArea: {
+    flex: 1,
+    backgroundColor: '#F8FAFC',
+  },
+  analyticsModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+    gap: 12,
+  },
+  analyticsModalHeaderTablet: {
+    paddingHorizontal: 24,
+    paddingVertical: 16,
+  },
+  modalCloseCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalHeaderTitleGroup: {
+    flex: 1,
+  },
+  modalHeaderTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  modalHeaderTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  modalLiveBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#EEF2FF',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 8,
+    gap: 4,
+  },
+  modalLiveDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+    backgroundColor: '#4F46E5',
+  },
+  modalLiveText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#4F46E5',
+  },
+  modalHeaderSub: {
+    fontSize: 11.5,
+    color: '#64748B',
+    marginTop: 1,
+  },
+  modalDoneBtn: {
+    backgroundColor: '#4F46E5',
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 8,
+  },
+  modalDoneBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12.5,
+    fontWeight: '700',
+  },
+  modalStoreSwitchBar: {
+    backgroundColor: '#FFFFFF',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  modalStoreSwitchRibbon: {
+    gap: 8,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+  },
+  modalStoreSwitchPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  modalStoreSwitchPillActive: {
+    backgroundColor: '#4F46E5',
+    borderColor: '#4F46E5',
+  },
+  modalStoreSwitchPillText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  modalStoreSwitchPillTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+  analyticsModalBody: {
+    flex: 1,
+  },
+  analyticsModalBodyContent: {
+    padding: 16,
+    paddingBottom: 40,
+  },
+  analyticsModalBodyContentTablet: {
+    paddingHorizontal: 28,
+    paddingVertical: 20,
+    maxWidth: 1200,
+    alignSelf: 'center',
+    width: '100%',
   },
 });

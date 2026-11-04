@@ -129,4 +129,7 @@ export const restaurantOwnerService = {
   async getStripeLoginLink(): Promise<{ success: boolean; data?: { url: string }; message?: string }> {
     return apiRequest('/api/owner/stripe-connect/login-link', { method: 'POST' });
   },
+  async deleteAccount(): Promise<{ success: boolean; message?: string }> {
+    return apiRequest('/api/restaurants/me', { method: 'DELETE' });
+  },
 };
