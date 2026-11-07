@@ -5,17 +5,15 @@ import {
   View,
   ScrollView,
   TouchableOpacity,
-  Pressable,
   Linking,
   useWindowDimensions,
   StatusBar,
   Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { ScreenHeader } from '../components/ScreenHeader';
 import { Colors } from '../constants/colors';
 import {
-  ArrowLeft,
   ShieldCheck,
   FileText,
   Globe,
@@ -185,7 +183,6 @@ const TERMS_SECTIONS: LegalSection[] = [
 ];
 
 export default function PrivacyPolicyScreen() {
-  const router = useRouter();
   const { width } = useWindowDimensions();
   const isTablet = width >= 768;
   const [activeTab, setActiveTab] = useState<LegalType>('privacy');
@@ -201,26 +198,25 @@ export default function PrivacyPolicyScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
+    <SafeAreaView style={styles.safeArea} edges={['bottom']}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
-      {/* Top Header Bar (matches legal-modal.tsx) */}
-      <View style={styles.topBar}>
-        <Pressable onPress={() => router.back()} style={styles.backBtn} hitSlop={10}>
-          <ArrowLeft size={22} color="#0F172A" />
-        </Pressable>
-
-        <View style={styles.topBarCenter}>
-          <Text style={styles.topBarTitle} numberOfLines={1}>
-            {title}
-          </Text>
-          <Text style={styles.topBarSub}>Krifoo Merchant Documentation</Text>
-        </View>
-
-        <TouchableOpacity onPress={openWebPortal} style={styles.webBtn} hitSlop={10} activeOpacity={0.7}>
-          <Globe size={20} color={Colors.primary} />
-        </TouchableOpacity>
-      </View>
+      <ScreenHeader
+        title={title}
+        subtitle="Krifoo Merchant Documentation"
+        rightElement={
+          <TouchableOpacity
+            onPress={openWebPortal}
+            style={styles.webBtn}
+            hitSlop={10}
+            activeOpacity={0.7}
+            accessibilityRole="link"
+            accessibilityLabel="Open on the web"
+          >
+            <Globe size={20} color={Colors.primary} />
+          </TouchableOpacity>
+        }
+      />
 
       {/* 2-Tab Segment Bar (matches legal-modal.tsx) */}
       <View style={styles.tabBar}>
@@ -420,13 +416,13 @@ const styles = StyleSheet.create({
   topBarTitle: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#0F172A',
+    color: '#11181C',
     letterSpacing: -0.2,
   },
   topBarSub: {
     fontSize: 11,
     fontWeight: '500',
-    color: '#64748B',
+    color: '#687076',
     marginTop: 1,
   },
   webBtn: {
@@ -496,17 +492,17 @@ const styles = StyleSheet.create({
   docDate: {
     fontSize: 11,
     fontWeight: '500',
-    color: '#64748B',
+    color: '#687076',
   },
   docTitle: {
     fontSize: 22,
     fontWeight: '800',
-    color: '#0F172A',
+    color: '#11181C',
     letterSpacing: -0.5,
   },
   docMeta: {
     fontSize: 12,
-    color: '#64748B',
+    color: '#687076',
     lineHeight: 18,
   },
   sectionCard: {
@@ -520,14 +516,14 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 15,
     fontWeight: '700',
-    color: '#0F172A',
+    color: '#11181C',
     letterSpacing: -0.2,
   },
   sectionBody: {
     fontSize: 13.5,
     lineHeight: 22,
     fontWeight: '400',
-    color: '#475569',
+    color: '#687076',
   },
   bulletsContainer: {
     marginTop: 4,
@@ -550,7 +546,7 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 13,
     lineHeight: 20,
-    color: '#475569',
+    color: '#687076',
   },
   calloutBox: {
     padding: 12,
@@ -595,11 +591,11 @@ const styles = StyleSheet.create({
   portalLinkTitle: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#0F172A',
+    color: '#11181C',
   },
   portalLinkSub: {
     fontSize: 11.5,
-    color: '#64748B',
+    color: '#687076',
     marginTop: 2,
   },
   docFooter: {
@@ -610,7 +606,7 @@ const styles = StyleSheet.create({
   footerText: {
     fontSize: 11,
     fontWeight: '400',
-    color: '#64748B',
+    color: '#687076',
     textAlign: 'center',
     lineHeight: 16,
   },

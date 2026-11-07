@@ -6,7 +6,8 @@ export type PrintFailureReason =
   | 'printer_error' // reachable, but device reports a fault (paper out, cover open, etc.)
   | 'wrong_device' // reachable, but response isn't a recognizable printer protocol response
   | 'no_ip_configured'
-  | 'not_supported_on_platform';
+  | 'not_supported_on_platform'
+  | 'cancelled'; // user dismissed the OS print dialog — not an error
 
 export type PrintResult =
   | { success: true; rawResponse?: unknown }
@@ -54,7 +55,7 @@ export function classifyEposXmlResult(result: TransportResult, bodyOverride?: st
   }
 
   // 2. Validate presence of Epson ePOS XML envelope
-  if (!rawBody.includes('epos-print') && !rawBody.includes('response')) {
+  if (!/<response[\s>]/i.test(rawBody) && !rawBody.includes('epos-print')) {
     return {
       success: false,
       reason: 'wrong_device',
@@ -82,9 +83,9 @@ export function classifyEposXmlResult(result: TransportResult, bodyOverride?: st
   let humanError = `Epson ePOS fault code: ${printerCode || statusHex || 'Unknown'}`;
   if (printerCode) {
     const pc = printerCode.toUpperCase();
-    if (pc.includes('PAPER') || pc.includes('EMPTY') || pc.includes('END')) {
+    if (pc.includes('PAPER') || pc.includes('EMPTY') || /(^|_)END($|_)/.test(pc)) {
       humanError = 'Printer is out of paper (Paper End / Empty).';
-    } else if (pc.includes('COVER') || pc.includes('OPEN')) {
+    } else if (pc.includes('COVER')) {
       humanError = 'Printer cover is open.';
     } else if (pc.includes('OFFLINE')) {
       humanError = 'Printer is offline or busy.';
@@ -113,6 +114,14 @@ export function classifyRawByteResult(result: TransportResult): PrintResult {
       success: true,
       rawResponse: result.rawResponse,
     };
+  }
+
+  if (result.kind === 'cancelled') {
+    return { success: false, reason: 'cancelled', detail: result.detail || 'Print cancelled.' };
+  }
+
+  if (result.kind === 'printer_error') {
+    return { success: false, reason: 'printer_error', detail: result.detail };
   }
 
   if (result.kind === 'timeout') {

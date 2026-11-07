@@ -20,11 +20,14 @@ export class HttpEposTransport implements PrinterTransport {
 
     // Build candidate endpoint list, placing any known working endpoint first
     const configuredPort = this.port || 8008;
-    const candidates = [
-      `http://${ip}:${configuredPort}/cgi-bin/epos/service.cgi?devid=local_printer&timeout=10000`,
-      `http://${ip}/cgi-bin/epos/service.cgi?devid=local_printer&timeout=10000`,
-      `http://${ip}:80/cgi-bin/epos/service.cgi?devid=local_printer&timeout=10000`,
-    ];
+    const path = '/cgi-bin/epos/service.cgi?devid=local_printer&timeout=10000';
+    // Port 80 and the default HTTP port are the same endpoint — don't try it twice
+    const candidates = Array.from(
+      new Set([
+        configuredPort === 80 ? `http://${ip}${path}` : `http://${ip}:${configuredPort}${path}`,
+        `http://${ip}${path}`,
+      ])
+    );
 
     const cachedEndpoint = workingEndpointCache.get(ip);
     const orderedEndpoints = cachedEndpoint
@@ -33,10 +36,12 @@ export class HttpEposTransport implements PrinterTransport {
 
     let lastError = '';
 
-    for (const endpoint of orderedEndpoints) {
+    for (let i = 0; i < orderedEndpoints.length; i++) {
+      const endpoint = orderedEndpoints[i];
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 6500);
+        // First endpoint gets the full timeout; the fallback is a quick probe (max ~10s overall)
+        const timeoutId = setTimeout(() => controller.abort(), i === 0 ? 6500 : 3500);
 
         const response = await fetch(endpoint, {
           method: 'POST',

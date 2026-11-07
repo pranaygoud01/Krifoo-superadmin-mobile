@@ -5,4 +5,8 @@ export interface PrinterTransport {
 
 export type TransportResult =
   | { ok: true; rawResponse?: unknown }
-  | { ok: false; kind: 'unreachable' | 'timeout' | 'refused' | 'protocol_error'; detail: string };
+  | {
+      ok: false;
+      kind: 'unreachable' | 'timeout' | 'refused' | 'protocol_error' | 'printer_error' | 'cancelled';
+      detail: string;
+    };

@@ -16,6 +16,7 @@ import { Image } from 'expo-image';
 import { resolveImageUrl, resolveMediaImageSource } from '../services/image.helper';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Header } from '../components/Header';
+import { SearchableSelect } from '../components/SearchableSelect';
 import { Colors } from '../constants/colors';
 import { menuService } from '../services/menu.service';
 import { Category } from '../types';
@@ -59,6 +60,7 @@ export default function AddEditMenuScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [loadingCategories, setLoadingCategories] = useState(true);
 
   // Form State
   const [formState, setFormState] = useState({
@@ -125,6 +127,8 @@ export default function AddEditMenuScreen() {
         }
       } catch (e) {
         console.error(e);
+      } finally {
+        setLoadingCategories(false);
       }
     };
     loadCategories();
@@ -609,24 +613,19 @@ export default function AddEditMenuScreen() {
 
                 <View style={styles.inputGroup}>
                   <Text style={styles.inputLabel}>Category</Text>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.categoryScroll}>
-                    {categories.map((cat) => {
-                      const isSelected = formState.category === cat.categoryName;
-                      return (
-                        <TouchableOpacity
-                          key={cat._id}
-                          style={[styles.catChip, isSelected && styles.catChipActive]}
-                          onPress={() => handleChange('category', cat.categoryName)}
-                          activeOpacity={0.7}
-                        >
-                          {isSelected && <Check size={13} color="#FFFFFF" style={{ marginRight: 4 }} />}
-                          <Text style={[styles.catChipLabel, isSelected && styles.catChipLabelActive]}>
-                            {cat.categoryName}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </ScrollView>
+                  <SearchableSelect
+                    title="Choose a category"
+                    placeholder={loadingCategories ? 'Loading categories…' : 'Select a category'}
+                    searchPlaceholder="Search categories"
+                    emptyText="No categories yet"
+                    loading={loadingCategories}
+                    value={formState.category}
+                    onChange={(val) => handleChange('category', val)}
+                    options={[...categories]
+                      .sort((x, y) => (x.sortOrder ?? 0) - (y.sortOrder ?? 0) || x.categoryName.localeCompare(y.categoryName))
+                      .map((cat) => ({ value: cat.categoryName, label: cat.categoryName, description: cat.description }))}
+                    footerAction={{ label: 'Manage categories', onPress: () => router.push('/categories') }}
+                  />
                 </View>
 
                 <View style={styles.inputGroup}>
@@ -1458,34 +1457,6 @@ const styles = StyleSheet.create({
   rowInputs: {
     flexDirection: 'row',
     gap: 10,
-  },
-  categoryScroll: {
-    flexDirection: 'row',
-    paddingVertical: 2,
-  },
-  catChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F8FAFC',
-    borderColor: '#E2E8F0',
-    borderWidth: 1.2,
-    borderRadius: 20,
-    paddingHorizontal: 13,
-    paddingVertical: 7,
-    marginRight: 8,
-  },
-  catChipActive: {
-    borderColor: '#0F172A',
-    backgroundColor: '#0F172A',
-  },
-  catChipLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#475569',
-  },
-  catChipLabelActive: {
-    color: '#FFFFFF',
-    fontWeight: '700',
   },
   dietaryRow: {
     flexDirection: 'row',

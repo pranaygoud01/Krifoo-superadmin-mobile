@@ -1,14 +1,69 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { DeviceEventEmitter } from 'react-native';
 import { printHtmlWithSystemDialog } from './printer/system-print';
 import { Order } from '../types';
 import { isSunmiAvailable, printSunmiOrderReceipt } from './sunmi-printer.service';
-import { getPosPrinterConfig, savePosPrinterConfig, PosPrinterConfig, POS_BRANDS, getBrandOption, getBrandName, profileFromConfig } from './pos-config.service';
-import { printNetworkOrderReceipt, testNetworkPrinter } from './printer/network-printer.service';
-import { printEpsonOrderReceipt, testEpsonPrinter, testPrinterAlignmentSlip, discoverEpsonPrinters, verifyPrinterConnection, formatPrinterConnectionError, isLikelyAudioDevice, FormattedPrinterError } from './printer/epson-printer.service';
-import { buildReceiptDocument, buildDrawerKickDocument, buildCustomizedReceiptDocument, getOrderScheduleInfo, formatScheduleDisplay, getOrderFulfillmentLabel, getSanitizedOrderNotes } from './printer/receipt-document';
+import {
+  getPosPrinterConfig,
+  savePosPrinterConfig,
+  savePosPrinterConfigStrict,
+  PosPrinterConfig,
+  POS_BRANDS,
+  getBrandOption,
+  getBrandName,
+  profileFromConfig,
+  AutoPrintTrigger,
+} from './pos-config.service';
+import {
+  printEpsonOrderReceipt,
+  testEpsonPrinter,
+  testPrinterAlignmentSlip,
+  discoverEpsonPrinters,
+  verifyPrinterConnection,
+  formatPrinterConnectionError,
+  isLikelyAudioDevice,
+  FormattedPrinterError,
+} from './printer/epson-printer.service';
+import {
+  buildReceiptDocument,
+  buildDrawerKickDocument,
+  buildCustomizedReceiptDocument,
+  getOrderScheduleInfo,
+  formatScheduleDisplay,
+  getOrderFulfillmentLabel,
+  getSanitizedOrderNotes,
+  getDisplayOrderNumber,
+  getRestaurantName,
+  getRestaurantPhone,
+  getRestaurantAddressLine,
+  getCustomerName,
+  getCustomerPhone,
+  getDeliveryAddress,
+  getPaymentInfo,
+  computeReceiptTotals,
+  formatMoney,
+  getItemName,
+  getItemPrice,
+  getItemQuantity,
+  getItemInstructions,
+  getOrderItems,
+  getTableNumber,
+  isDineInOrder,
+} from './printer/receipt-document';
 import { resolvePrinter } from './printer/printer-registry';
 import { PrintQueueService } from './printer/print-queue.service';
-import { getActiveReceiptTemplate, ReceiptTemplate, getSampleOrderForPreview, getCachedStoreProfile, setCachedStoreProfile, formatRestaurantAddress, isDummyCustomerPhone, getItemOptionsList } from './receipt-customization.service';
+import {
+  getActiveReceiptTemplate,
+  ReceiptTemplate,
+  DEFAULT_RECEIPT_TEMPLATE,
+  cloneTemplate,
+  getSampleOrderForPreview,
+  getCachedStoreProfile,
+  setCachedStoreProfile,
+  formatRestaurantAddress,
+  isDummyCustomerPhone,
+  getItemOptionsList,
+} from './receipt-customization.service';
 
 export {
   isSunmiAvailable,
@@ -18,7 +73,6 @@ export {
   POS_BRANDS,
   getBrandOption,
   getBrandName,
-  testNetworkPrinter,
   printEpsonOrderReceipt,
   testEpsonPrinter,
   testPrinterAlignmentSlip,
@@ -26,967 +80,279 @@ export {
   verifyPrinterConnection,
   formatPrinterConnectionError,
   isLikelyAudioDevice,
-  FormattedPrinterError,
   buildReceiptDocument,
   buildCustomizedReceiptDocument,
   buildDrawerKickDocument,
   resolvePrinter,
   PrintQueueService,
   getActiveReceiptTemplate,
-  ReceiptTemplate,
   getOrderScheduleInfo,
   getOrderFulfillmentLabel,
   formatScheduleDisplay,
 };
+export type { FormattedPrinterError, ReceiptTemplate };
 
-const AUTO_PRINT_KEY = '@krifoo_auto_print_thermal';
+/** Emitted (payload: PrintJobReport) when an AUTOMATIC print fails, so the UI can alert staff. */
+export const PRINT_FAILED_EVENT = 'krifoo:auto-print-failed';
 
-/**
- * Check if auto-printing is enabled (defaults to true)
- */
-export async function isAutoPrintEnabled(): Promise<boolean> {
+const LEGACY_AUTO_PRINT_KEY = '@krifoo_auto_print_thermal';
+const AUTO_PRINTED_KEY = '@krifoo_auto_printed_orders';
+const AUTO_PRINTED_TTL_MS = 48 * 60 * 60 * 1000;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Auto-print preference — ONE source of truth: the printer config (`autoPrint`).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Whether automatic printing is enabled (reads the saved printer config). */
+export async function isAutoPrintEnabled(restaurantId?: string): Promise<boolean> {
   try {
-    const value = await AsyncStorage.getItem(AUTO_PRINT_KEY);
-    if (value === null) return true; // Default enabled
-    return value === 'true';
-  } catch (e) {
+    const config = await getPosPrinterConfig(restaurantId);
+    return config.autoPrint !== false;
+  } catch {
     return true;
   }
 }
 
-/**
- * Toggle auto-printing on or off
- */
-export async function setAutoPrintEnabled(enabled: boolean): Promise<void> {
+/** Turn automatic printing on or off (saved in the printer config). */
+export async function setAutoPrintEnabled(enabled: boolean, restaurantId?: string): Promise<void> {
+  await savePosPrinterConfigStrict({ autoPrint: enabled }, restaurantId);
   try {
-    await AsyncStorage.setItem(AUTO_PRINT_KEY, enabled ? 'true' : 'false');
-  } catch (e) {
-    console.error('[Print] Failed saving auto-print preference:', e);
+    // Keep the legacy key consistent for any older code path still reading it
+    await AsyncStorage.setItem(LEGACY_AUTO_PRINT_KEY, enabled ? 'true' : 'false');
+  } catch {}
+}
+
+/** Remembers which orders have already been auto-printed (survives app restarts). */
+async function readAutoPrinted(): Promise<Record<string, number>> {
+  try {
+    const raw = await AsyncStorage.getItem(AUTO_PRINTED_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    const now = Date.now();
+    const fresh: Record<string, number> = {};
+    for (const [id, ts] of Object.entries(parsed || {})) {
+      if (typeof ts === 'number' && now - ts < AUTO_PRINTED_TTL_MS) fresh[id] = ts;
+    }
+    return fresh;
+  } catch {
+    return {};
   }
 }
 
+async function markAutoPrinted(orderKey: string): Promise<void> {
+  try {
+    const map = await readAutoPrinted();
+    map[orderKey] = Date.now();
+    await AsyncStorage.setItem(AUTO_PRINTED_KEY, JSON.stringify(map));
+  } catch {}
+}
+
 /**
- * Resolves any logo URI (remote http/https, local file://, content://) into an inline base64 Data URI.
- * This ensures that Android WebView / Print Spooler renders the logo reliably without
- * security sandbox restrictions or network latency timing issues.
+ * Resolves any logo URI (remote http/https, file://, content://) into an inline base64 data URI.
+ * Times out after 8s so a slow image never blocks printing.
  */
 export async function resolveLogoAsBase64(uri?: string): Promise<string> {
   if (!uri || !uri.trim()) return '';
   const clean = uri.trim();
-  if (clean.startsWith('data:image/')) {
-    return clean;
-  }
+  if (clean.startsWith('data:image/')) return clean;
   try {
-    const response = await fetch(clean);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    const response = await fetch(clean, { signal: controller.signal });
+    clearTimeout(timer);
     const blob = await response.blob();
     return await new Promise<string>((resolve) => {
       const reader = new FileReader();
-      reader.onloadend = () => {
-        if (typeof reader.result === 'string') {
-          resolve(reader.result);
-        } else {
-          resolve(clean);
-        }
-      };
-      reader.onerror = () => {
-        resolve(clean);
-      };
+      reader.onloadend = () => resolve(typeof reader.result === 'string' ? reader.result : '');
+      reader.onerror = () => resolve('');
       reader.readAsDataURL(blob);
     });
   } catch (err) {
-    console.warn('[thermal-print] Could not resolve logo to base64, using original URI:', err);
-    return clean;
+    console.warn('[thermal-print] Could not resolve logo to base64:', err);
+    return '';
   }
 }
 
-/**
- * Format currency with symbol (£ for UK)
- */
-function formatMoney(amount?: number): string {
-  if (amount === undefined || amount === null || isNaN(amount)) return '£0.00';
-  return `£${Number(amount).toFixed(2)}`;
+// ─────────────────────────────────────────────────────────────────────────────
+// HTML receipt (system print / AirPrint). Uses the same shared helpers as the
+// thermal document so content is identical on every printer.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function esc(value: unknown): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
-function getItemPrice(item: any): number {
-  if (!item) return 0;
-  const qty = Number(item.quantity || item.qty || 1);
-
-  // 1. Direct line total
-  const lineTotal = item.itemTotal ?? item.totalPrice ?? item.total;
-  if (lineTotal !== undefined && lineTotal !== null && !isNaN(Number(lineTotal)) && Number(lineTotal) > 0) {
-    return Number(lineTotal);
-  }
-
-  // 2. Unit price
-  const unitPrice =
-    item.price ??
-    item.basePrice ??
-    item.unitPrice ??
-    item.cost ??
-    item.rate ??
-    (typeof item.menuItemId === 'object' ? item.menuItemId?.price ?? item.menuItemId?.basePrice : undefined) ??
-    (typeof item.itemId === 'object' ? item.itemId?.price ?? item.itemId?.basePrice : undefined);
-
-  if (unitPrice !== undefined && unitPrice !== null && !isNaN(Number(unitPrice)) && Number(unitPrice) > 0) {
-    return Number(unitPrice) * qty;
-  }
-
-  // 3. Customization price
-  if (item.customization) {
-    const customPrice = item.customization.price ?? item.customization.totalPrice;
-    if (customPrice !== undefined && customPrice !== null && !isNaN(Number(customPrice)) && Number(customPrice) > 0) {
-      return Number(customPrice) * qty;
-    }
-  }
-
-  return 0;
-}
-
-
-
-/**
- * Format date time into UK style string e.g. "Mar 29, 22:08" or "Today by 23:05"
- */
-function formatOrderDate(dateString?: string, scheduledText?: string | null): { placedAt: string; targetTime: string } {
-  const now = dateString ? new Date(dateString) : new Date();
-  
-  const options: Intl.DateTimeFormatOptions = {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  };
-  const placedAt = now.toLocaleDateString('en-GB', options);
-
-  if (scheduledText) {
-    return { placedAt, targetTime: scheduledText };
-  }
-
-  // Target delivery time (+35 mins)
-  const targetDate = new Date(now.getTime() + 35 * 60000);
-  const hours = String(targetDate.getHours()).padStart(2, '0');
-  const minutes = String(targetDate.getMinutes()).padStart(2, '0');
-  const targetTime = `Today by ${hours}:${minutes}`;
-
-  return { placedAt, targetTime };
-}
-
-/**
- * Generate customized thermal receipt HTML reflecting restaurant owner's template
- */
-export function generateCustomizedThermalReceiptHtml(order: Partial<Order> & any, template: ReceiptTemplate): string {
+export function generateThermalReceiptHtml(
+  order: Partial<Order> & any,
+  template: ReceiptTemplate = DEFAULT_RECEIPT_TEMPLATE,
+  paperWidth?: '58mm' | '80mm'
+): string {
   const layout = template.layout;
   const content = template.content;
-  const is58mm = layout.paperWidth === '58mm';
-  const paperWidthMm = is58mm ? '58mm' : '80mm';
-  const fontFamilyCss = layout.fontFamily === 'fontB' ? 'Consolas, "Courier New", monospace' : '"Courier New", Courier, monospace';
+  const width = paperWidth || layout.paperWidth || '80mm';
+  const fontFamilyCss = '"Courier New", Courier, monospace';
   const fontSizePx = layout.fontSize === 'small' ? '11px' : layout.fontSize === 'large' ? '14px' : '12.5px';
   const lineHeight = layout.lineSpacing === 'compact' ? '1.18' : layout.lineSpacing === 'relaxed' ? '1.55' : '1.35';
 
-  const orderNum = order.orderNumber || (order._id ? `#${order._id.slice(-5).toUpperCase()}` : '#00000');
-
-  const customerName = order.customerDetails?.name || order.customerId?.fullName || order.userId?.fullName || 'Customer';
-  const customerPhone = order.customerDetails?.phoneNumber || order.customerId?.phoneNumber || order.userId?.phoneNumber || order.deliveryAddress?.phoneNumber || '';
-
-  const restaurantName =
-    (typeof order.restaurantId === 'object' ? order.restaurantId?.restaurantName : '') ||
-    order.restaurantName ||
-    order.restaurantTitle ||
-    (typeof order.restaurant === 'object' ? order.restaurant?.restaurantName || order.restaurant?.name : '') ||
-    getCachedStoreProfile()?.restaurantName ||
-    'Restaurant';
-  const restaurantPhone =
-    (typeof order.restaurantId === 'object' ? order.restaurantId?.phoneNumber : '') ||
-    order.restaurantPhone ||
-    '';
-  const rawRestAddr =
-    (typeof order.restaurantId === 'object'
-      ? order.restaurantId?.formattedAddress || order.restaurantId?.address
-      : '') ||
-    order.restaurantAddress ||
-    getCachedStoreProfile()?.address;
-  const restaurantAddress = formatRestaurantAddress(rawRestAddr);
-
-  const fulfillmentType = (order.orderType || order.deliveryType || 'Delivery').toUpperCase();
-  const isDelivery = fulfillmentType.includes('DELIV');
-  const isDineIn = fulfillmentType.includes('DINE') || fulfillmentType.includes('EAT') || Boolean(order.tableNumber);
-  const tableNum = order.tableNumber || (isDineIn && order.notes?.match(/table\s*([0-9a-zA-Z]+)/i)?.[1]) || '';
-
-  const rawAddress =
-    order.deliveryAddress?.fullAddress ||
-    order.deliveryAddress?.formattedAddress ||
-    order.deliveryAddress?.addressLine1 ||
-    (typeof order.deliveryAddress === 'string' ? order.deliveryAddress : '');
-  const postalCode = order.deliveryAddress?.postalCode || order.deliveryAddress?.postcode || '';
-
+  const restaurantName = getRestaurantName(order);
+  const restaurantPhone = getRestaurantPhone(order);
+  const restaurantAddress = getRestaurantAddressLine(order);
+  const customerName = getCustomerName(order);
+  const customerPhone = getCustomerPhone(order);
+  const { address, postcode } = getDeliveryAddress(order);
+  const isDineIn = isDineInOrder(order);
+  const tableNum = getTableNumber(order);
   const scheduleInfo = getOrderScheduleInfo(order);
   const fulfillmentLabel = getOrderFulfillmentLabel(order);
-  const { placedAt } = formatOrderDate(order.createdAt, scheduleInfo.scheduleTimeText);
-  const itemsList = order.orderedItems || order.items || [];
-  const pricing = order.pricing || {};
-  const subtotal = Number(pricing.subtotal ?? (order as any).subtotal ?? order.totalAmount ?? 0);
-  const deliveryFee = Number(pricing.deliveryFee ?? (order as any).deliveryFee ?? 0);
-  const onlinePaymentFee = Number(pricing.onlinePaymentFee ?? (order as any).onlinePaymentFee ?? 0);
-  const handlingCharge = Number(pricing.handlingCharge ?? (order as any).handlingCharge ?? 0);
-  const platformFee = Number(pricing.platformFee ?? (order as any).platformFee ?? 0);
-  const tax = Number(pricing.tax ?? pricing.vat ?? (order as any).tax ?? 0);
-  const tip = Number(pricing.tip ?? (order as any).tip ?? 0);
-  const discount = Number(pricing.discount ?? pricing.discountAmount ?? (order as any).discountAmount ?? 0);
-  const total = Number(pricing.total ?? pricing.totalAmount ?? order.totalAmount ?? (subtotal + deliveryFee + onlinePaymentFee + handlingCharge + platformFee + tax + tip - discount));
+  const payment = getPaymentInfo(order);
+  const totals = computeReceiptTotals(order, content);
+  const notes = getSanitizedOrderNotes(order.notes || order.specialInstructions || '');
+  const placed = order.createdAt ? new Date(order.createdAt) : new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const time = `${pad(placed.getHours())}:${pad(placed.getMinutes())}`;
+  const placedText =
+    content.dateTimeFormat === 'time_only'
+      ? time
+      : content.dateTimeFormat === 'short'
+      ? `${pad(placed.getDate())}/${pad(placed.getMonth() + 1)} ${time}`
+      : `${pad(placed.getDate())}/${pad(placed.getMonth() + 1)}/${placed.getFullYear()} ${time}`;
+  const badge = isDineIn && content.showTableNumber && tableNum ? 'DINE-IN' : fulfillmentLabel;
+  const waiter = order.waiterName || content.serverWaiterName;
+  const row = (label: string, value: string) =>
+    `<div class="summary-row"><span>${esc(label)}</span><span>${esc(value)}</span></div>`;
 
-  const paymentType = order.paymentType || 'Card';
-  const paymentStatus = (order.paymentStatus || 'Paid').toUpperCase();
-  const isPaid = paymentStatus === 'PAID' || paymentStatus === 'COMPLETED';
-  const specialNotes = getSanitizedOrderNotes(order.notes || order.specialInstructions || '');
-
-  return `
-<!DOCTYPE html>
+  return `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Receipt ${orderNum}</title>
+  <title>Receipt ${esc(getDisplayOrderNumber(order))}</title>
   <style>
-    @page {
-      size: ${paperWidthMm} auto;
-      margin: 0mm !important;
-    }
-    * {
-      box-sizing: border-box;
-      -webkit-print-color-adjust: exact;
-      print-color-adjust: exact;
-    }
-    html, body {
-      width: 100% !important;
-      max-width: ${paperWidthMm} !important;
-      margin: 0 auto !important;
-      padding: 0 !important;
-      background-color: #ffffff;
-    }
-    body {
-      font-family: ${fontFamilyCss};
-      padding: 4mm 3mm 10mm 3mm;
-      color: #000000;
-      font-size: ${fontSizePx};
-      line-height: ${lineHeight};
-    }
+    @page { size: ${width} auto; margin: 0mm !important; }
+    * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    html, body { width: 100% !important; max-width: ${width} !important; margin: 0 auto !important; padding: 0 !important; background: #fff; }
+    body { font-family: ${fontFamilyCss}; padding: 4mm 3mm 10mm 3mm; color: #000; font-size: ${fontSizePx}; line-height: ${lineHeight}; }
     .header-sec { text-align: ${layout.alignment.header}; margin-bottom: 6px; }
-    .items-sec { text-align: ${layout.alignment.items}; margin-bottom: 6px; }
-    .totals-sec { text-align: ${layout.alignment.totals}; margin-bottom: 6px; }
     .footer-sec { text-align: ${layout.alignment.footer}; margin-top: 8px; }
-    .title-large {
-      font-size: 1.35em;
-      font-weight: ${layout.boldElements.restaurantName ? '800' : '500'};
-      letter-spacing: -0.3px;
-    }
-    .order-banner {
-      background: #000000;
-      color: #ffffff;
-      padding: 6px 8px;
-      text-align: center;
-      font-weight: ${layout.boldElements.orderNumber ? '800' : '600'};
-      font-size: 1.15em;
-      border-radius: 4px;
-      margin: 6px 0;
-    }
-    .divider {
-      border-bottom: 1px dashed #000000;
-      margin: 6px 0;
-    }
-    .divider-double {
-      border-bottom: 2px solid #000000;
-      margin: 6px 0;
-    }
-    .item-row {
-      display: flex;
-      justify-content: space-between;
-      margin-bottom: 3px;
-      font-weight: ${layout.boldElements.itemNames ? '700' : '500'};
-    }
-    .item-notes {
-      font-size: 0.9em;
-      color: #444444;
-      padding-left: 14px;
-      margin-bottom: 2px;
-    }
-    .summary-row {
-      display: flex;
-      justify-content: space-between;
-      margin-bottom: 2px;
-    }
-    .total-row {
-      display: flex;
-      justify-content: space-between;
-      font-size: 1.3em;
-      font-weight: ${layout.boldElements.totalAmount ? '800' : '600'};
-      margin: 4px 0;
-    }
-    .tagline {
-      font-style: ${layout.italicElements.tagline ? 'italic' : 'normal'};
-      font-size: 0.95em;
-      color: #333333;
-    }
-    .footer-msg {
-      font-style: ${layout.italicElements.footerMessage ? 'italic' : 'normal'};
-      font-weight: 700;
-      margin-bottom: 6px;
-    }
-    .qr-box {
-      text-align: center;
-      margin: 8px 0;
-    }
+    .title-large { font-size: 1.35em; font-weight: ${layout.boldElements.restaurantName ? '800' : '500'}; }
+    .order-banner { background: #000; color: #fff; padding: 6px 8px; text-align: center; font-weight: ${layout.boldElements.orderNumber ? '800' : '600'}; font-size: 1.15em; border-radius: 4px; margin: 6px 0; }
+    .divider { border-bottom: 1px dashed #000; margin: 6px 0; }
+    .divider-double { border-bottom: 2px solid #000; margin: 6px 0; }
+    .item-row { display: flex; justify-content: space-between; gap: 6px; margin-bottom: 3px; font-weight: ${layout.boldElements.itemNames ? '700' : '500'}; ${layout.fontSize === 'large' ? 'font-size: 1.15em;' : ''} }
+    .item-notes { font-size: 0.9em; color: #333; padding-left: 28px; margin-bottom: 2px; }
+    .summary-row { display: flex; justify-content: space-between; margin-bottom: 2px; }
+    .total-row { display: flex; justify-content: space-between; font-size: 1.3em; font-weight: ${layout.boldElements.totalAmount ? '800' : '600'}; margin: 4px 0; }
+    .tagline { font-style: ${layout.italicElements.tagline ? 'italic' : 'normal'}; font-size: 0.95em; }
+    .footer-msg { font-style: ${layout.italicElements.footerMessage ? 'italic' : 'normal'}; font-weight: 700; margin-bottom: 6px; }
+    .center { text-align: center; }
   </style>
 </head>
 <body>
-  <!-- Header -->
   <div class="header-sec">
-    ${content.customHeaderTitle ? `<div style="font-weight:800; font-size:1em; letter-spacing:0.5px;">${content.customHeaderTitle.toUpperCase()}</div>` : ''}
-    ${content.showRestaurantName ? `<div class="title-large">${restaurantName.toUpperCase()}</div>` : ''}
-    ${content.headerMessage ? `<div class="tagline">${content.headerMessage}</div>` : ''}
-    ${content.showAddress && restaurantAddress ? `<div>${restaurantAddress}</div>` : ''}
-    ${content.showPhone && restaurantPhone ? `<div>Tel: ${restaurantPhone}</div>` : ''}
-    ${content.showTaxId && content.taxIdValue ? `<div style="font-size:0.9em;">${content.taxIdLabel || 'Tax ID:'} ${content.taxIdValue}</div>` : ''}
+    ${content.showLogo && content.logoUrl && content.logoUrl.startsWith('data:image/') ? `<img src="${content.logoUrl}" style="max-width:40%;max-height:70px;margin-bottom:4px;" />` : ''}
+    ${content.customHeaderTitle ? `<div style="font-weight:800;letter-spacing:0.5px;">${esc(content.customHeaderTitle.toUpperCase())}</div>` : ''}
+    ${content.showRestaurantName ? `<div class="title-large">${esc(restaurantName.toUpperCase())}</div>` : ''}
+    ${content.headerMessage ? `<div class="tagline">${esc(content.headerMessage)}</div>` : ''}
+    ${content.showAddress && restaurantAddress ? `<div>${esc(restaurantAddress)}</div>` : ''}
+    ${content.showPhone && restaurantPhone ? `<div>Tel: ${esc(restaurantPhone)}</div>` : ''}
+    ${content.showTaxId && content.taxIdValue?.trim() ? `<div style="font-size:0.9em;">${esc(content.taxIdLabel || 'VAT Reg No:')} ${esc(content.taxIdValue.trim())}</div>` : ''}
   </div>
-
   <div class="divider"></div>
 
-  <!-- Order Info -->
-  ${content.showOrderNumber ? `<div class="order-banner">ORDER ${orderNum}</div>` : ''}
-  ${content.showDateTime ? `<div style="text-align:center; font-size:0.9em;">Placed: ${placedAt}</div>` : ''}
+  ${content.showOrderNumber ? `<div class="order-banner">ORDER ${esc(getDisplayOrderNumber(order))}</div>` : ''}
+  ${content.showDateTime ? `<div class="center" style="font-size:0.9em;">Placed: ${esc(placedText)}</div>` : ''}
+  <div class="center" style="font-weight:700;margin:2px 0;">[ ${esc(badge)} ]</div>
   ${
-    scheduleInfo.isScheduled
-      ? `
-  <div style="background:#000000; color:#FFFFFF; text-align:center; font-weight:900; padding:6px 8px; border-radius:4px; margin:6px 0;">
-    <div style="font-size:1.05em; letter-spacing:0.5px;">*** SCHEDULED ${fulfillmentLabel} ***</div>
-    <div style="font-size:0.95em; font-weight:800; margin-top:2px;">ORDER TYPE: ${fulfillmentLabel}</div>
-    <div style="font-size:1.2em; font-weight:900; margin-top:3px;">TARGET: ${scheduleInfo.scheduleTimeText}</div>
-  </div>
-      `
-      : `
-  <div style="text-align:center; font-weight:700; font-size:0.95em; margin:2px 0;">
-    [ ${isDineIn ? `DINE IN (TAKEAWAY) ${tableNum ? `TABLE ${tableNum}` : ''}` : `${fulfillmentLabel} ORDER`} ]
-  </div>
-      `
+    content.showScheduledTime !== false && scheduleInfo.isScheduled && scheduleInfo.scheduleTimeText
+      ? `<div style="background:#000;color:#fff;text-align:center;font-weight:900;padding:6px 8px;border-radius:4px;margin:6px 0;">
+           <div>*** SCHEDULED ${esc(fulfillmentLabel)} ***</div>
+           <div style="font-size:1.15em;margin-top:3px;">TARGET: ${esc(scheduleInfo.scheduleTimeText.toUpperCase())}</div>
+         </div>`
+      : ''
   }
-  ${content.showTableNumber && tableNum ? `<div style="text-align:center; font-weight:800;">TABLE: ${tableNum.toUpperCase()}</div>` : ''}
-  ${content.showServerWaiterName && (order.waiterName || content.serverWaiterName) ? `<div style="text-align:center; font-size:0.9em;">Server: ${order.waiterName || content.serverWaiterName}</div>` : ''}
+  ${content.showTableNumber && tableNum ? `<div class="center" style="font-weight:800;">TABLE: ${esc(tableNum.toUpperCase())}</div>` : ''}
+  ${content.showServerWaiterName && waiter && String(waiter).trim() ? `<div class="center" style="font-size:0.9em;">Server: ${esc(waiter)}</div>` : ''}
 
-  <!-- Customer Info -->
-  ${content.showCustomerInfo ? `
+  ${
+    content.showCustomerInfo
+      ? `<div class="divider"></div>
+  <div>
+    <div style="font-weight:${layout.boldElements.customerDetails ? '700' : '500'};">Customer: ${esc(customerName)}</div>
+    ${customerPhone && !isDummyCustomerPhone(customerPhone, restaurantPhone) ? `<div>Phone: ${esc(customerPhone)}</div>` : ''}
+    ${address ? `<div>Address: ${esc(address)}</div>` : ''}
+    ${postcode ? `<div style="font-weight:700;">Postcode: ${esc(postcode)}</div>` : ''}
+  </div>`
+      : ''
+  }
   <div class="divider"></div>
-  <div style="text-align:left;">
-    <div style="font-weight:${layout.boldElements.customerDetails ? '700' : '500'};">Customer: ${customerName}</div>
-    ${customerPhone && !isDummyCustomerPhone(customerPhone, restaurantPhone) ? `<div>Phone: ${customerPhone}</div>` : ''}
-    ${rawAddress && !isDineIn ? `<div>Address: ${rawAddress}</div>` : ''}
-    ${postalCode && !isDineIn ? `<div style="font-weight:700;">Postcode: ${postalCode}</div>` : ''}
-  </div>
-  ` : ''}
 
-  <div class="divider"></div>
-
-  <!-- Items -->
-  <div class="items-sec">
-    <div style="display:flex; justify-content:space-between; font-weight:800; font-size:0.95em; border-bottom:1px solid #000; padding-bottom:3px; margin-bottom:4px;">
-      <span style="width:25px;">QTY</span>
-      <span style="flex:1; padding:0 6px;">ITEM</span>
-      <span style="text-align:right;">PRICE</span>
+  <div>
+    <div style="display:flex;justify-content:space-between;font-weight:800;font-size:0.95em;border-bottom:1px solid #000;padding-bottom:3px;margin-bottom:4px;">
+      <span style="width:28px;">QTY</span><span style="flex:1;">ITEM</span><span>PRICE</span>
     </div>
-    ${itemsList.map((item: any) => {
-      const q = item.quantity || item.qty || 1;
-      const n = item.name || item.itemName || 'Item';
-      const p = getItemPrice(item);
-      return `
+    ${getOrderItems(order)
+      .map((item: any) => {
+        const instructions = getItemInstructions(item);
+        return `
       <div class="item-row">
-        <span style="width:25px;">${q}x</span>
-        <span style="flex:1; padding:0 6px;">${n}</span>
-        <span style="text-align:right;">${formatMoney(p)}</span>
+        <span style="width:28px;">${esc(getItemQuantity(item))}x</span>
+        <span style="flex:1;">${esc(getItemName(item))}</span>
+        <span style="white-space:nowrap;">${esc(formatMoney(getItemPrice(item)))}</span>
       </div>
-      ${getItemOptionsList(item).map((opt: string) => `<div class="item-notes">+ ${opt}</div>`).join('')}
-      ${content.showItemNotes && (item.instructions || item.specialInstructions || item.note) ? `<div class="item-notes">* Note: ${item.instructions || item.specialInstructions || item.note}</div>` : ''}
-      `;
-    }).join('')}
+      ${getItemOptionsList(item).map((opt: string) => `<div class="item-notes">+ ${esc(opt)}</div>`).join('')}
+      ${content.showItemNotes && instructions ? `<div class="item-notes">* Note: ${esc(instructions)}</div>` : ''}`;
+      })
+      .join('')}
   </div>
-
   <div class="divider"></div>
 
-  <!-- Totals -->
-  <div class="totals-sec">
-    ${subtotal > 0 ? `<div class="summary-row"><span>Subtotal</span><span>${formatMoney(subtotal)}</span></div>` : ''}
-    ${deliveryFee > 0 ? `<div class="summary-row"><span>Delivery Fee</span><span>${formatMoney(deliveryFee)}</span></div>` : ''}
-    ${onlinePaymentFee > 0 ? `<div class="summary-row"><span>Handling Fee</span><span>${formatMoney(onlinePaymentFee)}</span></div>` : ''}
-    ${handlingCharge > 0 ? `<div class="summary-row"><span>Handling Charge</span><span>${formatMoney(handlingCharge)}</span></div>` : ''}
-    ${platformFee > 0 ? `<div class="summary-row"><span>Platform / Service Fee</span><span>${formatMoney(platformFee)}</span></div>` : ''}
-    ${tax > 0 || content.showItemTaxBreakdown ? `
-    <div class="summary-row">
-      <span>${content.showItemTaxBreakdown ? `Tax / VAT (${content.taxPercentage || 20}%)` : 'Tax / VAT'}</span>
-      <span>${formatMoney(tax || (subtotal * ((content.taxPercentage || 20) / 100)))}</span>
-    </div>` : ''}
-    ${tip > 0 ? `<div class="summary-row"><span>Driver Tip</span><span>${formatMoney(tip)}</span></div>` : ''}
-    ${content.showDiscountLine && discount > 0 ? `<div class="summary-row"><span>Discount</span><span>-${formatMoney(discount)}</span></div>` : ''}
-    
+  <div>
+    ${totals.subtotal > 0 ? row('Subtotal', formatMoney(totals.subtotal)) : ''}
+    ${totals.deliveryFee > 0 ? row('Delivery Fee', formatMoney(totals.deliveryFee)) : ''}
+    ${totals.onlinePaymentFee > 0 ? row('Card / Online Fee', formatMoney(totals.onlinePaymentFee)) : ''}
+    ${totals.handlingCharge > 0 ? row('Handling Charge', formatMoney(totals.handlingCharge)) : ''}
+    ${totals.platformFee > 0 ? row('Service Fee', formatMoney(totals.platformFee)) : ''}
+    ${totals.tax > 0 ? row(content.showItemTaxBreakdown && (content.taxPercentage ?? 20) > 0 ? `Tax / VAT (${content.taxPercentage ?? 20}%)` : 'Tax / VAT', formatMoney(totals.tax)) : ''}
+    ${totals.tip > 0 ? row('Tip', formatMoney(totals.tip)) : ''}
+    ${content.showDiscountLine && totals.discount > 0 ? row('Discount', formatMoney(-totals.discount)) : ''}
     <div class="divider-double"></div>
-    <div class="total-row">
-      <span>TOTAL</span>
-      <span>${formatMoney(total)}</span>
-    </div>
+    <div class="total-row"><span>TOTAL</span><span>${esc(formatMoney(totals.total))}</span></div>
+    ${totals.includedVat ? row(totals.includedVat.label, formatMoney(totals.includedVat.amount)) : ''}
     <div class="divider-double"></div>
-
-    ${content.showPaymentMethod ? `
-    <div style="text-align:center; font-weight:700; margin:4px 0;">
-      PAYMENT: ${paymentType.toUpperCase()} (${isPaid ? 'PAID' : paymentStatus})
-    </div>` : ''}
+    ${content.showPaymentMethod ? `<div class="center" style="font-weight:700;margin:4px 0;">PAYMENT: ${esc(payment.label)}</div>` : ''}
   </div>
 
-  ${specialNotes ? `
-  <div class="divider"></div>
-  <div style="font-weight:700; font-size:0.95em;">NOTE: ${specialNotes}</div>
-  ` : ''}
+  ${notes ? `<div class="divider"></div><div style="font-weight:700;font-size:0.95em;">NOTE: ${esc(notes)}</div>` : ''}
 
-  <!-- Footer & QR -->
   <div class="footer-sec">
-    ${content.footerMessage ? `<div class="footer-msg">${content.footerMessage}</div>` : ''}
-    ${content.showQrCode && content.qrCodeData ? `
-    <div class="qr-box">
-      <img src="https://api.qrserver.com/v1/create-qr-code/?size=110x110&data=${encodeURIComponent(content.qrCodeData)}" style="width:90px; height:90px; display:block; margin:0 auto 4px auto;" />
-      ${content.qrCodeLabel ? `<div style="font-size:0.85em; font-weight:600;">${content.qrCodeLabel}</div>` : ''}
-    </div>` : ''}
+    ${content.footerMessage ? `<div class="footer-msg">${esc(content.footerMessage)}</div>` : ''}
+    ${
+      content.showQrCode && content.qrCodeData?.trim()
+        ? `<div class="center" style="margin:8px 0;">
+      <img src="https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(content.qrCodeData.trim())}" style="width:90px;height:90px;display:block;margin:0 auto 4px auto;" />
+      ${content.qrCodeLabel ? `<div style="font-size:0.85em;font-weight:600;">${esc(content.qrCodeLabel)}</div>` : ''}
+      <div style="font-size:0.75em;">${esc(content.qrCodeData.trim())}</div>
+    </div>`
+        : ''
+    }
   </div>
 </body>
-</html>
-  `;
+</html>`;
 }
 
-/**
- * Generate 80mm Thermal POS Receipt HTML matching the exact physical receipt layout
- */
-export function generateThermalReceiptHtml(order: Partial<Order> & any, template?: ReceiptTemplate): string {
-  if (template) {
-    return generateCustomizedThermalReceiptHtml(order, template);
-  }
-  const orderNum = order.orderNumber || (order._id ? `#${order._id.slice(-5).toUpperCase()}` : '#00000');
-  
-  // Customer details
-  const customerName =
-    order.customerDetails?.name ||
-    order.customerId?.fullName ||
-    order.userId?.fullName ||
-    order.userId?.name ||
-    order.customerName ||
-    'Customer';
+/** @deprecated use generateThermalReceiptHtml(order, template) */
+export const generateCustomizedThermalReceiptHtml = (order: any, template: ReceiptTemplate) =>
+  generateThermalReceiptHtml(order, template);
 
-  const customerPhone =
-    order.customerDetails?.phoneNumber ||
-    order.customerId?.phoneNumber ||
-    order.userId?.phoneNumber ||
-    order.deliveryAddress?.phoneNumber ||
-    order.phoneNumber ||
-    'N/A';
+// ─────────────────────────────────────────────────────────────────────────────
+// Printing
+// ─────────────────────────────────────────────────────────────────────────────
 
-  // Restaurant details
-  const restaurantName =
-    typeof order.restaurantId === 'object'
-      ? order.restaurantId?.restaurantName || 'Restaurant'
-      : 'Krifoo Partner';
-
-  const restaurantPhone =
-    typeof order.restaurantId === 'object'
-      ? order.restaurantId?.phoneNumber || ''
-      : '';
-
-  // Fulfillment Type
-  const fulfillmentType = (order.orderType || order.deliveryType || 'Delivery').toUpperCase();
-  const isDelivery = fulfillmentType.includes('DELIV');
-
-  // Address
-  const rawAddress =
-    order.deliveryAddress?.fullAddress ||
-    order.deliveryAddress?.formattedAddress ||
-    order.deliveryAddress?.addressLine1 ||
-    order.deliveryAddress?.address ||
-    (typeof order.deliveryAddress === 'string' ? order.deliveryAddress : '') ||
-    (isDelivery ? 'Delivery Address Specified' : 'Takeaway / Collection');
-
-  const postalCode =
-    order.deliveryAddress?.postalCode ||
-    order.deliveryAddress?.postcode ||
-    order.deliveryAddress?.postCode ||
-    order.deliveryAddress?.zipCode ||
-    (rawAddress.match(/[A-Z]{1,2}[0-9][A-Z0-9]? ?[0-9][A-Z]{2}/i)?.[0] || '');
-
-  // Schedule info
-  const scheduleInfo = getOrderScheduleInfo(order);
-  const fulfillmentLabel = getOrderFulfillmentLabel(order);
-
-  // Dates
-  const { placedAt, targetTime } = formatOrderDate(order.createdAt, scheduleInfo.scheduleTimeText);
-
-  // Items
-  const itemsList = order.orderedItems || order.items || [];
-
-  // Financials
-  const pricing = order.pricing || {};
-  const subtotal = Number(pricing.subtotal ?? (order as any).subtotal ?? order.totalAmount ?? order.totalPrice ?? 0);
-  const deliveryFee = Number(pricing.deliveryFee ?? (order as any).deliveryFee ?? 0);
-  const onlinePaymentFee = Number(pricing.onlinePaymentFee ?? (order as any).onlinePaymentFee ?? (pricing as any).cardFee ?? (pricing as any).paymentFee ?? 0);
-  const handlingCharge = Number(pricing.handlingCharge ?? (order as any).handlingCharge ?? 0);
-  const platformFee = Number(pricing.platformFee ?? (order as any).platformFee ?? (pricing as any).serviceFee ?? (order as any).serviceFee ?? 0);
-  const tax = Number(pricing.tax ?? pricing.vat ?? (order as any).tax ?? (order as any).vat ?? 0);
-  const tip = Number(pricing.tip ?? (order as any).tip ?? 0);
-  const discount = Number(pricing.discount ?? pricing.discountAmount ?? (order as any).discountAmount ?? 0);
-  const total = Number(pricing.total ?? pricing.totalAmount ?? order.totalAmount ?? (order as any).totalPrice ?? (subtotal + deliveryFee + onlinePaymentFee + handlingCharge + platformFee + tax + tip - discount));
-
-  const paymentType = order.paymentType || 'Card';
-  const paymentStatus = (order.paymentStatus || 'Paid').toUpperCase();
-  const isPaid = paymentStatus === 'PAID' || paymentStatus === 'COMPLETED';
-
-  // Notes
-  const specialNotes = getSanitizedOrderNotes(order.notes || order.specialInstructions || '');
-
-  return `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Receipt ${orderNum}</title>
-  <style>
-    @page {
-      size: 80mm auto;
-      margin: 0mm !important;
-    }
-    * {
-      box-sizing: border-box;
-      -webkit-print-color-adjust: exact;
-      print-color-adjust: exact;
-      color-adjust: exact;
-    }
-    html, body {
-      width: 100% !important;
-      max-width: 80mm !important;
-      margin: 0 auto !important;
-      padding: 0 !important;
-      background-color: #ffffff;
-    }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-      padding: 4mm 3mm 12mm 3mm;
-      color: #000000;
-      font-size: 13px;
-      line-height: 1.35;
-    }
-    
-    /* Top Black Banner */
-    .header-banner {
-      background-color: #000000 !important;
-      color: #ffffff !important;
-      padding: 8px 10px;
-      border-radius: 4px;
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      margin-bottom: 8px;
-    }
-    .header-left {
-      text-align: left;
-    }
-    .header-customer-name {
-      font-size: 17px;
-      font-weight: 800;
-      line-height: 1.2;
-    }
-    .header-order-num {
-      font-size: 16px;
-      font-weight: 800;
-      margin-top: 2px;
-    }
-    .header-right {
-      text-align: right;
-    }
-    .header-type {
-      font-size: 17px;
-      font-weight: 800;
-      line-height: 1.2;
-    }
-    .header-asap {
-      font-size: 16px;
-      font-weight: 800;
-      margin-top: 2px;
-    }
-
-    /* Delivery / Timing Row */
-    .timing-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 6px 2px;
-      font-size: 13px;
-      font-weight: 600;
-      color: #333333;
-    }
-    .timing-target {
-      font-size: 14px;
-      font-weight: 800;
-      color: #000000;
-    }
-
-    .divider-solid {
-      border-top: 1px solid #000000;
-      margin: 6px 0;
-    }
-    .divider-dashed {
-      border-top: 1.5px dashed #555555;
-      margin: 8px 0;
-    }
-
-    /* Items Table */
-    .items-section {
-      margin: 8px 0;
-    }
-    .item-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      margin-bottom: 7px;
-      font-size: 18px;
-    }
-    .item-name-qty {
-      font-size: 18px;
-      font-weight: 900;
-      flex: 1;
-      padding-right: 8px;
-      color: #000000;
-      line-height: 1.25;
-    }
-    .item-price {
-      font-size: 18px;
-      font-weight: 900;
-      white-space: nowrap;
-      text-align: right;
-      color: #000000;
-    }
-    .item-addon {
-      font-size: 14px;
-      font-weight: 600;
-      color: #333333;
-      margin-top: 2px;
-      padding-left: 14px;
-    }
-
-    /* Summary Financials */
-    .summary-table {
-      width: 100%;
-      margin: 6px 0;
-    }
-    .summary-row {
-      display: flex;
-      justify-content: space-between;
-      font-size: 13px;
-      padding: 2px 0;
-      color: #222222;
-    }
-    .summary-row-bold {
-      display: flex;
-      justify-content: space-between;
-      font-size: 16px;
-      font-weight: 900;
-      padding: 6px 0;
-      color: #000000;
-      border-top: 1.5px solid #000000;
-      border-bottom: 1.5px solid #000000;
-      margin: 6px 0;
-    }
-
-    /* Payment status */
-    .payment-row {
-      display: flex;
-      justify-content: space-between;
-      font-size: 13px;
-      padding: 2px 0;
-      color: #222222;
-    }
-    .payment-method {
-      font-weight: 600;
-    }
-
-    /* Customer details block */
-    .customer-block {
-      margin-top: 8px;
-    }
-    .detail-label {
-      font-size: 12px;
-      font-weight: 800;
-      color: #000000;
-      margin-top: 6px;
-      margin-bottom: 1px;
-    }
-    .detail-val {
-      font-size: 13px;
-      font-weight: 500;
-      color: #111111;
-      line-height: 1.3;
-    }
-    .detail-val-bold {
-      font-size: 14px;
-      font-weight: 800;
-      color: #000000;
-    }
-
-    /* Notes block */
-    .notes-box {
-      margin-top: 8px;
-      padding: 6px;
-      background-color: #f3f3f3;
-      border: 1px dashed #000000;
-      border-radius: 4px;
-    }
-
-    /* Footer */
-    .footer {
-      text-align: center;
-      margin-top: 14px;
-      padding-top: 6px;
-      border-top: 1px dotted #888888;
-      font-size: 11px;
-      color: #555555;
-    }
-    .footer-rest {
-      font-weight: 700;
-      color: #222222;
-      margin-top: 2px;
-    }
-  </style>
-</head>
-<body>
-  <!-- Header Banner (Dark Inverted Block) -->
-  <div class="header-banner">
-    <div class="header-left">
-      <div class="header-customer-name">${customerName}</div>
-      <div class="header-order-num">${orderNum.startsWith('#') ? orderNum : '#' + orderNum}</div>
-    </div>
-    <div class="header-right">
-      <div class="header-type">${fulfillmentType}</div>
-      ${
-        scheduleInfo.isScheduled
-          ? `<div class="header-asap" style="background:#000000; color:#FFFFFF; border:1.5px solid #FFFFFF; padding:2px 5px; border-radius:3px; font-size:13px; font-weight:900; margin-top:2px;">SCHEDULED</div>`
-          : `<div class="header-asap">ASAP</div>`
-      }
-    </div>
-  </div>
-
-  <!-- Delivery / Scheduled Time Target -->
-  ${
-    scheduleInfo.isScheduled
-      ? `
-  <div style="background-color: #000000; color: #FFFFFF; padding: 7px 8px; margin: 6px 0; border-radius: 4px; text-align: center;">
-    <div style="font-size: 14px; font-weight: 900; letter-spacing: 0.5px;">*** SCHEDULED ${fulfillmentLabel} ***</div>
-    <div style="font-size: 13px; font-weight: 800; margin-top: 2px;">ORDER TYPE: ${fulfillmentLabel}</div>
-    <div style="font-size: 16px; font-weight: 900; margin-top: 3px; color: #FFFFFF;">TARGET TIME: ${scheduleInfo.scheduleTimeText}</div>
-  </div>
-      `
-      : `
-  <div class="timing-row">
-    <span>Delivery time</span>
-    <span class="timing-target">${targetTime}</span>
-  </div>
-      `
-  }
-
-  <div class="divider-solid"></div>
-
-  <!-- Ordered Items List -->
-  <div class="items-section">
-    ${
-      itemsList.length > 0
-        ? itemsList
-            .map((item: any) => {
-              const qty = Number(item.quantity || item.qty || 1);
-              const name =
-                item.itemName ||
-                item.name ||
-                item.title ||
-                item.itemId?.name ||
-                item.itemId?.itemName ||
-                item.menuItemId?.name ||
-                item.menuItemId?.itemName ||
-                item.menuItem?.name ||
-                item.menuItem?.itemName ||
-                item.dishName ||
-                item.productName ||
-                'Item';
-
-              let price = 0;
-              if (item.itemTotal !== undefined && item.itemTotal !== null && !isNaN(item.itemTotal)) {
-                price = Number(item.itemTotal);
-              } else if (item.basePrice !== undefined && item.basePrice !== null && !isNaN(item.basePrice)) {
-                price = Number(item.basePrice) * qty;
-              } else if (item.price !== undefined && item.price !== null && !isNaN(item.price)) {
-                price = Number(item.price) * qty;
-              }
-
-              const optionsList: string[] = getItemOptionsList(item);
-              const itemNote = item.instructions || item.specialInstructions || item.note || '';
-
-              return `
-              <div class="item-row">
-                <div class="item-name-qty">${qty} x &nbsp;${name}</div>
-                <div class="item-price">${formatMoney(price)}</div>
-              </div>
-              ${optionsList.map((opt: string) => `<div class="item-addon">+ ${opt}</div>`).join('')}
-              ${itemNote ? `<div class="item-addon" style="font-style: italic;">* ${itemNote}</div>` : ''}
-            `;
-            })
-            .join('')
-        : `<div class="item-row"><div class="item-name-qty">1 x Order Items</div><div class="item-price">${formatMoney(total)}</div></div>`
-    }
-  </div>
-
-  <div class="divider-solid"></div>
-
-  <!-- Financial Summary -->
-  <div class="summary-table">
-    <div class="summary-row">
-      <span>Subtotal</span>
-      <span>${formatMoney(subtotal > 0 ? subtotal : total)}</span>
-    </div>
-    ${
-      deliveryFee > 0
-        ? `
-    <div class="summary-row">
-      <span>Delivery Fee</span>
-      <span>${formatMoney(deliveryFee)}</span>
-    </div>`
-        : ''
-    }
-    ${
-      onlinePaymentFee > 0
-        ? `
-    <div class="summary-row">
-      <span>Handling Fee</span>
-      <span>${formatMoney(onlinePaymentFee)}</span>
-    </div>`
-        : ''
-    }
-    ${
-      handlingCharge > 0
-        ? `
-    <div class="summary-row">
-      <span>Handling Charge</span>
-      <span>${formatMoney(handlingCharge)}</span>
-    </div>`
-        : ''
-    }
-    ${
-      platformFee > 0
-        ? `
-    <div class="summary-row">
-      <span>Platform / Service Fee</span>
-      <span>${formatMoney(platformFee)}</span>
-    </div>`
-        : ''
-    }
-    ${
-      tax > 0
-        ? `
-    <div class="summary-row">
-      <span>Tax / VAT</span>
-      <span>${formatMoney(tax)}</span>
-    </div>`
-        : ''
-    }
-    ${
-      tip > 0
-        ? `
-    <div class="summary-row">
-      <span>Driver Tip</span>
-      <span>${formatMoney(tip)}</span>
-    </div>`
-        : ''
-    }
-    ${
-      discount > 0
-        ? `
-    <div class="summary-row">
-      <span>Discount</span>
-      <span>-${formatMoney(discount)}</span>
-    </div>`
-        : ''
-    }
-
-    <!-- Total Row (Large Bold) -->
-    <div class="summary-row-bold">
-      <span>Total</span>
-      <span>${formatMoney(total)}</span>
-    </div>
-
-    <!-- Payment Rows -->
-    <div class="payment-row">
-      <span>${isPaid ? 'Paid' : 'Payment Status'}</span>
-      <span style="font-weight: 700;">${isPaid ? formatMoney(total) : paymentStatus}</span>
-    </div>
-    <div class="payment-row">
-      <span class="payment-method">Paid with ${paymentType}</span>
-      <span>${formatMoney(total)}</span>
-    </div>
-  </div>
-
-  <div class="divider-dashed"></div>
-
-  <!-- Customer & Delivery Information -->
-  <div class="customer-block">
-    <div class="detail-label">Customer name</div>
-    <div class="detail-val-bold">${customerName}</div>
-
-    ${
-      isDelivery && rawAddress
-        ? `
-    <div class="detail-label">Delivery address</div>
-    <div class="detail-val">${rawAddress}</div>
-    `
-        : ''
-    }
-
-    ${
-      postalCode
-        ? `
-    <div class="detail-label">Postal code</div>
-    <div class="detail-val-bold">${postalCode}</div>
-    `
-        : ''
-    }
-
-    ${customerPhone && !isDummyCustomerPhone(customerPhone, restaurantPhone) ? `
-    <div class="detail-label">Phone number</div>
-    <div class="detail-val-bold">${customerPhone}</div>
-    ` : ''}
-
-    ${
-      specialNotes
-        ? `
-    <div class="notes-box">
-      <div class="detail-label" style="margin-top:0;">Special Instructions:</div>
-      <div class="detail-val">${specialNotes}</div>
-    </div>
-    `
-        : ''
-    }
-  </div>
-
-  <!-- Footer -->
-  <div class="footer">
-    <div>Order placed ${placedAt}</div>
-    <div class="footer-rest">${restaurantName}${restaurantPhone ? ' | ' + restaurantPhone : ''}</div>
-  </div>
-</body>
-</html>
-  `;
-}
-
-// 80mm in standard PostScript points (80mm / 25.4 * 72 = 226.77 pt)
-const THERMAL_80MM_WIDTH_POINTS = 227;
-
-// Cache to prevent duplicate prints when Socket and Push Notification arrive simultaneously
-const recentPrints = new Map<string, number>();
+const POINTS_PER_WIDTH = { '80mm': 227, '58mm': 164 } as const;
 
 export interface PrintJobReport {
   orderId: string;
@@ -999,360 +365,290 @@ export interface PrintJobReport {
   brand: string;
   connectionType: string;
   targetAddress: string;
-  driverUsed: 'sunmi_aidl' | 'epson_epos' | 'network_escpos' | 'system_spooler' | 'none';
+  driverUsed: 'sunmi_aidl' | 'epson_epos' | 'network_escpos' | 'bluetooth' | 'system_spooler' | 'none';
   driverLabel: string;
   copies: number;
+  copiesPrinted: number;
   success: boolean;
+  /** True when nothing was sent because it was not needed (auto-print off, already printed, ...). */
+  skipped?: boolean;
   durationMs: number;
   timestamp: string;
   error?: string;
 }
 
 let lastPrintJobReport: PrintJobReport | null = null;
+const reportsByOrder = new Map<string, PrintJobReport>();
+const inFlight = new Map<string, Promise<boolean>>();
 
-/**
- * Get report for the most recent print action
- */
-export function getLastPrintJobReport(): PrintJobReport | null {
+/** Report for the most recent print, or for a specific order when an id is given. */
+export function getLastPrintJobReport(orderId?: string): PrintJobReport | null {
+  if (orderId) return reportsByOrder.get(String(orderId)) || null;
   return lastPrintJobReport;
 }
 
+function storeReport(report: PrintJobReport) {
+  lastPrintJobReport = report;
+  reportsByOrder.set(report.orderId, report);
+  if (reportsByOrder.size > 200) {
+    const oldest = reportsByOrder.keys().next().value;
+    if (oldest) reportsByOrder.delete(oldest);
+  }
+}
+
+/** Fills in the store name/phone/address on a COPY of the order when the order doesn't carry them. */
+async function withStoreDetails(order: any): Promise<any> {
+  const copy = { ...order };
+  if (copy.restaurantName || (typeof copy.restaurantId === 'object' && copy.restaurantId?.restaurantName)) return copy;
+
+  let cached = getCachedStoreProfile();
+  if (!cached?.restaurantName) {
+    try {
+      const { restaurantOwnerService } = require('./restaurant-owner.service');
+      const ownerRes = await restaurantOwnerService.getRestaurantProfile();
+      if (ownerRes?.success && ownerRes.data?.restaurantName) {
+        cached = {
+          restaurantName: ownerRes.data.restaurantName,
+          phoneNumber: ownerRes.data.phoneNumber,
+          address: formatRestaurantAddress(ownerRes.data.address),
+        };
+        setCachedStoreProfile(cached);
+      }
+    } catch {
+      // ignore — receipt prints with "Restaurant"
+    }
+  }
+  if (cached?.restaurantName) {
+    copy.restaurantName = cached.restaurantName;
+    copy.restaurantPhone = copy.restaurantPhone || cached.phoneNumber;
+    copy.restaurantAddress = copy.restaurantAddress || cached.address;
+  }
+  return copy;
+}
+
+function driverFor(connectionType: string): PrintJobReport['driverUsed'] {
+  if (connectionType === 'builtin') return 'sunmi_aidl';
+  if (connectionType === 'network_epos') return 'epson_epos';
+  if (connectionType === 'network_raw') return 'network_escpos';
+  if (connectionType === 'ble' || connectionType === 'spp') return 'bluetooth';
+  if (connectionType === 'system') return 'system_spooler';
+  return 'none';
+}
+
 /**
- * Print an order on the restaurant's configured thermal POS printer
- * - SUNMI / Flipdish: Uses direct Sunmi AIDL SDK
- * - Epson / Star / RetailZ / Munbyn / ESC-POS: Uses Network TCP/IP ESC-POS driver
- * - System / Generic: Uses expo-print PDF/HTML spooler
- * 
- * @param order Order data object
- * @param isManual True if initiated by direct user tap (bypasses auto-print check & debounce)
+ * Print an order on the configured printer.
+ *
+ * - Manual prints (`isManual`) may fall back to the OS print dialog if the printer fails.
+ * - Automatic prints never fall back to a dialog; failures emit PRINT_FAILED_EVENT instead.
+ *   (The only dialog an auto-print can open is when "System print" IS the chosen printer.)
+ * - Each order is auto-printed once (remembered across restarts), at the configured trigger.
+ * - Concurrent calls for the same order share one print job.
+ *
+ * @param trigger which event caused an automatic print ('new_order' | 'accepted').
+ *                Ignored for manual prints.
  */
-export async function printThermalReceipt(
+export function printThermalReceipt(
   order: Partial<Order> & any,
   isManual: boolean = false,
   customTemplate?: ReceiptTemplate,
-  configOverride?: Partial<PosPrinterConfig>
+  configOverride?: Partial<PosPrinterConfig>,
+  trigger?: AutoPrintTrigger
+): Promise<boolean> {
+  const orderKey = String(order?._id || order?.id || order?.orderNumber || '');
+  const flightKey = `${orderKey}|${isManual ? 'm' : 'a'}`;
+  if (orderKey && inFlight.has(flightKey)) return inFlight.get(flightKey)!;
+
+  const job = runPrintJob(order, isManual, customTemplate, configOverride, trigger).finally(() => {
+    inFlight.delete(flightKey);
+  });
+  if (orderKey) inFlight.set(flightKey, job);
+  return job;
+}
+
+async function runPrintJob(
+  rawOrder: Partial<Order> & any,
+  isManual: boolean,
+  customTemplate?: ReceiptTemplate,
+  configOverride?: Partial<PosPrinterConfig>,
+  trigger?: AutoPrintTrigger
 ): Promise<boolean> {
   const startTime = Date.now();
-  const orderNum = String(order.orderNumber || (order._id ? `#${order._id.slice(-5).toUpperCase()}` : '#00000'));
-  const orderId = String(order._id || order.id || orderNum);
-  const orderStatus = String(order.status || 'unknown');
-  const customerName = order.customerDetails?.name || order.customerId?.fullName || order.userId?.fullName || 'Customer';
-  const totalAmount = order.pricing?.total ?? order.pricing?.totalAmount ?? order.totalAmount ?? order.totalPrice ?? 0;
-  const items = Array.isArray(order.orderedItems) ? order.orderedItems : (Array.isArray(order.items) ? order.items : []);
-  const itemCount = items.length;
+  const orderNum = getDisplayOrderNumber(rawOrder);
+  const orderId = String(rawOrder?._id || rawOrder?.id || orderNum);
+  const items = getOrderItems(rawOrder);
+  const totalAmount = computeReceiptTotals(rawOrder).total;
 
-  let driverUsed: 'sunmi_aidl' | 'epson_epos' | 'network_escpos' | 'system_spooler' | 'none' = 'none';
-  let driverLabel = 'None';
-  let success = false;
-  let printError: string | undefined;
+  const baseReport = {
+    orderId,
+    orderNumber: orderNum,
+    orderStatus: String(rawOrder?.status || 'unknown'),
+    customerName: getCustomerName(rawOrder),
+    totalAmount: formatMoney(totalAmount),
+    itemCount: items.length,
+    trigger: (isManual ? 'manual_click' : 'auto_print') as PrintJobReport['trigger'],
+  };
 
-  console.log(`[PRINT INITIATE] Order #${orderNum} | Trigger: ${isManual ? 'MANUAL USER CLICK' : 'AUTO-PRINT'} | Stage: "${orderStatus}" | Total: £${Number(totalAmount).toFixed(2)} | Items: ${itemCount}`);
-
-  try {
-    const restId = typeof order.restaurantId === 'object' ? order.restaurantId?._id : (order.restaurantId || order.restaurant);
-    const baseConfig = await getPosPrinterConfig(restId ? String(restId) : undefined);
-    const config = configOverride ? { ...baseConfig, ...configOverride } : baseConfig;
-    let template = customTemplate || (await getActiveReceiptTemplate(restId ? String(restId) : undefined));
-
-    // Strictly synchronize paperWidth between template and hardware config (defaults to 58mm)
-    const effectiveWidth = config.paperWidth || template?.layout?.paperWidth || '80mm';
-    config.paperWidth = effectiveWidth;
-    if (template?.layout) {
-      template.layout.paperWidth = effectiveWidth;
-    }
-
-    // Ensure logo is resolved to inline base64 data URI so WebView print spooler renders it instantly without security sandbox restrictions
-    if (template?.content?.showLogo && template?.content?.logoUrl && !template.content.logoUrl.startsWith('data:image/')) {
-      try {
-        const resolvedLogo = await resolveLogoAsBase64(template.content.logoUrl);
-        if (resolvedLogo) {
-          template = {
-            ...template,
-            content: {
-              ...template.content,
-              logoUrl: resolvedLogo,
-            },
-          };
-        }
-      } catch (logoErr) {
-        console.warn('[printThermalReceipt] Logo resolution warning:', logoErr);
-      }
-    }
-
-    // Ensure order has live store details populated
-    if (!order.restaurantName && (typeof order.restaurantId !== 'object' || !order.restaurantId?.restaurantName)) {
-      const cached = getCachedStoreProfile();
-      if (cached?.restaurantName) {
-        order.restaurantName = cached.restaurantName;
-        if (typeof order.restaurantId === 'object') {
-          order.restaurantId.restaurantName = cached.restaurantName;
-        } else {
-          order.restaurantId = {
-            _id: String(order.restaurantId || ''),
-            restaurantName: cached.restaurantName,
-            phoneNumber: cached.phoneNumber || '',
-          };
-        }
-      } else {
-        try {
-          const { restaurantOwnerService } = require('./restaurant-owner.service');
-          const ownerRes = await restaurantOwnerService.getRestaurantProfile();
-          if (ownerRes?.success && ownerRes.data?.restaurantName) {
-            order.restaurantName = ownerRes.data.restaurantName;
-            const ownerAddr = ownerRes.data.address;
-            const resolvedAddr = formatRestaurantAddress(ownerAddr);
-            setCachedStoreProfile({
-              restaurantName: ownerRes.data.restaurantName,
-              phoneNumber: ownerRes.data.phoneNumber,
-              address: resolvedAddr,
-            });
-            if (typeof order.restaurantId === 'object') {
-              order.restaurantId.restaurantName = ownerRes.data.restaurantName;
-            } else {
-              order.restaurantId = {
-                _id: String(order.restaurantId || ownerRes.data._id || ''),
-                restaurantName: ownerRes.data.restaurantName,
-                phoneNumber: ownerRes.data.phoneNumber || '',
-              };
-            }
-          }
-        } catch {
-          // ignore
-        }
-      }
-    }
-
-    // If auto-print is disabled and this was not a manual user click, skip
-    if (!config.autoPrint && !isManual) {
-      console.log(`[PRINT SKIPPED] Auto-print is disabled for restaurant in POS settings. Order: #${orderNum}`);
-      lastPrintJobReport = {
-        orderId,
-        orderNumber: orderNum,
-        orderStatus,
-        customerName,
-        totalAmount: `£${Number(totalAmount).toFixed(2)}`,
-        itemCount,
-        trigger: 'auto_print',
-        brand: config.brand,
-        connectionType: config.connectionType,
-        targetAddress: config.connectionType === 'network' ? `${config.ipAddress}:${config.port}` : config.connectionType,
-        driverUsed: 'none',
-        driverLabel: 'Auto-print disabled',
-        copies: 0,
-        success: false,
-        durationMs: Date.now() - startTime,
-        timestamp: new Date().toISOString(),
-        error: 'Auto-print disabled in settings',
-      };
-      return false;
-    }
-
-    const orderKey = String(order._id || order.orderNumber || order.id || '');
-    const now = Date.now();
-
-    // Prevent duplicate auto-prints if socket and push notification fire at the same second
-    const minInterval = isManual ? 2500 : 20000;
-    if (orderKey) {
-      const lastPrinted = recentPrints.get(orderKey);
-      if (lastPrinted && now - lastPrinted < minInterval) {
-        console.log(`[PRINT SKIPPED] Duplicate auto-print for order #${orderNum} (printed ${Math.round((now - lastPrinted)/1000)}s ago)`);
-        return true;
-      }
-      recentPrints.set(orderKey, now);
-      if (recentPrints.size > 100) {
-        recentPrints.clear();
-      }
-    }
-
-    const copies = Math.max(1, config.copies || 1);
-    const targetAddr = config.connectionType === 'network' ? `${config.ipAddress}:${config.port}` : config.connectionType;
-    const profile = profileFromConfig(config);
-
-    console.log(`[PRINT HARDWARE] Brand: ${config.brand.toUpperCase()} (${config.connectionType} @ ${targetAddr}) | Copies: ${copies}`);
-
-    for (let copy = 1; copy <= copies; copy++) {
-      if (copy > 1) {
-        console.log(`[PRINT] Printing copy ${copy} of ${copies}...`);
-      }
-
-      // 1. If valid hardware profile is configured and not purely 'system'
-      if (profile && profile.connectionType !== 'system') {
-        const printer = resolvePrinter(profile, {
-          brand: config.brand,
-          paperWidth: config.paperWidth,
-          orderContext: order,
-          configContext: config,
-          templateContext: template,
-        });
-
-        console.log(`[PRINT ATTEMPT] Dispatching to ${printer.model} via PrintQueue (Copy ${copy}/${copies})...`);
-        const doc = buildCustomizedReceiptDocument(order, config, template);
-
-        const result = await PrintQueueService.enqueuePrintJob(
-          printer,
-          doc,
-          config,
-          `Order_${orderNum}_c${copy}`
-        );
-
-        if (result.success) {
-          driverUsed = profile.connectionType === 'builtin'
-            ? 'sunmi_aidl'
-            : profile.connectionType === 'network_epos'
-            ? 'epson_epos'
-            : 'network_escpos';
-          driverLabel = printer.model;
-          success = true;
-          continue;
-        } else {
-          const failRes = result as { success: false; reason?: string; detail?: string };
-          printError = failRes.detail || (failRes.reason ? `Printer failed with reason: ${failRes.reason}` : 'Printer failed');
-          console.warn(`[PRINT WARNING] ${printer.model} returned error: ${printError}. Falling back to system spooler...`);
-        }
-      }
-
-      // 2. Fallback: System Spooler / AirPrint / PDF
-      const paperWidthPoints = template.layout.paperWidth === '58mm' ? 164 : THERMAL_80MM_WIDTH_POINTS;
-      console.log(`[PRINT ATTEMPT] Dispatching to System Print Spooler (PDF / AirPrint ${template.layout.paperWidth})...`);
-      try {
-        const html = generateThermalReceiptHtml(order, template);
-        const outcome = await printHtmlWithSystemDialog(html, paperWidthPoints);
-        if (outcome === 'cancelled') {
-          // User dismissed the AirPrint / system dialog: expected, not a failure.
-          // Stop here so remaining copies don't reopen the dialog.
-          console.log(`[PRINT CANCELLED] Order #${orderNum}: system print dialog was dismissed.`);
-          printError = 'Print cancelled.';
-          success = false;
-          break;
-        }
-        driverUsed = 'system_spooler';
-        driverLabel = `System Print Spooler (AirPrint / ${template.layout.paperWidth})`;
-        success = true;
-      } catch (spoolerErr: any) {
-        console.warn('[PRINT ERROR] System print spooler failed:', spoolerErr);
-        printError = spoolerErr?.message || 'Print spooler failed';
-        success = false;
-      }
-    }
-
-    const durationMs = Date.now() - startTime;
-    lastPrintJobReport = {
-      orderId,
-      orderNumber: orderNum,
-      orderStatus,
-      customerName,
-      totalAmount: `£${Number(totalAmount).toFixed(2)}`,
-      itemCount,
-      trigger: isManual ? 'manual_click' : 'auto_print',
-      brand: config.brand,
-      connectionType: config.connectionType,
-      targetAddress: targetAddr,
-      driverUsed,
-      driverLabel,
-      copies,
-      success,
-      durationMs,
-      timestamp: new Date().toISOString(),
-      error: printError,
-    };
-
-    console.log(`
-┌────────────────────────────────────────────────────────┐
-│               🖨️  ACTUAL PRINT STATUS REPORT            │
-├───────────────────┬────────────────────────────────────┤
-│ Order Number      │ #${orderNum}
-│ Order Stage       │ ${orderStatus.toUpperCase()}
-│ Trigger Source    │ ${isManual ? 'MANUAL USER CLICK' : 'AUTO-PRINT'}
-│ Customer          │ ${customerName}
-│ Order Total       │ £${Number(totalAmount).toFixed(2)} (${itemCount} items)
-│ Configured Brand  │ ${config.brand.toUpperCase()} (${config.connectionType})
-│ Target Address    │ ${targetAddr}
-│ Driver Executed   │ ${driverLabel}
-│ Copies Printed    │ ${copies} copy/copies
-│ Elapsed Time      │ ${durationMs}ms
-│ Final Result      │ ${success ? '✅ SUCCESS (PRINTED)' : '❌ FAILED'}
-└───────────────────┴────────────────────────────────────┘`);
-
-    return success;
-  } catch (error: any) {
-    const durationMs = Date.now() - startTime;
-    const errMessage = error?.message || String(error);
-    lastPrintJobReport = {
-      orderId,
-      orderNumber: orderNum,
-      orderStatus,
-      customerName,
-      totalAmount: `£${Number(totalAmount).toFixed(2)}`,
-      itemCount,
-      trigger: isManual ? 'manual_click' : 'auto_print',
+  const finish = (partial: Partial<PrintJobReport> & Pick<PrintJobReport, 'success'>): boolean => {
+    const report: PrintJobReport = {
+      ...baseReport,
       brand: 'unknown',
       connectionType: 'unknown',
       targetAddress: 'unknown',
       driverUsed: 'none',
-      driverLabel: 'Error Failed',
-      copies: 1,
-      success: false,
-      durationMs,
+      driverLabel: 'None',
+      copies: 0,
+      copiesPrinted: 0,
+      durationMs: Date.now() - startTime,
       timestamp: new Date().toISOString(),
-      error: errMessage,
+      ...partial,
+    };
+    storeReport(report);
+    if (!report.success && !report.skipped && !isManual && report.error !== 'Print cancelled.') {
+      DeviceEventEmitter.emit(PRINT_FAILED_EVENT, report);
+    }
+    console.log(
+      `[Print] ${orderNum} ${report.trigger} → ${report.skipped ? 'SKIPPED' : report.success ? 'PRINTED' : 'FAILED'}` +
+        ` (${report.driverLabel}, ${report.copiesPrinted}/${report.copies} copies, ${report.durationMs}ms)` +
+        (report.error ? ` — ${report.error}` : '')
+    );
+    return report.success;
+  };
+
+  try {
+    const restId = typeof rawOrder?.restaurantId === 'object' ? rawOrder.restaurantId?._id : rawOrder?.restaurantId || rawOrder?.restaurant;
+    const baseConfig = await getPosPrinterConfig(restId ? String(restId) : undefined);
+    const config: PosPrinterConfig = { ...baseConfig, ...(configOverride || {}) };
+    const configInfo = {
+      brand: config.brand,
+      connectionType: config.connectionType,
+      targetAddress:
+        config.connectionType === 'network'
+          ? `${config.ipAddress}:${config.port}`
+          : config.connectionType === 'bluetooth'
+          ? config.deviceName || config.macAddress || config.target || 'bluetooth'
+          : config.connectionType,
     };
 
-    console.error(`
-┌────────────────────────────────────────────────────────┐
-│           ❌ ACTUAL PRINT STATUS REPORT: FAILED        │
-├───────────────────┬────────────────────────────────────┤
-│ Order Number      │ #${orderNum}
-│ Order Stage       │ ${orderStatus.toUpperCase()}
-│ Error Details     │ ${errMessage}
-│ Elapsed Time      │ ${durationMs}ms
-└───────────────────┴────────────────────────────────────┘`);
-    return false;
+    // Automatic print rules
+    if (!isManual) {
+      if (config.autoPrint === false) {
+        return finish({ ...configInfo, success: false, skipped: true, driverLabel: 'Auto-print disabled', error: 'Auto-print is turned off' });
+      }
+      const wanted = config.autoPrintTrigger || 'new_order';
+      if (trigger && trigger !== wanted) {
+        return finish({ ...configInfo, success: false, skipped: true, driverLabel: `Auto-print runs on ${wanted}` });
+      }
+      const printed = await readAutoPrinted();
+      if (printed[orderId]) {
+        return finish({ ...configInfo, success: true, skipped: true, driverLabel: 'Already printed automatically' });
+      }
+    }
+
+    // Work on copies — never mutate the caller's order (React state) or a cached template
+    const order = await withStoreDetails(rawOrder);
+    let template = cloneTemplate(customTemplate || (await getActiveReceiptTemplate(restId ? String(restId) : undefined)));
+    // Paper width is a property of the printer hardware
+    template.layout.paperWidth = config.paperWidth;
+
+    if (template.content.showLogo && template.content.logoUrl && !template.content.logoUrl.startsWith('data:image/')) {
+      const logo = await resolveLogoAsBase64(template.content.logoUrl);
+      template = { ...template, content: { ...template.content, logoUrl: logo, showLogo: Boolean(logo) } };
+    }
+
+    const copies = Math.max(1, Math.min(5, config.copies || 1));
+    const profile = profileFromConfig(config);
+    let copiesPrinted = 0;
+    let printError: string | undefined;
+    let driverUsed: PrintJobReport['driverUsed'] = 'none';
+    let driverLabel = 'None';
+
+    // 1. Configured hardware printer
+    if (profile && profile.connectionType !== 'system') {
+      const printer = resolvePrinter(profile, {
+        brand: config.brand,
+        paperWidth: config.paperWidth,
+        orderContext: order,
+        configContext: config,
+        templateContext: template,
+      });
+      driverUsed = driverFor(profile.connectionType);
+      driverLabel = printer.model;
+      const doc = buildCustomizedReceiptDocument(order, config, template);
+
+      for (let copy = 1; copy <= copies; copy++) {
+        // Only the first copy opens the cash drawer
+        const copyDoc = copy === 1 ? doc : doc.filter((c) => c.type !== 'drawer');
+        const result = await PrintQueueService.enqueuePrintJob(printer, copyDoc, config, `Order_${orderNum}_c${copy}`);
+        if (!result.success) {
+          printError = result.detail || `Printer error (${result.reason})`;
+          break;
+        }
+        copiesPrinted++;
+      }
+    } else if (!profile) {
+      printError = 'No printer is set up. Open Printer Settings to connect one.';
+    }
+
+    const hardwareOk = copiesPrinted === copies;
+
+    // 2. OS print dialog — only when someone tapped Print (never for unattended auto-print),
+    //    or when the restaurant chose "System print" as its printer.
+    const isSystemPrinter = profile?.connectionType === 'system';
+    if (!hardwareOk && (isSystemPrinter || isManual)) {
+      const hardwareError = printError;
+      // System printer: one dialog per copy. Fallback after a hardware failure: one dialog only.
+      const dialogs = isSystemPrinter ? copies : 1;
+      const html = generateThermalReceiptHtml(order, template, config.paperWidth);
+      let dialogsPrinted = 0;
+      try {
+        for (let i = 0; i < dialogs; i++) {
+          const outcome = await printHtmlWithSystemDialog(html, POINTS_PER_WIDTH[config.paperWidth] || 227);
+          if (outcome === 'cancelled') {
+            return finish({
+              ...configInfo,
+              success: false,
+              driverUsed: 'system_spooler',
+              driverLabel: 'System print (AirPrint / Android)',
+              copies,
+              copiesPrinted: dialogsPrinted,
+              error: 'Print cancelled.',
+            });
+          }
+          dialogsPrinted++;
+        }
+        return finish({
+          ...configInfo,
+          success: true,
+          driverUsed: 'system_spooler',
+          driverLabel: hardwareError ? `System print (printer failed: ${hardwareError})` : 'System print (AirPrint / Android)',
+          copies,
+          copiesPrinted: isSystemPrinter ? dialogsPrinted : copies,
+          error: hardwareError,
+        });
+      } catch (spoolerErr: any) {
+        printError = spoolerErr?.message || hardwareError || 'System print failed';
+        driverUsed = 'system_spooler';
+      }
+    }
+
+    if (hardwareOk && !isManual) await markAutoPrinted(orderId);
+
+    return finish({
+      ...configInfo,
+      success: hardwareOk,
+      driverUsed,
+      driverLabel,
+      copies,
+      copiesPrinted,
+      error: hardwareOk ? undefined : copiesPrinted > 0 ? `Printed ${copiesPrinted} of ${copies} copies. ${printError || ''}`.trim() : printError,
+    });
+  } catch (error: any) {
+    return finish({ success: false, error: error?.message || String(error) });
   }
 }
 
 /**
- * Sample order for testing 80mm thermal printing
- */
-export const SAMPLE_THERMAL_ORDER = {
-  _id: '22885',
-  orderNumber: '22885',
-  orderType: 'Delivery',
-  status: 'placed',
-  createdAt: new Date().toISOString(),
-  customerDetails: {
-    name: 'Alida Thej',
-    phoneNumber: '07423003935',
-  },
-  deliveryAddress: {
-    formattedAddress: '471 Newmarket Rd, Cambridge, GB-ENG CB5 8JJ, United Kingdom',
-    postalCode: 'CB5 8JJ',
-  },
-  restaurantId: {
-    _id: 'rest_1',
-    restaurantName: 'Demo Kitchen',
-    phoneNumber: '83a Mill Rd, Cambridge CB1 2AW, UK',
-  },
-  orderedItems: [
-    {
-      itemName: 'Mandi chicken biryani',
-      name: 'Mandi chicken biryani',
-      price: 10.0,
-      basePrice: 10.0,
-      quantity: 2,
-    },
-  ],
-  pricing: {
-    subtotal: 20.0,
-    handlingCharge: 0.4,
-    deliveryFee: 0.0,
-    total: 20.4,
-  },
-  paymentType: 'mastercard 0000',
-  paymentStatus: 'paid',
-};
-
-/**
- * Print a sample test receipt matching the user's POS receipt
+ * Print a sample test receipt using the active template.
  */
 export async function printSampleThermalReceipt(
   restaurantId?: string,
@@ -1363,32 +659,21 @@ export async function printSampleThermalReceipt(
 }
 
 /**
- * Pulse cash drawer without creating a fake dummy order (Fixes Bug #8)
+ * Pulse the cash drawer (no receipt printed).
  */
 export async function openCashDrawer(restaurantId?: string): Promise<boolean> {
   try {
     const config = await getPosPrinterConfig(restaurantId);
     const profile = profileFromConfig(config);
+    if (!profile || profile.connectionType === 'system') return false;
 
-    if (profile && profile.connectionType !== 'system') {
-      const printer = resolvePrinter(profile, {
-        brand: config.brand,
-        paperWidth: config.paperWidth,
-      });
-      const kickDoc = buildDrawerKickDocument(1);
-      const res = await PrintQueueService.enqueuePrintJob(printer, kickDoc, config, 'Drawer_Kick');
-      return res.success;
-    }
-
-    const hasSunmi = await isSunmiAvailable();
-    if (hasSunmi) {
-      const { openSunmiCashDrawer } = require('./sunmi-printer.service');
-      if (typeof openSunmiCashDrawer === 'function') {
-        return await openSunmiCashDrawer();
-      }
-    }
-
-    return false;
+    const printer = resolvePrinter(profile, {
+      brand: config.brand,
+      paperWidth: config.paperWidth,
+      mode: 'drawer', // Sunmi: opens the drawer instead of printing
+    });
+    const res = await PrintQueueService.enqueuePrintJob(printer, buildDrawerKickDocument(1), config, 'Drawer_Kick');
+    return res.success;
   } catch (err) {
     console.error('[Cash Drawer] Failed to kick drawer:', err);
     return false;
@@ -1396,7 +681,8 @@ export async function openCashDrawer(restaurantId?: string): Promise<boolean> {
 }
 
 /**
- * Print a test receipt using a specific customized template to verify physical formatting
+ * Print a test receipt with a specific template (e.g. while editing it).
+ * Uses the printer's paper width and never kicks the cash drawer.
  */
 export async function printTestReceiptTemplate(
   template: ReceiptTemplate,
@@ -1416,8 +702,7 @@ export async function printTestReceiptTemplate(
         if (res?.success && res.data?.restaurantName) {
           resolvedStoreName = res.data.restaurantName;
           resolvedPhone = res.data.phoneNumber || resolvedPhone;
-          const rAddr = res.data.address;
-          resolvedAddress = formatRestaurantAddress(rAddr) || resolvedAddress;
+          resolvedAddress = formatRestaurantAddress(res.data.address) || resolvedAddress;
         }
       }
       if (!resolvedStoreName) {
@@ -1426,13 +711,8 @@ export async function printTestReceiptTemplate(
         if (ownerRes?.success && ownerRes.data?.restaurantName) {
           resolvedStoreName = ownerRes.data.restaurantName;
           resolvedPhone = ownerRes.data.phoneNumber || resolvedPhone;
-          const oAddr = ownerRes.data.address;
-          resolvedAddress = formatRestaurantAddress(oAddr) || resolvedAddress;
-          setCachedStoreProfile({
-            restaurantName: resolvedStoreName,
-            phoneNumber: resolvedPhone,
-            address: resolvedAddress,
-          });
+          resolvedAddress = formatRestaurantAddress(ownerRes.data.address) || resolvedAddress;
+          setCachedStoreProfile({ restaurantName: resolvedStoreName, phoneNumber: resolvedPhone, address: resolvedAddress });
         }
       }
     } catch (e) {
@@ -1440,17 +720,14 @@ export async function printTestReceiptTemplate(
     }
   }
 
-  const sampleOrder = getSampleOrderForPreview(
-    template.content.showTableNumber ? 'dine_in' : 'delivery',
-    resolvedStoreName
-  );
-
+  const sampleOrder = getSampleOrderForPreview(template.content.showTableNumber ? 'dine_in' : 'delivery', resolvedStoreName);
+  sampleOrder._id = `test_${Date.now()}`; // unique, so repeated test prints are never de-duplicated
   if (resolvedStoreName) {
     const formattedAddr = formatRestaurantAddress(resolvedAddress);
     sampleOrder.restaurantId = {
       _id: restaurantId || 'rest_001',
       restaurantName: resolvedStoreName,
-      phoneNumber: resolvedPhone || '01223 456789',
+      phoneNumber: resolvedPhone || '',
       address: formattedAddr,
       formattedAddress: formattedAddr,
     };
@@ -1458,13 +735,5 @@ export async function printTestReceiptTemplate(
     sampleOrder.restaurantAddress = formattedAddr;
   }
 
-  const effectiveWidth = configOverride?.paperWidth || template.layout?.paperWidth || '80mm';
-  const mergedOverride: Partial<PosPrinterConfig> = {
-    ...configOverride,
-    paperWidth: effectiveWidth,
-  };
-
-  return printThermalReceipt(sampleOrder, true, template, mergedOverride);
+  return printThermalReceipt(sampleOrder, true, template, { ...configOverride, openCashDrawer: false });
 }
-
-

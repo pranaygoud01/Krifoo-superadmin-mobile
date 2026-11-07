@@ -121,3 +121,19 @@ export function rasterizeImage(
     return null;
   }
 }
+
+/**
+ * Places a raster image inside a wider white canvas, `leftDots` from the left edge.
+ * Lets us centre a logo WITHOUT the ESC/POS left-margin command (GS L), which would
+ * override the printer's own built-in margin and push later text off the paper.
+ */
+export function padRaster(img: RasterizedImage, leftDots: number, totalWidthDots: number): RasterizedImage {
+  const leftBytes = Math.max(0, Math.floor(leftDots / 8));
+  const widthBytes = Math.max(img.widthBytes + leftBytes, Math.ceil(totalWidthDots / 8));
+  if (leftBytes === 0 && widthBytes === img.widthBytes) return img;
+  const data = new Uint8Array(widthBytes * img.height); // 0 = white
+  for (let y = 0; y < img.height; y++) {
+    data.set(img.data.subarray(y * img.widthBytes, (y + 1) * img.widthBytes), y * widthBytes + leftBytes);
+  }
+  return { width: widthBytes * 8, height: img.height, widthBytes, data };
+}

@@ -19,6 +19,7 @@ jest.mock('../services/sound.service', () => ({
 jest.mock('../services/thermal-print.service', () => ({
   printThermalReceipt: jest.fn(() => Promise.resolve(true)),
   isAutoPrintEnabled: jest.fn(() => Promise.resolve(true)),
+  PRINT_FAILED_EVENT: 'krifoo:auto-print-failed',
 }));
 jest.mock('../services/order.service', () => ({
   orderService: { getAllOrders: jest.fn(), getOrderById: jest.fn() },

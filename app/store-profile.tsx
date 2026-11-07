@@ -1,471 +1,356 @@
-import React, { useState, useEffect } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TextInput,
-  TouchableOpacity,
-  ActivityIndicator,
-  Alert,
-  Switch,
-  KeyboardAvoidingView,
-  Platform,
-} from 'react-native';
-import { useRouter } from 'expo-router';
-import { Header } from '../components/Header';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, KeyboardAvoidingView, Platform } from 'react-native';
+import { ScreenHeader } from '../components/ScreenHeader';
 import { Colors } from '../constants/colors';
 import { restaurantOwnerService } from '../services/restaurant-owner.service';
-import { Store, Save } from 'lucide-react-native';
+import { useToast } from '../context/ToastContext';
+import { Store, User, MapPin, Mail, Lock, TriangleAlert, Check } from 'lucide-react-native';
+import {
+  EmailListEditor,
+  ErrorView,
+  Field,
+  FieldRow,
+  FormFrame,
+  FormSection,
+  LoadingState,
+  Notice,
+  SAVE_BAR_SPACE,
+  SaveBar,
+  formStyles,
+  isEqualJSON,
+  useFormLayout,
+  useUnsavedChangesGuard,
+} from '../components/settings/FormKit';
 
-import { useWindowDimensions } from 'react-native';
+/**
+ * Store profile (restaurant owner).
+ * Backend: GET /api/restaurants/me, PUT /api/restaurants/profile.
+ * The profile endpoint accepts: restaurantName, ownerFullName, primaryContactName, phoneNumber,
+ * restaurantType, orderNotificationEmails, address.{shopNo, floor, area, city, landmark}.
+ * Login email is read-only. Store online/offline is NOT sent from here (it's controlled on the
+ * Settings screen) so saving the profile can never flip the store's live status.
+ */
+
+type BusinessType = 'food_delivery_and_dining' | 'food_delivery' | 'groceries' | 'meat_poultry';
+
+const BUSINESS_TYPES: { value: BusinessType; label: string; desc: string }[] = [
+  { value: 'food_delivery_and_dining', label: 'Food & Dining', desc: 'Delivery, pickup and dine-in' },
+  { value: 'food_delivery', label: 'Delivery only', desc: 'Takeaway kitchen' },
+  { value: 'groceries', label: 'Groceries', desc: 'Convenience & grocery' },
+  { value: 'meat_poultry', label: 'Meat & Poultry', desc: 'Butcher & halal' },
+];
+
+type ProfileForm = {
+  restaurantName: string;
+  restaurantType: BusinessType;
+  ownerFullName: string;
+  primaryContactName: string;
+  phoneNumber: string;
+  orderNotificationEmails: string[];
+  shopNo: string;
+  floor: string;
+  landmark: string;
+  area: string;
+  city: string;
+};
+
+type FormKey = keyof ProfileForm;
+
+const EMPTY_FORM: ProfileForm = {
+  restaurantName: '',
+  restaurantType: 'food_delivery_and_dining',
+  ownerFullName: '',
+  primaryContactName: '',
+  phoneNumber: '',
+  orderNotificationEmails: [],
+  shopNo: '',
+  floor: '',
+  landmark: '',
+  area: '',
+  city: '',
+};
+
+const toForm = (r: any): ProfileForm => ({
+  restaurantName: r?.restaurantName || '',
+  restaurantType: (r?.restaurantType as BusinessType) || 'food_delivery_and_dining',
+  ownerFullName: r?.ownerFullName || '',
+  primaryContactName: r?.primaryContactName || '',
+  phoneNumber: r?.phoneNumber || '',
+  orderNotificationEmails: Array.isArray(r?.orderNotificationEmails) ? r.orderNotificationEmails : [],
+  shopNo: r?.address?.shopNo || '',
+  floor: r?.address?.floor || '',
+  landmark: r?.address?.landmark || '',
+  area: r?.address?.area || '',
+  city: r?.address?.city || '',
+});
+
+const PHONE_RE = /^\+?[\d\s()-]{7,20}$/;
+const NAME_RE = /^[A-Za-zÀ-ÖØ-öø-ÿ' .-]+$/;
+
+function validate(f: ProfileForm): Partial<Record<FormKey, string>> {
+  const e: Partial<Record<FormKey, string>> = {};
+  const name = f.restaurantName.trim();
+  if (!name) e.restaurantName = 'Enter your business name.';
+  else if (name.length < 2) e.restaurantName = 'Business name is too short.';
+  else if (name.length > 80) e.restaurantName = 'Keep it under 80 characters.';
+
+  const owner = f.ownerFullName.trim();
+  if (!owner) e.ownerFullName = 'Enter the owner’s name.';
+  else if (!NAME_RE.test(owner)) e.ownerFullName = 'Use letters, spaces, hyphens or apostrophes only.';
+
+  if (f.primaryContactName.trim() && !NAME_RE.test(f.primaryContactName.trim())) {
+    e.primaryContactName = 'Use letters, spaces, hyphens or apostrophes only.';
+  }
+
+  const phone = f.phoneNumber.trim();
+  const digits = phone.replace(/\D/g, '');
+  if (!phone) e.phoneNumber = 'Enter a phone number customers can reach.';
+  else if (!PHONE_RE.test(phone) || digits.length < 7 || digits.length > 15) e.phoneNumber = 'Enter a valid phone number.';
+
+  if (!f.city.trim()) e.city = 'Enter your city.';
+  return e;
+}
 
 export default function StoreProfileScreen() {
-  const router = useRouter();
-  const { width } = useWindowDimensions();
-  const isTablet = width >= 768;
-  const isNarrow = width < 480;
+  const { showToast } = useToast();
+  const { gutter, isTablet, isCompact } = useFormLayout();
 
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [email, setEmail] = useState('');
+  const [form, setForm] = useState<ProfileForm>(EMPTY_FORM);
+  const [saved, setSaved] = useState<ProfileForm>(EMPTY_FORM);
+  const [showErrors, setShowErrors] = useState(false);
 
-  const [profileForm, setProfileForm] = useState({
-    restaurantName: '',
-    ownerFullName: '',
-    primaryContactName: '',
-    email: '',
-    phoneNumber: '',
-    restaurantType: 'food_delivery_and_dining',
-    isActive: true,
-    shopNo: '',
-    floor: '',
-    area: '',
-    city: '',
-    landmark: '',
-    orderNotificationEmails: '',
-  });
+  const dirty = !isEqualJSON(form, saved);
+  useUnsavedChangesGuard(dirty);
 
-  const loadProfile = async () => {
+  const errors = useMemo(() => validate(form), [form]);
+  const visibleErrors = showErrors ? errors : {};
+  const errorCount = showErrors ? Object.keys(errors).length : 0;
+
+  const loadProfile = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const res = await restaurantOwnerService.getRestaurantProfile();
       if (res.success && res.data) {
-        const r = res.data;
-        setProfileForm({
-          restaurantName: r.restaurantName || '',
-          ownerFullName: r.ownerFullName || '',
-          primaryContactName: r.primaryContactName || '',
-          email: r.email || '',
-          phoneNumber: r.phoneNumber || '',
-          restaurantType: r.restaurantType || 'food_delivery_and_dining',
-          isActive: r.isActive ?? true,
-          shopNo: r.address?.shopNo || '',
-          floor: r.address?.floor || '',
-          area: r.address?.area || '',
-          city: r.address?.city || '',
-          landmark: r.address?.landmark || '',
-          orderNotificationEmails: (r.orderNotificationEmails || []).join(', '),
-        });
+        const f = toForm(res.data);
+        setEmail(res.data.email || '');
+        setForm(f);
+        setSaved(f);
+      } else {
+        setLoadError(res.message || 'Your store profile could not be loaded.');
       }
-    } catch (e) {
-      console.error('Failed loading store profile:', e);
+    } catch (e: any) {
+      setLoadError(e?.message || 'Could not reach the server.');
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     loadProfile();
-  }, []);
+  }, [loadProfile]);
 
-  const handleChange = (field: string, value: string) => {
-    setProfileForm((prev) => ({ ...prev, [field]: value }));
-  };
+  const set = <K extends FormKey>(key: K, value: ProfileForm[K]) => setForm((prev) => ({ ...prev, [key]: value }));
 
-  const handleSave = async () => {
+  const bind = (key: Exclude<FormKey, 'restaurantType' | 'orderNotificationEmails'>) => ({
+    value: form[key],
+    onChangeText: (v: string) => set(key, v),
+    error: visibleErrors[key],
+  });
+
+  const save = async () => {
+    if (Object.keys(errors).length) {
+      setShowErrors(true);
+      showToast({ title: 'Check highlighted fields', message: 'Some details need fixing before saving.', type: 'error' });
+      return;
+    }
     setSaving(true);
     try {
-      const payloadProfile = {
-        restaurantName: profileForm.restaurantName,
-        ownerFullName: profileForm.ownerFullName,
-        primaryContactName: profileForm.primaryContactName,
-        phoneNumber: profileForm.phoneNumber,
-        restaurantType: profileForm.restaurantType,
-        isActive: profileForm.isActive,
-        orderNotificationEmails: profileForm.orderNotificationEmails
-          .split(',')
-          .map((e) => e.trim())
-          .filter(Boolean),
+      const res = await restaurantOwnerService.updateRestaurantProfile({
+        restaurantName: form.restaurantName.trim(),
+        ownerFullName: form.ownerFullName.trim(),
+        primaryContactName: form.primaryContactName.trim(),
+        phoneNumber: form.phoneNumber.trim(),
+        restaurantType: form.restaurantType,
+        orderNotificationEmails: form.orderNotificationEmails,
         address: {
-          shopNo: profileForm.shopNo,
-          floor: profileForm.floor,
-          area: profileForm.area,
-          city: profileForm.city,
-          landmark: profileForm.landmark,
+          shopNo: form.shopNo.trim(),
+          floor: form.floor.trim(),
+          landmark: form.landmark.trim(),
+          area: form.area.trim().toUpperCase(),
+          city: form.city.trim(),
         },
-      };
-
-      const res = await restaurantOwnerService.updateRestaurantProfile(payloadProfile);
+      });
       if (res.success) {
-        Alert.alert('Success', 'Store profile details updated successfully.');
-        loadProfile();
+        // Reflect exactly what the server stored.
+        const stored = res.data ? toForm(res.data) : form;
+        setForm(stored);
+        setSaved(stored);
+        setShowErrors(false);
+        showToast({ title: 'Profile saved', message: 'Your store details have been updated.', type: 'success' });
       } else {
-        Alert.alert('Error', res.message || 'Failed to save store profile.');
+        showToast({ title: 'Save failed', message: res.message || 'Could not save your profile.', type: 'error' });
       }
     } catch (e: any) {
-      Alert.alert('Error', e.message || 'An error occurred while saving profile.');
+      showToast({ title: 'Save failed', message: e?.message || 'Could not reach the server.', type: 'error' });
     } finally {
       setSaving(false);
     }
   };
 
+  const losingDining =
+    saved.restaurantType === 'food_delivery_and_dining' && form.restaurantType !== 'food_delivery_and_dining';
+
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
-    >
-      <Header title="Store & Restaurant Profile" showBackButton={true} />
+    <KeyboardAvoidingView style={formStyles.screen} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <ScreenHeader title="Store profile" subtitle="Business details, contact and address" />
 
       {loading ? (
-        <View style={styles.centerBox}>
-          <ActivityIndicator size="large" color={Colors.primary} />
-          <Text style={styles.loadingText}>Fetching store profile...</Text>
-        </View>
+        <LoadingState label="Loading your store profile…" />
+      ) : loadError ? (
+        <ErrorView message={loadError} onRetry={loadProfile} />
       ) : (
         <ScrollView
-          contentContainerStyle={[
-            styles.scrollContent,
-            { paddingHorizontal: isTablet ? 24 : 16, maxWidth: 840, alignSelf: 'center', width: '100%' },
-          ]}
+          contentContainerStyle={[formStyles.scroll, { paddingHorizontal: gutter, paddingBottom: SAVE_BAR_SPACE }]}
+          keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          <View style={styles.sectionCard}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                <View style={styles.storeIconBadge}>
-                  <Store size={20} color={Colors.primary} />
-                </View>
-                <View>
-                  <Text style={styles.sectionHeader}>Store Identity & Contact</Text>
-                  <Text style={styles.sectionSub}>Update name, owner contact & notifications</Text>
-                </View>
-              </View>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                {/* <View style={[styles.statusBadge, profileForm.isActive ? styles.statusActive : styles.statusInactive]}>
-                  <Text style={styles.statusBadgeText}>{profileForm.isActive ? 'ONLINE' : 'OFFLINE'}</Text>
-                </View> */}
-                {/* <Switch
-                  value={profileForm.isActive}
-                  onValueChange={(val) => setProfileForm((prev) => ({ ...prev, isActive: val }))}
-                  trackColor={{ true: Colors.primaryLight, false: Colors.cardBorder }}
-                  thumbColor={profileForm.isActive ? Colors.primary : Colors.textSubtle}
-                /> */}
-              </View>
-            </View>
-
-            {/* Store Name & Type */}
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Store / Restaurant Name</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="e.g. Krifoo Diner & Grill"
-                value={profileForm.restaurantName}
-                onChangeText={(val) => handleChange('restaurantName', val)}
+          <FormFrame>
+            {/* Business */}
+            <FormSection icon={Store} title="Business" description="How your store appears to customers.">
+              <Field
+                label="Business name"
+                required
+                placeholder="e.g. Krifoo Grill"
+                autoCapitalize="words"
+                maxLength={80}
+                {...bind('restaurantName')}
               />
-            </View>
-
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Business / Store Type</Text>
-              <View style={styles.typePillRow}>
-                {[
-                  { id: 'food_delivery_and_dining', label: 'Food & Dining' },
-                  { id: 'food_delivery', label: 'Delivery Only' },
-                  { id: 'groceries', label: 'Groceries' },
-                  { id: 'meat_poultry', label: 'Meat & Poultry' },
-                ].map((typeItem) => {
-                  const isSel = profileForm.restaurantType === typeItem.id;
+              <Text style={styles.label}>Business type</Text>
+              <View style={styles.typeGrid}>
+                {BUSINESS_TYPES.map((t) => {
+                  const active = form.restaurantType === t.value;
                   return (
                     <TouchableOpacity
-                      key={typeItem.id}
-                      style={[styles.typePill, isSel && styles.typePillSelected]}
-                      onPress={() => handleChange('restaurantType', typeItem.id)}
+                      key={t.value}
+                      style={[styles.typeCard, { flexBasis: isTablet ? '23%' : '47%' }, active && styles.typeCardActive]}
+                      onPress={() => set('restaurantType', t.value)}
                       activeOpacity={0.8}
+                      accessibilityRole="radio"
+                      accessibilityState={{ selected: active }}
                     >
-                      <Text style={[styles.typePillText, isSel && styles.typePillTextSelected]}>
-                        {typeItem.label}
+                      <View style={styles.typeHead}>
+                        <Text style={[styles.typeLabel, active && styles.typeLabelActive]} numberOfLines={1}>
+                          {t.label}
+                        </Text>
+                        {active && <Check size={16} color={Colors.primary} strokeWidth={3} />}
+                      </View>
+                      <Text style={styles.typeDesc} numberOfLines={1}>
+                        {t.desc}
                       </Text>
                     </TouchableOpacity>
                   );
                 })}
               </View>
-            </View>
+              {losingDining && (
+                <Notice tone="warning" icon={TriangleAlert} title="Dine-in will be turned off">
+                  Only “Food & Dining” stores can take table bookings and dine-in orders. Saving this change disables them.
+                </Notice>
+              )}
+            </FormSection>
 
-            <View style={styles.rowInputs}>
-              <View style={[styles.inputGroup, { flex: 1, marginRight: 8 }]}>
-                <Text style={styles.label}>Owner Full Name</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Owner Name"
-                  value={profileForm.ownerFullName}
-                  onChangeText={(val) => handleChange('ownerFullName', val)}
-                />
-              </View>
-              <View style={[styles.inputGroup, { flex: 1 }]}>
-                <Text style={styles.label}>Primary Contact</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Contact Name"
-                  value={profileForm.primaryContactName}
-                  onChangeText={(val) => handleChange('primaryContactName', val)}
-                />
-              </View>
-            </View>
-
-            <View style={styles.rowInputs}>
-              <View style={[styles.inputGroup, { flex: 1, marginRight: 8 }]}>
-                <Text style={styles.label}>Store Email (Login)</Text>
-                <TextInput
-                  style={[styles.input, { backgroundColor: '#F3F4F6', color: Colors.textMuted }]}
-                  editable={false}
-                  value={profileForm.email}
-                />
-              </View>
-              <View style={[styles.inputGroup, { flex: 1 }]}>
-                <Text style={styles.label}>Store Phone Number</Text>
-                <TextInput
-                  style={styles.input}
+            {/* Contact */}
+            <FormSection icon={User} title="Contact" description="Who customers and Krifoo should contact.">
+              <FieldRow stack={!isTablet}>
+                <Field label="Owner name" required autoCapitalize="words" autoComplete="name" {...bind('ownerFullName')} />
+                <Field label="Primary contact" placeholder="Optional" autoCapitalize="words" {...bind('primaryContactName')} />
+              </FieldRow>
+              <FieldRow stack={!isTablet}>
+                <Field
+                  label="Phone number"
+                  required
                   keyboardType="phone-pad"
-                  placeholder="+44 1234 567890"
-                  value={profileForm.phoneNumber}
-                  onChangeText={(val) => handleChange('phoneNumber', val)}
+                  autoComplete="tel"
+                  placeholder="07123 456789"
+                  {...bind('phoneNumber')}
                 />
-              </View>
-            </View>
+                <Field
+                  label="Login email"
+                  value={email}
+                  editable={false}
+                  hint="Used to sign in. Contact Krifoo support to change it."
+                  leading={<Lock size={15} color={Colors.textSubtle} />}
+                />
+              </FieldRow>
+            </FormSection>
 
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Order Notification Emails</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="orders@store.com, manager@store.com"
-                value={profileForm.orderNotificationEmails}
-                onChangeText={(val) => handleChange('orderNotificationEmails', val)}
+            {/* Order emails */}
+            <FormSection
+              icon={Mail}
+              title="Order notification emails"
+              description="Extra addresses that get an email for every new order."
+            >
+              <EmailListEditor
+                emails={form.orderNotificationEmails}
+                onChange={(next) => set('orderNotificationEmails', next)}
+                emptyText="No extra addresses — order emails go to your login email only."
               />
-              <Text style={styles.inputSubText}>Multiple emails separated by commas</Text>
-            </View>
+            </FormSection>
 
-            <Text style={[styles.gridSectionTitle, { marginTop: 16, marginBottom: 8 }]}>Store Address & Location</Text>
-
-            <View style={styles.rowInputs}>
-              <View style={[styles.inputGroup, { flex: 1, marginRight: 8 }]}>
-                <Text style={styles.label}>Shop No / Unit</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="e.g. Unit 4B"
-                  value={profileForm.shopNo}
-                  onChangeText={(val) => handleChange('shopNo', val)}
+            {/* Address */}
+            <FormSection icon={MapPin} title="Address" description="Used for delivery distances and shown to customers.">
+              <FieldRow stack={isCompact}>
+                <Field label="Shop / unit no." placeholder="Unit 4B" {...bind('shopNo')} />
+                <Field label="Floor" placeholder="Ground floor" {...bind('floor')} />
+              </FieldRow>
+              <Field label="Street / landmark" placeholder="12 High Street, near the station" {...bind('landmark')} />
+              <FieldRow stack={isCompact}>
+                <Field
+                  label="Postcode"
+                  placeholder="EC1A 1BB"
+                  autoCapitalize="characters"
+                  autoComplete="postal-code"
+                  {...bind('area')}
                 />
-              </View>
-              <View style={[styles.inputGroup, { flex: 1 }]}>
-                <Text style={styles.label}>Floor</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="e.g. Ground Floor"
-                  value={profileForm.floor}
-                  onChangeText={(val) => handleChange('floor', val)}
-                />
-              </View>
-            </View>
-
-            <View style={styles.rowInputs}>
-              <View style={[styles.inputGroup, { flex: 1, marginRight: 8 }]}>
-                <Text style={styles.label}>Area / Street</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Street Area"
-                  value={profileForm.area}
-                  onChangeText={(val) => handleChange('area', val)}
-                />
-              </View>
-              <View style={[styles.inputGroup, { flex: 1 }]}>
-                <Text style={styles.label}>City</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="City"
-                  value={profileForm.city}
-                  onChangeText={(val) => handleChange('city', val)}
-                />
-              </View>
-            </View>
-
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Landmark / Directions</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="e.g. Near High Street Central Station"
-                value={profileForm.landmark}
-                onChangeText={(val) => handleChange('landmark', val)}
-              />
-            </View>
-          </View>
-
-          <TouchableOpacity
-            style={[styles.saveBtn, saving && { opacity: 0.7 }]}
-            disabled={saving}
-            onPress={handleSave}
-          >
-            {saving ? (
-              <ActivityIndicator color="#FFFFFF" />
-            ) : (
-              <>
-                <Text style={styles.saveBtnText}>Save Store Profile</Text>
-                <Save size={18} color="#FFFFFF" style={{ marginLeft: 6 }} />
-              </>
-            )}
-          </TouchableOpacity>
+                <Field label="City" required placeholder="London" autoCapitalize="words" {...bind('city')} />
+              </FieldRow>
+            </FormSection>
+          </FormFrame>
         </ScrollView>
       )}
+
+      <SaveBar
+        visible={dirty && !loading}
+        saving={saving}
+        errorCount={errorCount}
+        onSave={save}
+        onDiscard={() => {
+          setForm(saved);
+          setShowErrors(false);
+        }}
+      />
     </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: Colors.background,
-  },
-  centerBox: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  loadingText: {
-    marginTop: 12,
-    fontSize: 14,
-    color: Colors.textMuted,
-  },
-  scrollContent: {
-    padding: 16,
-    paddingBottom: 40,
-  },
-  sectionCard: {
+  label: { fontSize: 13, fontWeight: '700', color: Colors.text, marginBottom: 8 },
+  typeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 14 },
+  typeCard: {
+    flexGrow: 1,
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: Colors.cardBorder,
     backgroundColor: Colors.cardSurface,
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: Colors.cardBorder,
   },
-  storeIconBadge: {
-    width: 38,
-    height: 38,
-    borderRadius: 10,
-    backgroundColor: Colors.primaryLight,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: Colors.primary,
-  },
-  sectionHeader: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: Colors.text,
-  },
-  sectionSub: {
-    fontSize: 12,
-    color: Colors.textMuted,
-    marginTop: 2,
-  },
-  statusBadge: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-    borderWidth: 1,
-  },
-  statusActive: {
-    backgroundColor: '#ECFDF5',
-    borderColor: '#A7F3D0',
-  },
-  statusInactive: {
-    backgroundColor: '#FEF2F2',
-    borderColor: '#FCA5A5',
-  },
-  statusBadgeText: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#065F46',
-  },
-  inputGroup: {
-    marginBottom: 12,
-  },
-  label: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: Colors.textMuted,
-    marginBottom: 6,
-  },
-  input: {
-    backgroundColor: Colors.card,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: Colors.cardBorder,
-    paddingHorizontal: 12,
-    height: 42,
-    fontSize: 13,
-    color: Colors.text,
-  },
-  rowInputs: {
-    flexDirection: 'row',
-  },
-  typePillRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginTop: 4,
-  },
-  typePill: {
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 8,
-    backgroundColor: '#F8F9FA',
-    borderWidth: 1,
-    borderColor: Colors.cardBorder,
-  },
-  typePillSelected: {
-    backgroundColor: Colors.primary,
-    borderColor: Colors.primary,
-  },
-  typePillText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: Colors.text,
-  },
-  typePillTextSelected: {
-    color: '#FFFFFF',
-  },
-  inputSubText: {
-    fontSize: 11,
-    color: Colors.textSubtle,
-    marginTop: 4,
-  },
-  gridSectionTitle: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: Colors.textSubtle,
-    textTransform: 'uppercase',
-  },
-  saveBtn: {
-    backgroundColor: Colors.primary,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    height: 46,
-    borderRadius: 12,
-    marginTop: 8,
-  },
-  saveBtnText: {
-    color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: '700',
-  },
+  typeCardActive: { borderColor: Colors.primary, backgroundColor: Colors.primaryLight },
+  typeHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 6 },
+  typeLabel: { flexShrink: 1, fontSize: 14, fontWeight: '800', color: Colors.text },
+  typeLabelActive: { color: Colors.primaryDark },
+  typeDesc: { fontSize: 12, color: Colors.textMuted, marginTop: 2 },
 });

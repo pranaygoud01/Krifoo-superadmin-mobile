@@ -86,7 +86,7 @@ if (TaskManager && typeof TaskManager.defineTask === 'function') {
             return;
           }
           console.log('[Background Notification] Printing receipt directly from push payload...');
-          await printThermalReceipt(orderObj);
+          await printThermalReceipt(orderObj, false, undefined, undefined, 'new_order');
         } else if (orderId) {
           console.log('[Background Notification] Fetching order for background print, ID:', orderId);
           const res = await orderService.getOrderById(orderId);
@@ -96,7 +96,7 @@ if (TaskManager && typeof TaskManager.defineTask === 'function') {
               console.log(`[Background Notification] Skipping print: Fetched order restaurant ${fetchedRestId} !== active ${currentRestId}`);
               return;
             }
-            await printThermalReceipt(res.data);
+            await printThermalReceipt(res.data, false, undefined, undefined, 'new_order');
           }
         }
       } catch (err) {
@@ -161,7 +161,7 @@ try {
             }
 
             console.log('[Notification] Incoming new order notification received! Triggering 5-sec buzz sound...');
-            playOrderBuzzSound(5000).catch(console.error);
+            playOrderBuzzSound(undefined, 'order').catch(console.error);
 
             // Auto-print thermal receipt if enabled
             const autoPrint = await isAutoPrintEnabled();
@@ -172,7 +172,7 @@ try {
               if (isOwner && currentRestId && orderRestId && String(currentRestId) !== String(orderRestId)) {
                 return;
               }
-              await printThermalReceipt(orderObj);
+              await printThermalReceipt(orderObj, false, undefined, undefined, 'new_order');
             } else if (orderId) {
               try {
                 const res = await orderService.getOrderById(orderId);
@@ -182,7 +182,7 @@ try {
                     console.log(`[Notification] Auto-print skipped: Order restaurant ${fetchedRestId} !== active ${currentRestId}`);
                     return;
                   }
-                  await printThermalReceipt(res.data);
+                  await printThermalReceipt(res.data, false, undefined, undefined, 'new_order');
                 }
               } catch (err) {
                 console.error('[Notification] Failed to fetch order for auto-print:', err);

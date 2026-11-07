@@ -16,6 +16,15 @@ export type PosBrand =
 
 export type PosConnectionType = 'builtin' | 'network' | 'bluetooth' | 'system';
 
+/** Bluetooth Classic (SPP) vs Bluetooth Low Energy (GATT). Depends on the printer, not the phone. */
+export type BluetoothMode = 'classic' | 'ble';
+
+/** 'epos' = Epson ePOS-Print over HTTP (port 80/8008); 'raw' = ESC/POS over TCP (port 9100). */
+export type NetworkProtocol = 'epos' | 'raw';
+
+/** When automatic printing happens: as soon as a new order arrives, or when it is accepted. */
+export type AutoPrintTrigger = 'new_order' | 'accepted';
+
 /**
  * Discriminated union of valid hardware printer profiles.
  * Makes invalid printer states unrepresentable at compile time (Fixes Bug #9, #4, #11).
@@ -39,10 +48,31 @@ export interface PosPrinterConfig {
   printerName?: string;
   paperWidth: '80mm' | '58mm';
   autoPrint: boolean;
+  /** When auto-print fires (each order auto-prints once). */
+  autoPrintTrigger?: AutoPrintTrigger;
   copies: number;
   autoCut: boolean;
   openCashDrawer: boolean;
+  /** Bluetooth transport. Defaults: Android → classic, iOS → ble. */
+  bluetoothMode?: BluetoothMode;
+  /** Network protocol. Defaults from the port (80/8008 → epos, otherwise raw). */
+  networkProtocol?: NetworkProtocol;
+  /**
+   * Shifts the whole receipt to the right, in millimetres (0–MAX_PRINT_OFFSET_MM).
+   * Needed when the printer starts printing slightly outside the paper's left edge
+   * (common with 80mm print heads running 58mm paper), which cuts off the first characters.
+   */
+  printOffsetMm?: number;
   restaurantId?: string;
+}
+
+export const MAX_COPIES = 5;
+export const MAX_PRINT_OFFSET_MM = 12;
+
+/** Thermal printers are 203 dpi = 8 dots per millimetre. */
+export function printOffsetDots(config?: Partial<PosPrinterConfig>): number {
+  const mm = Math.max(0, Math.min(MAX_PRINT_OFFSET_MM, Number(config?.printOffsetMm) || 0));
+  return Math.round(mm * 8);
 }
 
 export interface BrandOption {
@@ -137,9 +167,11 @@ export const DEFAULT_POS_CONFIG: PosPrinterConfig = {
   target: '',
   paperWidth: '80mm',
   autoPrint: true,
+  autoPrintTrigger: 'new_order',
   copies: 1,
   autoCut: true,
-  openCashDrawer: true,
+  // Off by default: kicking the drawer is only wanted on counter tills with a drawer attached
+  openCashDrawer: false,
 };
 
 /**
@@ -162,13 +194,15 @@ export function profileFromConfig(config: PosPrinterConfig): PrinterProfile | nu
       if (!ip) {
         return null; // Missing required IP
       }
-      // Port 8008 or 80 is reserved exclusively for Epson ePOS HTTP XML service.
-      // Port 9100 (standard raw socket) is used for ESC/POS binary printing on Bonkaso, Xprinter, Star, and Epson RAW.
-      if (config.port === 8008 || config.port === 80) {
+      // Explicit protocol wins; otherwise infer from the port
+      // (80/8008 = Epson ePOS HTTP, anything else = raw ESC/POS socket, usually 9100).
+      const protocol: NetworkProtocol =
+        config.networkProtocol || (config.port === 8008 || config.port === 80 ? 'epos' : 'raw');
+      if (protocol === 'epos') {
         return {
           connectionType: 'network_epos',
           ipAddress: ip,
-          port: config.port,
+          port: config.port || 8008,
           deviceName,
         };
       }
@@ -186,8 +220,10 @@ export function profileFromConfig(config: PosPrinterConfig): PrinterProfile | nu
       if (!mac) {
         return null; // Missing required MAC address / target
       }
-      // Android or explicit BT: target uses Classic SPP
-      if (Platform.OS === 'android' || config.target?.startsWith('BT:')) {
+      // Mode is a property of the printer: use the saved one, else the platform default
+      // (iOS cannot use Classic SPP at all; Android printers are mostly Classic).
+      const mode: BluetoothMode = Platform.OS === 'ios' ? 'ble' : config.bluetoothMode || 'classic';
+      if (mode === 'classic') {
         return {
           connectionType: 'spp',
           macAddress: mac,
@@ -218,15 +254,20 @@ export function isProfileConfigured(config: PosPrinterConfig): boolean {
 /**
  * Validate configuration inputs before saving
  */
+export const IPV4_REGEX = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/;
+
 export function validatePosConfig(config: Partial<PosPrinterConfig>): { valid: boolean; error?: string } {
   if (config.connectionType === 'network') {
     const ip = (config.ipAddress || '').trim();
     if (!ip) {
-      return { valid: false, error: 'Please enter a valid Printer IP Address for network connection.' };
+      return { valid: false, error: 'Please enter the printer IP address.' };
     }
-    const ipRegex = /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/;
-    if (!ipRegex.test(ip)) {
-      return { valid: false, error: 'Invalid IP Address format (e.g. 192.168.1.100).' };
+    if (!IPV4_REGEX.test(ip)) {
+      return { valid: false, error: 'Invalid IP address (e.g. 192.168.1.100).' };
+    }
+    const port = Number(config.port ?? 9100);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      return { valid: false, error: 'Port must be between 1 and 65535 (usually 9100, or 8008 for Epson).' };
     }
   }
 
@@ -235,6 +276,10 @@ export function validatePosConfig(config: Partial<PosPrinterConfig>): { valid: b
     if (!mac) {
       return { valid: false, error: 'Please pair or enter a Bluetooth device address.' };
     }
+  }
+
+  if (config.copies !== undefined && (!Number.isInteger(config.copies) || config.copies < 1 || config.copies > MAX_COPIES)) {
+    return { valid: false, error: `Copies must be between 1 and ${MAX_COPIES}.` };
   }
 
   return { valid: true };
@@ -304,27 +349,42 @@ export async function getPosPrinterConfig(restaurantId?: string): Promise<PosPri
 /**
  * Save POS printer configuration for a specific restaurant or global
  */
+/**
+ * Saves printer configuration and THROWS if storage fails, so the UI can tell the user.
+ */
+export async function savePosPrinterConfigStrict(
+  config: Partial<PosPrinterConfig>,
+  restaurantId?: string
+): Promise<PosPrinterConfig> {
+  const current = await getPosPrinterConfig(restaurantId);
+  const updated: PosPrinterConfig = {
+    ...current,
+    ...config,
+    ...(restaurantId ? { restaurantId } : {}),
+  };
+  updated.copies = Math.max(1, Math.min(MAX_COPIES, Math.round(Number(updated.copies) || 1)));
+  updated.printOffsetMm = Math.max(0, Math.min(MAX_PRINT_OFFSET_MM, Math.round(Number(updated.printOffsetMm) || 0)));
+
+  if (restaurantId) {
+    await AsyncStorage.setItem(`${POS_CONFIG_KEY}_${restaurantId}`, JSON.stringify(updated));
+  }
+  await AsyncStorage.setItem(POS_CONFIG_KEY, JSON.stringify(updated));
+
+  return updated;
+}
+
+/**
+ * Lenient save used by older callers: never throws. On failure it returns the last stored
+ * configuration (previously it returned factory defaults, which made the printer look reset).
+ */
 export async function savePosPrinterConfig(
   config: Partial<PosPrinterConfig>,
   restaurantId?: string
 ): Promise<PosPrinterConfig> {
   try {
-    const current = await getPosPrinterConfig(restaurantId);
-    const updated: PosPrinterConfig = {
-      ...current,
-      ...config,
-      ...(restaurantId ? { restaurantId } : {}),
-    };
-
-    if (restaurantId) {
-      await AsyncStorage.setItem(`${POS_CONFIG_KEY}_${restaurantId}`, JSON.stringify(updated));
-    }
-    await AsyncStorage.setItem(POS_CONFIG_KEY, JSON.stringify(updated));
-
-    console.log(`[POS Config] Saved printer configuration${restaurantId ? ` for rest ${restaurantId}` : ''}:`, updated);
-    return updated;
+    return await savePosPrinterConfigStrict(config, restaurantId);
   } catch (err) {
     console.error('[POS Config] Failed to save configuration:', err);
-    return DEFAULT_POS_CONFIG;
+    return getPosPrinterConfig(restaurantId);
   }
 }

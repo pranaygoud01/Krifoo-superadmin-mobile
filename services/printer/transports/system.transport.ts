@@ -27,17 +27,15 @@ export class SystemTransport implements PrinterTransport {
       };
     }
     try {
-      const html =
-        this.htmlContent ||
-        (typeof payload === 'string' && payload.startsWith('<')
-          ? payload
-          : `<html><body><pre>${typeof payload === 'string' ? payload : new TextDecoder().decode(payload)}</pre></body></html>`);
+      // The registry pairs this transport with the HTML receipt encoder, so the payload is
+      // printable HTML (never raw printer XML).
+      const html = this.htmlContent || (typeof payload === 'string' ? payload : new TextDecoder().decode(payload));
 
       // Format as thermal receipt (width: 226pt for 80mm roll, 164pt for 58mm roll)
       const targetWidth = this.paperWidth === '58mm' ? 164 : 226;
       const outcome = await printHtmlWithSystemDialog(html, targetWidth);
       if (outcome === 'cancelled') {
-        return { ok: false, kind: 'protocol_error', detail: 'Print cancelled.' };
+        return { ok: false, kind: 'cancelled', detail: 'Print cancelled.' };
       }
       return { ok: true, rawResponse: 'system_print_spooled' };
     } catch (err: any) {

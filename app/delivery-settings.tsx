@@ -1,808 +1,299 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TextInput,
-  TouchableOpacity,
-  ActivityIndicator,
-  Alert,
-  KeyboardAvoidingView,
-  Platform,
-  useWindowDimensions,
-} from 'react-native';
-import { Header } from '../components/Header';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { View, Text, StyleSheet, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
+import { ScreenHeader } from '../components/ScreenHeader';
 import { Colors } from '../constants/colors';
 import { restaurantOwnerService } from '../services/restaurant-owner.service';
+import { useToast } from '../context/ToastContext';
+import { Clock, MapPin, PoundSterling, Calculator } from 'lucide-react-native';
 import {
-  Truck,
-  Save,
-  Clock,
-  MapPin,
-  Plus,
-  Minus,
-  Sparkles,
-  Percent,
-  Banknote,
-  Check,
-  Info,
-} from 'lucide-react-native';
+  ErrorView,
+  FieldRow,
+  FormFrame,
+  FormSection,
+  LoadingState,
+  SAVE_BAR_SPACE,
+  SaveBar,
+  StepperField,
+  formStyles,
+  isEqualJSON,
+  numberError,
+  useFormLayout,
+  useUnsavedChangesGuard,
+} from '../components/settings/FormKit';
+
+/**
+ * Standard (Krifoo platform) delivery settings for a restaurant owner.
+ * Backend: GET /api/restaurants/me, PUT /api/restaurants/settings (validated).
+ *   defaultDeliveryTime: integer 5–180, handlingChargesPercentage: number ≥ 0 (≤ 2 dp),
+ *   deliverySettings: { freeDeliveryRadius 0–50, maxDeliveryRadius 0–100, chargePerMile 0–50 }, free ≤ max.
+ * We only use the validated /settings endpoint — the old fallback to PUT /profile skipped validation.
+ */
+
+type DeliveryForm = {
+  defaultDeliveryTime: string;
+  freeDeliveryRadius: string;
+  maxDeliveryRadius: string;
+  chargePerMile: string;
+  handlingChargesPercentage: string;
+};
+
+const EMPTY: DeliveryForm = {
+  defaultDeliveryTime: '30',
+  freeDeliveryRadius: '2',
+  maxDeliveryRadius: '10',
+  chargePerMile: '1.00',
+  handlingChargesPercentage: '0',
+};
+
+const fmt = (n: unknown, fallback: number, decimals = 0) => {
+  const v = typeof n === 'number' && !isNaN(n) ? n : fallback;
+  return decimals ? v.toFixed(decimals) : String(v);
+};
+
+const toForm = (r: any): DeliveryForm => ({
+  defaultDeliveryTime: fmt(r?.defaultDeliveryTime, 30),
+  freeDeliveryRadius: fmt(r?.deliverySettings?.freeDeliveryRadius, 2),
+  maxDeliveryRadius: fmt(r?.deliverySettings?.maxDeliveryRadius, 10),
+  chargePerMile: fmt(r?.deliverySettings?.chargePerMile, 1, 2),
+  handlingChargesPercentage: fmt(r?.handlingChargesPercentage, 0),
+});
+
+function validate(f: DeliveryForm): Partial<Record<keyof DeliveryForm, string>> {
+  const e: Partial<Record<keyof DeliveryForm, string>> = {};
+  e.defaultDeliveryTime = numberError(f.defaultDeliveryTime, 5, 180, { integer: true });
+  e.freeDeliveryRadius = numberError(f.freeDeliveryRadius, 0, 50);
+  e.maxDeliveryRadius = numberError(f.maxDeliveryRadius, 0.5, 100);
+  e.chargePerMile = numberError(f.chargePerMile, 0, 50);
+  e.handlingChargesPercentage = numberError(f.handlingChargesPercentage, 0, 100);
+  if (!e.freeDeliveryRadius && !e.maxDeliveryRadius && Number(f.freeDeliveryRadius) > Number(f.maxDeliveryRadius)) {
+    e.freeDeliveryRadius = 'Can’t be more than the maximum delivery radius.';
+  }
+  (Object.keys(e) as (keyof DeliveryForm)[]).forEach((k) => e[k] === undefined && delete e[k]);
+  return e;
+}
 
 export default function DeliverySettingsScreen() {
-  const { width } = useWindowDimensions();
-  const isTablet = width >= 768;
+  const { showToast } = useToast();
+  const { gutter, isTablet } = useFormLayout();
 
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState<DeliveryForm>(EMPTY);
+  const [saved, setSaved] = useState<DeliveryForm>(EMPTY);
 
-  const [config, setConfig] = useState({
-    freeDeliveryRadius: '2',
-    chargePerMile: '1',
-    maxDeliveryRadius: '10',
-    handlingChargesPercentage: '5.0',
-    defaultDeliveryTime: '30',
-  });
+  const dirty = !isEqualJSON(form, saved);
+  useUnsavedChangesGuard(dirty);
+  const errors = useMemo(() => validate(form), [form]);
+  const errorCount = Object.keys(errors).length;
 
-  const loadConfig = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const res = await restaurantOwnerService.getRestaurantProfile();
       if (res.success && res.data) {
-        const r = res.data;
-        setConfig({
-          freeDeliveryRadius: (r.deliverySettings?.freeDeliveryRadius ?? 2).toString(),
-          chargePerMile: (r.deliverySettings?.chargePerMile ?? 1).toString(),
-          maxDeliveryRadius: (r.deliverySettings?.maxDeliveryRadius ?? 10).toString(),
-          handlingChargesPercentage: (r.handlingChargesPercentage ?? 5.0).toString(),
-          defaultDeliveryTime: (r.defaultDeliveryTime ?? 30).toString(),
-        });
+        const f = toForm(res.data);
+        setForm(f);
+        setSaved(f);
+      } else {
+        setLoadError(res.message || 'Delivery settings could not be loaded.');
       }
-    } catch (e) {
-      console.error('Failed loading delivery settings:', e);
+    } catch (e: any) {
+      setLoadError(e?.message || 'Could not reach the server.');
     } finally {
       setLoading(false);
     }
-  };
-
-  useEffect(() => {
-    loadConfig();
   }, []);
 
-  const handleChange = (field: keyof typeof config, value: string) => {
-    setConfig((prev) => ({ ...prev, [field]: value }));
-  };
+  useEffect(() => {
+    load();
+  }, [load]);
 
-  const adjustValue = (
-    field: keyof typeof config,
-    delta: number,
-    min = 0,
-    max = 999,
-    isFloat = false,
-    decimals = 1
-  ) => {
-    const cur = isFloat ? parseFloat(config[field]) || 0 : parseInt(config[field], 10) || 0;
-    const next = Math.min(max, Math.max(min, cur + delta));
-    setConfig((prev) => ({
-      ...prev,
-      [field]: isFloat ? next.toFixed(decimals) : next.toString(),
-    }));
-  };
+  const set = (key: keyof DeliveryForm) => (v: string) => setForm((prev) => ({ ...prev, [key]: v }));
 
-  const handleSave = async () => {
+  const save = async () => {
+    if (errorCount) {
+      showToast({ title: 'Check highlighted fields', message: 'Some values are out of range.', type: 'error' });
+      return;
+    }
     setSaving(true);
     try {
-      const payload = {
-        handlingChargesPercentage: parseFloat(config.handlingChargesPercentage) || 0,
-        defaultDeliveryTime: parseInt(config.defaultDeliveryTime, 10) || 30,
+      const res = await restaurantOwnerService.updateRestaurantSettings({
+        defaultDeliveryTime: parseInt(form.defaultDeliveryTime, 10),
+        handlingChargesPercentage: Number(form.handlingChargesPercentage),
         deliverySettings: {
-          freeDeliveryRadius: parseFloat(config.freeDeliveryRadius) || 0,
-          chargePerMile: parseFloat(config.chargePerMile) || 0,
-          maxDeliveryRadius: parseFloat(config.maxDeliveryRadius) || 0,
+          freeDeliveryRadius: Number(form.freeDeliveryRadius),
+          maxDeliveryRadius: Number(form.maxDeliveryRadius),
+          chargePerMile: Number(form.chargePerMile),
         },
-      };
-
-      let res = await restaurantOwnerService.updateRestaurantSettings(payload);
-      if (!res.success) {
-        res = await restaurantOwnerService.updateRestaurantProfile(payload);
-      }
-
+      });
       if (res.success) {
-        Alert.alert('Success', 'Delivery parameters updated successfully.');
-        loadConfig();
+        // Re-read so the screen shows exactly what the server stored.
+        const fresh = await restaurantOwnerService.getRestaurantProfile();
+        const stored = fresh.success && fresh.data ? toForm(fresh.data) : form;
+        setForm(stored);
+        setSaved(stored);
+        showToast({ title: 'Delivery settings saved', message: 'New orders will use these values.', type: 'success' });
       } else {
-        Alert.alert('Error', res.message || 'Failed to save delivery parameters.');
+        showToast({ title: 'Save failed', message: res.message || 'Could not save delivery settings.', type: 'error' });
       }
     } catch (e: any) {
-      Alert.alert('Error', e.message || 'An error occurred while saving.');
+      showToast({ title: 'Save failed', message: e?.message || 'Could not reach the server.', type: 'error' });
     } finally {
       setSaving(false);
     }
   };
 
-  // Human-readable summary calculation
-  const freeRadNum = parseFloat(config.freeDeliveryRadius) || 0;
-  const maxRadNum = parseFloat(config.maxDeliveryRadius) || 0;
-  const chargeNum = parseFloat(config.chargePerMile) || 0;
-  const timeNum = parseInt(config.defaultDeliveryTime, 10) || 30;
-  const handlingNum = parseFloat(config.handlingChargesPercentage) || 0;
+  // Live fee examples (only when the radius/rate values are valid).
+  const free = Number(form.freeDeliveryRadius);
+  const max = Number(form.maxDeliveryRadius);
+  const rate = Number(form.chargePerMile);
+  const canPreview = !errors.freeDeliveryRadius && !errors.maxDeliveryRadius && !errors.chargePerMile;
+  const examples = useMemo(() => {
+    if (!canPreview) return [];
+    const points = Array.from(new Set([Math.min(1, max), Math.min(free + 1, max), Math.min(free + 3, max), max]))
+      .filter((d) => d > 0)
+      .sort((a, b) => a - b)
+      .slice(0, 4);
+    return points.map((d) => ({ distance: d, fee: d <= free ? 0 : (d - free) * rate }));
+  }, [canPreview, free, max, rate]);
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
-      <Header title="Delivery Parameters" showBackButton={true} />
+    <KeyboardAvoidingView style={formStyles.screen} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <ScreenHeader title="Delivery settings" subtitle="Krifoo app delivery area and fees" />
 
       {loading ? (
-        <View style={styles.centerBox}>
-          <ActivityIndicator size="large" color={Colors.primary} />
-          <Text style={styles.loadingText}>Fetching delivery parameters...</Text>
-        </View>
+        <LoadingState label="Loading delivery settings…" />
+      ) : loadError ? (
+        <ErrorView message={loadError} onRetry={load} />
       ) : (
         <ScrollView
-          contentContainerStyle={[
-            styles.scrollContent,
-            { paddingHorizontal: isTablet ? 24 : 16, maxWidth: 840, alignSelf: 'center', width: '100%' },
-          ]}
-          showsVerticalScrollIndicator={false}
+          contentContainerStyle={[formStyles.scroll, { paddingHorizontal: gutter, paddingBottom: SAVE_BAR_SPACE }]}
           keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
         >
-          {/* Top Overview Banner */}
-          <View style={styles.heroBanner}>
-            <View style={styles.heroIconBox}>
-              <Truck size={24} color="#EA580C" />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.heroTitle}>Delivery & Order Settings</Text>
-              <Text style={styles.heroSub}>
-                Fine-tune fulfillment radius, per-mile rates, and expected kitchen delivery time.
-              </Text>
-            </View>
-          </View>
+          <FormFrame>
+            <FormSection icon={Clock} title="Delivery time" description="The estimate customers see at checkout. You can still change it per order.">
+              <StepperField
+                label="Default delivery time"
+                value={form.defaultDeliveryTime}
+                onChange={set('defaultDeliveryTime')}
+                step={5}
+                min={5}
+                max={180}
+                suffix="min"
+                presets={[20, 30, 45, 60]}
+                formatPreset={(n) => `${n} min`}
+                hint="Between 5 and 180 minutes."
+                error={errors.defaultDeliveryTime}
+              />
+            </FormSection>
 
-          {/* SECTION 1: Expected Delivery Time (Primary Operational Parameter) */}
-          <View style={styles.card}>
-            <View style={styles.cardHeaderRow}>
-              <View style={[styles.sectionIconBadge, { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }]}>
-                <Clock size={18} color="#2563EB" />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.cardTitle}>Default Expected Delivery Time</Text>
-                <Text style={styles.cardSub}>
-                  Default time displayed on new orders and to customers at checkout
-                </Text>
-              </View>
-            </View>
-
-            {/* Stepper Control */}
-            <View style={styles.stepperBox}>
-              <TouchableOpacity
-                style={styles.stepperBtn}
-                onPress={() => adjustValue('defaultDeliveryTime', -5, 10, 180)}
-                activeOpacity={0.7}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              >
-                <Minus size={18} color="#475569" strokeWidth={2.5} />
-              </TouchableOpacity>
-
-              <View style={styles.stepperDisplay}>
-                <TextInput
-                  style={styles.stepperInput}
-                  keyboardType="numeric"
-                  value={config.defaultDeliveryTime}
-                  onChangeText={(val) => handleChange('defaultDeliveryTime', val)}
-                  selectTextOnFocus
+            <FormSection icon={MapPin} title="Delivery area" description="How far you deliver, and where delivery is free.">
+              <FieldRow stack={!isTablet}>
+                <StepperField
+                  label="Free delivery within"
+                  value={form.freeDeliveryRadius}
+                  onChange={set('freeDeliveryRadius')}
+                  step={0.5}
+                  min={0}
+                  max={50}
+                  decimals={1}
+                  suffix="mi"
+                  presets={[0, 1, 2, 3]}
+                  formatPreset={(n) => (n === 0 ? 'None' : `${n} mi`)}
+                  hint="0 means every delivery is charged."
+                  error={errors.freeDeliveryRadius}
                 />
-                <Text style={styles.stepperUnit}>mins</Text>
-              </View>
+                <StepperField
+                  label="Maximum delivery distance"
+                  value={form.maxDeliveryRadius}
+                  onChange={set('maxDeliveryRadius')}
+                  step={1}
+                  min={0.5}
+                  max={100}
+                  decimals={1}
+                  suffix="mi"
+                  presets={[5, 10, 15]}
+                  formatPreset={(n) => `${n} mi`}
+                  hint="Orders further away can’t be placed."
+                  error={errors.maxDeliveryRadius}
+                />
+              </FieldRow>
+            </FormSection>
 
-              <TouchableOpacity
-                style={styles.stepperBtn}
-                onPress={() => adjustValue('defaultDeliveryTime', 5, 10, 180)}
-                activeOpacity={0.7}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              >
-                <Plus size={18} color="#475569" strokeWidth={2.5} />
-              </TouchableOpacity>
-            </View>
+            <FormSection icon={PoundSterling} title="Fees" description="Charged on top of the order total.">
+              <FieldRow stack={!isTablet}>
+                <StepperField
+                  label="Charge per mile"
+                  value={form.chargePerMile}
+                  onChange={set('chargePerMile')}
+                  step={0.25}
+                  min={0}
+                  max={50}
+                  decimals={2}
+                  prefix="£"
+                  presets={[0.5, 1, 1.5, 2]}
+                  formatPreset={(n) => `£${n.toFixed(2)}`}
+                  hint="For each mile beyond the free area."
+                  error={errors.chargePerMile}
+                />
+                <StepperField
+                  label="Handling fee"
+                  value={form.handlingChargesPercentage}
+                  onChange={set('handlingChargesPercentage')}
+                  step={0.5}
+                  min={0}
+                  max={100}
+                  decimals={1}
+                  suffix="%"
+                  presets={[0, 2.5, 5]}
+                  formatPreset={(n) => `${n}%`}
+                  hint="Percentage added to each order for packaging."
+                  error={errors.handlingChargesPercentage}
+                />
+              </FieldRow>
+            </FormSection>
 
-            {/* Quick Presets */}
-            <View style={styles.presetsRow}>
-              {[20, 25, 30, 45, 60].map((mins) => {
-                const isSelected = parseInt(config.defaultDeliveryTime, 10) === mins;
-                return (
-                  <TouchableOpacity
-                    key={mins}
-                    style={[styles.presetChip, isSelected && styles.presetChipActive]}
-                    onPress={() => handleChange('defaultDeliveryTime', mins.toString())}
-                    activeOpacity={0.75}
-                  >
-                    <Text style={[styles.presetChipText, isSelected && styles.presetChipTextActive]}>
-                      {mins} mins
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-
-            <View style={styles.infoTipBox}>
-              <Info size={14} color="#2563EB" style={{ marginTop: 2, marginRight: 6 }} />
-              <Text style={styles.infoTipText}>
-                You can customize this estimated time per individual order in the Orders tracking board.
-              </Text>
-            </View>
-          </View>
-
-          {/* SECTION 2: Delivery Radius & Coverage */}
-          <View style={styles.card}>
-            <View style={styles.cardHeaderRow}>
-              <View style={[styles.sectionIconBadge, { backgroundColor: '#ECFDF5', borderColor: '#A7F3D0' }]}>
-                <MapPin size={18} color="#059669" />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.cardTitle}>Delivery Coverage Radius</Text>
-                <Text style={styles.cardSub}>Define your free delivery zone and maximum service area</Text>
-              </View>
-            </View>
-
-            {/* Free Radius Field */}
-            <View style={styles.fieldBlock}>
-              <View style={styles.fieldHeaderRow}>
-                <Text style={styles.fieldLabel}>Free Delivery Radius</Text>
-                <Text style={styles.fieldSubLabel}>Customers within this radius pay £0 delivery</Text>
-              </View>
-
-              <View style={styles.stepperBox}>
-                <TouchableOpacity
-                  style={styles.stepperBtn}
-                  onPress={() => adjustValue('freeDeliveryRadius', -0.5, 0, 50, true, 1)}
-                  activeOpacity={0.7}
-                >
-                  <Minus size={18} color="#475569" strokeWidth={2.5} />
-                </TouchableOpacity>
-
-                <View style={styles.stepperDisplay}>
-                  <TextInput
-                    style={styles.stepperInput}
-                    keyboardType="decimal-pad"
-                    value={config.freeDeliveryRadius}
-                    onChangeText={(val) => handleChange('freeDeliveryRadius', val)}
-                    selectTextOnFocus
-                  />
-                  <Text style={styles.stepperUnit}>miles</Text>
-                </View>
-
-                <TouchableOpacity
-                  style={styles.stepperBtn}
-                  onPress={() => adjustValue('freeDeliveryRadius', 0.5, 0, 50, true, 1)}
-                  activeOpacity={0.7}
-                >
-                  <Plus size={18} color="#475569" strokeWidth={2.5} />
-                </TouchableOpacity>
-              </View>
-
-              <View style={styles.presetsRow}>
-                {[0, 1, 2, 3, 5].map((rad) => {
-                  const isSelected = parseFloat(config.freeDeliveryRadius) === rad;
-                  return (
-                    <TouchableOpacity
-                      key={rad}
-                      style={[styles.presetChip, isSelected && styles.presetChipActive]}
-                      onPress={() => handleChange('freeDeliveryRadius', rad.toString())}
-                      activeOpacity={0.75}
-                    >
-                      <Text style={[styles.presetChipText, isSelected && styles.presetChipTextActive]}>
-                        {rad === 0 ? 'No Free' : `${rad} mi`}
+            <FormSection icon={Calculator} title="What customers pay" description="Delivery fee examples with these settings.">
+              {examples.length ? (
+                <View style={styles.table}>
+                  {examples.map((ex, i) => (
+                    <View key={ex.distance} style={[styles.tr, i < examples.length - 1 && styles.trDivider]}>
+                      <Text style={styles.td}>{ex.distance} mi away</Text>
+                      <Text style={[styles.tdValue, ex.fee === 0 && styles.free]}>
+                        {ex.fee === 0 ? 'Free' : `£${ex.fee.toFixed(2)}`}
                       </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            </View>
-
-            <View style={styles.divider} />
-
-            {/* Max Radius Field */}
-            <View style={styles.fieldBlock}>
-              <View style={styles.fieldHeaderRow}>
-                <Text style={styles.fieldLabel}>Maximum Delivery Radius</Text>
-                <Text style={styles.fieldSubLabel}>Riders will not accept orders beyond this distance</Text>
-              </View>
-
-              <View style={styles.stepperBox}>
-                <TouchableOpacity
-                  style={styles.stepperBtn}
-                  onPress={() => adjustValue('maxDeliveryRadius', -1, 1, 100)}
-                  activeOpacity={0.7}
-                >
-                  <Minus size={18} color="#475569" strokeWidth={2.5} />
-                </TouchableOpacity>
-
-                <View style={styles.stepperDisplay}>
-                  <TextInput
-                    style={styles.stepperInput}
-                    keyboardType="numeric"
-                    value={config.maxDeliveryRadius}
-                    onChangeText={(val) => handleChange('maxDeliveryRadius', val)}
-                    selectTextOnFocus
-                  />
-                  <Text style={styles.stepperUnit}>miles</Text>
+                    </View>
+                  ))}
+                  <Text style={styles.footnote}>Beyond {max} mi, delivery isn’t available.</Text>
                 </View>
-
-                <TouchableOpacity
-                  style={styles.stepperBtn}
-                  onPress={() => adjustValue('maxDeliveryRadius', 1, 1, 100)}
-                  activeOpacity={0.7}
-                >
-                  <Plus size={18} color="#475569" strokeWidth={2.5} />
-                </TouchableOpacity>
-              </View>
-
-              <View style={styles.presetsRow}>
-                {[5, 8, 10, 15, 20].map((rad) => {
-                  const isSelected = parseInt(config.maxDeliveryRadius, 10) === rad;
-                  return (
-                    <TouchableOpacity
-                      key={rad}
-                      style={[styles.presetChip, isSelected && styles.presetChipActive]}
-                      onPress={() => handleChange('maxDeliveryRadius', rad.toString())}
-                      activeOpacity={0.75}
-                    >
-                      <Text style={[styles.presetChipText, isSelected && styles.presetChipTextActive]}>
-                        {rad} mi max
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            </View>
-          </View>
-
-          {/* SECTION 3: Fees & Charges */}
-          <View style={styles.card}>
-            <View style={styles.cardHeaderRow}>
-              <View style={[styles.sectionIconBadge, { backgroundColor: '#FFF7ED', borderColor: '#FED7AA' }]}>
-                <Banknote size={18} color="#EA580C" />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.cardTitle}>Distance Rates & Handling</Text>
-                <Text style={styles.cardSub}>Rate charged per mile after the free zone and order handling</Text>
-              </View>
-            </View>
-
-            {/* Charge Per Mile */}
-            <View style={styles.fieldBlock}>
-              <View style={styles.fieldHeaderRow}>
-                <Text style={styles.fieldLabel}>Per-Mile Delivery Rate</Text>
-                <Text style={styles.fieldSubLabel}>Applied per mile after the free delivery radius</Text>
-              </View>
-
-              <View style={styles.stepperBox}>
-                <TouchableOpacity
-                  style={styles.stepperBtn}
-                  onPress={() => adjustValue('chargePerMile', -0.25, 0, 50, true, 2)}
-                  activeOpacity={0.7}
-                >
-                  <Minus size={18} color="#475569" strokeWidth={2.5} />
-                </TouchableOpacity>
-
-                <View style={styles.stepperDisplay}>
-                  <Text style={styles.currencyPrefix}>£</Text>
-                  <TextInput
-                    style={styles.stepperInput}
-                    keyboardType="decimal-pad"
-                    value={config.chargePerMile}
-                    onChangeText={(val) => handleChange('chargePerMile', val)}
-                    selectTextOnFocus
-                  />
-                  <Text style={styles.stepperUnit}>/ mile</Text>
-                </View>
-
-                <TouchableOpacity
-                  style={styles.stepperBtn}
-                  onPress={() => adjustValue('chargePerMile', 0.25, 0, 50, true, 2)}
-                  activeOpacity={0.7}
-                >
-                  <Plus size={18} color="#475569" strokeWidth={2.5} />
-                </TouchableOpacity>
-              </View>
-
-              <View style={styles.presetsRow}>
-                {[0.5, 1.0, 1.5, 2.0].map((rate) => {
-                  const isSelected = parseFloat(config.chargePerMile) === rate;
-                  return (
-                    <TouchableOpacity
-                      key={rate}
-                      style={[styles.presetChip, isSelected && styles.presetChipActive]}
-                      onPress={() => handleChange('chargePerMile', rate.toFixed(2))}
-                      activeOpacity={0.75}
-                    >
-                      <Text style={[styles.presetChipText, isSelected && styles.presetChipTextActive]}>
-                        £{rate.toFixed(2)} / mi
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            </View>
-
-            <View style={styles.divider} />
-
-            {/* Handling Fee Percentage */}
-            <View style={styles.fieldBlock}>
-              <View style={styles.fieldHeaderRow}>
-                <Text style={styles.fieldLabel}>Handling / Packaging Fee</Text>
-                <Text style={styles.fieldSubLabel}>Percentage added to order subtotal for handling</Text>
-              </View>
-
-              <View style={styles.stepperBox}>
-                <TouchableOpacity
-                  style={styles.stepperBtn}
-                  onPress={() => adjustValue('handlingChargesPercentage', -0.5, 0, 100, true, 1)}
-                  activeOpacity={0.7}
-                >
-                  <Minus size={18} color="#475569" strokeWidth={2.5} />
-                </TouchableOpacity>
-
-                <View style={styles.stepperDisplay}>
-                  <TextInput
-                    style={styles.stepperInput}
-                    keyboardType="decimal-pad"
-                    value={config.handlingChargesPercentage}
-                    onChangeText={(val) => handleChange('handlingChargesPercentage', val)}
-                    selectTextOnFocus
-                  />
-                  <Text style={styles.stepperUnit}>%</Text>
-                </View>
-
-                <TouchableOpacity
-                  style={styles.stepperBtn}
-                  onPress={() => adjustValue('handlingChargesPercentage', 0.5, 0, 100, true, 1)}
-                  activeOpacity={0.7}
-                >
-                  <Plus size={18} color="#475569" strokeWidth={2.5} />
-                </TouchableOpacity>
-              </View>
-
-              <View style={styles.presetsRow}>
-                {[0, 2.5, 5.0, 10.0].map((pct) => {
-                  const isSelected = parseFloat(config.handlingChargesPercentage) === pct;
-                  return (
-                    <TouchableOpacity
-                      key={pct}
-                      style={[styles.presetChip, isSelected && styles.presetChipActive]}
-                      onPress={() => handleChange('handlingChargesPercentage', pct.toFixed(1))}
-                      activeOpacity={0.75}
-                    >
-                      <Text style={[styles.presetChipText, isSelected && styles.presetChipTextActive]}>
-                        {pct}%
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            </View>
-          </View>
-
-          {/* Customer Checkout Policy Preview */}
-          <View style={styles.previewCard}>
-            <View style={styles.previewHeaderRow}>
-              <Sparkles size={16} color="#059669" />
-              <Text style={styles.previewCardTitle}>Live Policy Summary</Text>
-            </View>
-
-            <View style={styles.previewBulletRow}>
-              <View style={styles.previewDot} />
-              <Text style={styles.previewBulletText}>
-                {freeRadNum > 0
-                  ? `Customers within ${freeRadNum} miles get FREE delivery.`
-                  : 'All deliveries are charged per mile.'}
-              </Text>
-            </View>
-
-            <View style={styles.previewBulletRow}>
-              <View style={styles.previewDot} />
-              <Text style={styles.previewBulletText}>
-                Beyond {freeRadNum} miles: £{chargeNum.toFixed(2)} per mile up to {maxRadNum} miles max range.
-              </Text>
-            </View>
-
-            <View style={styles.previewBulletRow}>
-              <View style={styles.previewDot} />
-              <Text style={styles.previewBulletText}>
-                Estimated fulfillment time shown at checkout: ~{timeNum} minutes.
-              </Text>
-            </View>
-
-            {handlingNum > 0 && (
-              <View style={styles.previewBulletRow}>
-                <View style={styles.previewDot} />
-                <Text style={styles.previewBulletText}>
-                  A {handlingNum.toFixed(1)}% packaging & handling charge applies to orders.
-                </Text>
-              </View>
-            )}
-          </View>
-
-          {/* Save Action Button */}
-          <TouchableOpacity
-            style={[styles.saveBtn, saving && { opacity: 0.7 }]}
-            disabled={saving}
-            onPress={handleSave}
-            activeOpacity={0.85}
-          >
-            {saving ? (
-              <ActivityIndicator color="#FFFFFF" />
-            ) : (
-              <>
-                <Text style={styles.saveBtnText}>Save Delivery Parameters</Text>
-                <Save size={18} color="#FFFFFF" style={{ marginLeft: 8 }} />
-              </>
-            )}
-          </TouchableOpacity>
+              ) : (
+                <Text style={styles.footnote}>Fix the highlighted values to see examples.</Text>
+              )}
+            </FormSection>
+          </FormFrame>
         </ScrollView>
       )}
+
+      <SaveBar
+        visible={dirty && !loading}
+        saving={saving}
+        errorCount={errorCount}
+        onSave={save}
+        onDiscard={() => setForm(saved)}
+      />
     </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F8FAFC',
-  },
-  centerBox: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  loadingText: {
-    marginTop: 12,
-    fontSize: 14,
-    color: '#64748B',
-  },
-  scrollContent: {
-    paddingTop: 16,
-    paddingBottom: 56, // Generous padding so floating buttons don't block Save button
-  },
-  heroBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    gap: 12,
-  },
-  heroIconBox: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: '#FFF7ED',
-    borderWidth: 1,
-    borderColor: '#FED7AA',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  heroTitle: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: '#0F172A',
-    letterSpacing: -0.2,
-  },
-  heroSub: {
-    fontSize: 12,
-    color: '#64748B',
-    marginTop: 2,
-    lineHeight: 16,
-  },
-  card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    padding: 16,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    shadowColor: '#0F172A',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.03,
-    shadowRadius: 8,
-    elevation: 1,
-  },
-  cardHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginBottom: 16,
-  },
-  sectionIconBadge: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  cardTitle: {
-    fontSize: 14.5,
-    fontWeight: '800',
-    color: '#0F172A',
-  },
-  cardSub: {
-    fontSize: 11.5,
-    color: '#64748B',
-    marginTop: 1,
-  },
-  fieldBlock: {
-    marginTop: 4,
-  },
-  fieldHeaderRow: {
-    marginBottom: 8,
-  },
-  fieldLabel: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#1E293B',
-  },
-  fieldSubLabel: {
-    fontSize: 11,
-    color: '#64748B',
-    marginTop: 1,
-  },
-  stepperBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F8FAFC',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    padding: 4,
-    marginBottom: 8,
-  },
-  stepperBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 10,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 1,
-  },
-  stepperDisplay: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 4,
-  },
-  currencyPrefix: {
-    fontSize: 18,
-    fontWeight: '800',
-    color: '#0F172A',
-  },
-  stepperInput: {
-    fontSize: 20,
-    fontWeight: '800',
-    color: '#0F172A',
-    textAlign: 'center',
-    minWidth: 50,
-    paddingVertical: 4,
-  },
-  stepperUnit: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#64748B',
-  },
-  presetsRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    marginBottom: 4,
-  },
-  presetChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-    backgroundColor: '#F1F5F9',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  presetChipActive: {
-    backgroundColor: '#FF5C39',
-    borderColor: '#FF5C39',
-  },
-  presetChipText: {
-    fontSize: 11.5,
-    fontWeight: '700',
-    color: '#475569',
-  },
-  presetChipTextActive: {
-    color: '#FFFFFF',
-  },
-  divider: {
-    height: 1,
-    backgroundColor: '#F1F5F9',
-    marginVertical: 14,
-  },
-  infoTipBox: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    backgroundColor: '#EFF6FF',
-    borderRadius: 10,
-    padding: 10,
-    marginTop: 10,
-    borderWidth: 1,
-    borderColor: '#DBEAFE',
-  },
-  infoTipText: {
-    flex: 1,
-    fontSize: 11.5,
-    color: '#1E40AF',
-    lineHeight: 16,
-  },
-  previewCard: {
-    backgroundColor: '#F0FDF4',
-    borderRadius: 16,
-    padding: 14,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#BBF7D0',
-  },
-  previewHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginBottom: 8,
-  },
-  previewCardTitle: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#166534',
-    letterSpacing: -0.2,
-  },
-  previewBulletRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 4,
-    gap: 8,
-  },
-  previewDot: {
-    width: 5,
-    height: 5,
-    borderRadius: 2.5,
-    backgroundColor: '#16A34A',
-  },
-  previewBulletText: {
-    fontSize: 12,
-    color: '#15803D',
-    flex: 1,
-    fontWeight: '500',
-  },
-  saveBtn: {
-    backgroundColor: '#FF5C39',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    height: 50,
-    borderRadius: 14,
-    shadowColor: '#FF5C39',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  saveBtnText: {
-    color: '#FFFFFF',
-    fontSize: 15.5,
-    fontWeight: '800',
-  },
+  table: { borderRadius: 12, borderWidth: 1, borderColor: Colors.cardBorder, overflow: 'hidden' },
+  tr: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 12 },
+  trDivider: { borderBottomWidth: 1, borderBottomColor: Colors.cardBorder },
+  td: { fontSize: 14, color: Colors.text, fontWeight: '600' },
+  tdValue: { fontSize: 15, fontWeight: '800', color: Colors.text },
+  free: { color: Colors.success },
+  footnote: { fontSize: 12, color: Colors.textSubtle, padding: 12, paddingTop: 10 },
 });

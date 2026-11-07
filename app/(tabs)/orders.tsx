@@ -19,7 +19,7 @@ import {
   LayoutAnimation,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { OrderDetailModal } from '../../components/OrderDetailModal';
 import { AssignDeliveryModal } from '../../components/AssignDeliveryModal';
 import { ConfirmModal } from '../../components/ConfirmModal';
@@ -34,7 +34,6 @@ import { Skeleton } from '../../components/Skeleton';
 import {
   Search,
   WifiOff,
-  RefreshCw,
   ChevronDown,
   ChevronUp,
   Clock,
@@ -60,6 +59,10 @@ import {
   Sparkles,
   Plus,
   Minus,
+  Smartphone,
+  ChefHat,
+  CircleX,
+  House,
 } from 'lucide-react-native';
 import { printThermalReceipt, isAutoPrintEnabled, getLastPrintJobReport, getOrderScheduleInfo } from '../../services/thermal-print.service';
 import { getSanitizedOrderNotes } from '../../services/printer/receipt-document';
@@ -74,27 +77,40 @@ export type BoardColumnsOption = 'auto' | 1 | 2 | 3 | 4 | 5 | 6;
 
 export interface BoardColumnPreset {
   value: BoardColumnsOption;
+  /** Short name shown on the tile (e.g. "Focus") */
   title: string;
+  /** One-line hint explaining when to use it */
+  description: string;
 }
 
+/** Number of status columns rendered in Board view (all tabs except "All Orders") */
+const BOARD_STATUS_COLUMN_COUNT = 6;
+/** Narrowest a board column may get before it is clamped (see columnWidth) */
+const BOARD_MIN_COLUMN_WIDTH = { phone: 160, tablet: 200 };
+
+const BOARD_AUTO_PRESET: BoardColumnPreset = {
+  value: 'auto',
+  title: 'Auto',
+  description: 'Adapts to screen size & rotation',
+};
+
 const BOARD_COLUMN_PRESETS: BoardColumnPreset[] = [
-  { value: 'auto', title: 'Auto (Responsive)' },
-  { value: 1, title: '1 Tab per Screen' },
-  { value: 2, title: '2 Tabs per Screen' },
-  { value: 3, title: '3 Tabs per Screen' },
-  { value: 4, title: '4 Tabs per Screen' },
-  { value: 5, title: '5 Tabs per Screen' },
-  { value: 6, title: '6 Tabs (Fit All)' },
+  { value: 1, title: 'Focus', description: 'One status at a time' },
+  { value: 2, title: 'Split', description: 'Two side by side' },
+  { value: 3, title: 'Balanced', description: 'Kitchen-friendly view' },
+  { value: 4, title: 'Overview', description: 'Most of the flow' },
+  { value: 5, title: 'Wide', description: 'Large screens' },
+  { value: 6, title: 'Fit all', description: 'Every status at once' },
 ];
 
 const STATUS_TABS = [
   { id: 'all', label: 'All Orders', subtitle: 'All Statuses', statuses: [] as OrderStatus[], accentColor: '#11181C', Icon: List },
   { id: 'new', label: 'New Orders', subtitle: 'Awaiting Acceptance', statuses: ['placed'] as OrderStatus[], accentColor: '#F59E0B', Icon: Inbox },
-  { id: 'kitchen', label: 'In Kitchen', subtitle: 'Preparing & Cooking', statuses: ['confirmed', 'preparing'] as OrderStatus[], accentColor: '#3B82F6', Icon: Truck },
+  { id: 'kitchen', label: 'In Kitchen', subtitle: 'Preparing & Cooking', statuses: ['confirmed', 'preparing'] as OrderStatus[], accentColor: '#3B82F6', Icon: ChefHat },
   { id: 'pickup', label: 'Self Pickup / Takeaway', subtitle: 'Ready for Collection', statuses: ['ready_for_pickup'] as OrderStatus[], accentColor: '#FF5C39', Icon: ShoppingBag },
   { id: 'delivery', label: 'Out for Delivery', subtitle: 'Rider on the Way', statuses: ['out_for_delivery'] as OrderStatus[], accentColor: '#8B5CF6', Icon: Bike },
   { id: 'completed', label: 'Completed', subtitle: 'Delivered Successfully', statuses: ['delivered'] as OrderStatus[], accentColor: '#10B981', Icon: CheckCircle2 },
-  { id: 'cancelled', label: 'Cancelled', subtitle: 'Not Fulfilled', statuses: ['cancelled'] as OrderStatus[], accentColor: '#EF4444', Icon: RefreshCw },
+  { id: 'cancelled', label: 'Cancelled', subtitle: 'Not Fulfilled', statuses: ['cancelled'] as OrderStatus[], accentColor: '#EF4444', Icon: CircleX },
 ];
 
 const TYPE_FILTERS = [
@@ -263,9 +279,41 @@ function getTotalAmount(order: Order) {
   return itemsSum + deliveryFee;
 }
 
-function formatDateTime(iso: string) {
-  return new Date(iso).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+function formatDateTime(iso?: string) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '—';
+  return d.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
 }
+
+/** Statuses that are finished — everything else is an order still being worked on. */
+const FINAL_STATUSES = ['delivered', 'cancelled'];
+const isActiveOrder = (o: Order) => !FINAL_STATUSES.includes(o.status);
+
+/** Human-friendly names for toasts (never show raw ids like "out_for_delivery"). */
+const STATUS_LABELS: Record<string, string> = {
+  placed: 'New',
+  confirmed: 'Confirmed',
+  preparing: 'In Kitchen',
+  ready_for_pickup: 'Ready for Collection',
+  out_for_delivery: 'Out for Delivery',
+  delivered: 'Completed',
+  cancelled: 'Cancelled',
+};
+const statusLabel = (s: string) => STATUS_LABELS[s] || s.replace(/_/g, ' ');
+
+/** Local-time YYYY-MM-DD (toISOString would use UTC and pick the wrong day late in the evening). */
+const toLocalYMD = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+/** Parses a strict YYYY-MM-DD string as a local date; returns null if it isn't a real calendar date. */
+const parseLocalYMD = (s: string): Date | null => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s.trim());
+  if (!m) return null;
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const date = new Date(y, mo - 1, d);
+  return date.getFullYear() === y && date.getMonth() === mo - 1 && date.getDate() === d ? date : null;
+};
 
 function formatPaymentLabel(order: Order) {
   const pType = (order.paymentType || (order as any).paymentMethod || '').toLowerCase();
@@ -325,7 +373,8 @@ function getOrderFulfillmentType(order: Order): 'delivery' | 'pickup' | 'takeawa
     notes.includes('eat-in') ||
     notes.includes('dine-in') ||
     notes.includes('dine in') ||
-    notes.includes('table') ||
+    // Whole-word match only: "vegetable" / "comfortable" must not flag an order as dine-in.
+    /\btable\b/.test(notes) ||
     addr1.startsWith('table')
   ) {
     return 'dine_in';
@@ -368,7 +417,7 @@ function getOrderFulfillmentType(order: Order): 'delivery' | 'pickup' | 'takeawa
     const text = (addr.formattedAddress || addr.addressLine1 || (addr as any).fullAddress || '').toLowerCase();
     if (text.includes('pickup') || text.includes('collection')) return 'pickup';
     if (text.includes('takeaway')) return 'takeaway';
-    if (text.includes('dine') || text.includes('table')) return 'dine_in';
+    if (/\b(dine|dine-in|table)\b/.test(text)) return 'dine_in';
     return 'delivery';
   }
   return isTakeawayApp ? 'takeaway' : 'pickup';
@@ -502,6 +551,8 @@ interface OrderCardProps {
   paperRollSize?: string;
   compact?: boolean;
   onEditDeliveryTime?: (o: Order) => void;
+  /** True while a status change / rider assignment for this order is being sent. */
+  isUpdating?: boolean;
 }
 
 const OrderCardItem: React.FC<OrderCardProps> = ({
@@ -513,6 +564,7 @@ const OrderCardItem: React.FC<OrderCardProps> = ({
   paperRollSize = '58',
   compact = false,
   onEditDeliveryTime,
+  isUpdating = false,
 }) => {
   const { width: cardScreenWidth } = useWindowDimensions();
   const isTablet = cardScreenWidth >= TABLET_BREAKPOINT && !compact;
@@ -571,10 +623,12 @@ const OrderCardItem: React.FC<OrderCardProps> = ({
             activeOpacity={0.8}
           >
             <Check size={isTablet ? 15 : compact ? 12 : 13} color="#FFFFFF" />
-            <Text style={[styles.acceptBtnText, isTablet && styles.acceptBtnTextTablet, compact && { fontSize: 11 }]}>Accept</Text>
+            <Text style={[styles.acceptBtnText, isTablet && styles.acceptBtnTextTablet, compact && { fontSize: 12 }]}>Accept</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.printIconBtn, isTablet && styles.printIconBtnTablet, compact && { width: 34, height: 32 }]}
+            accessibilityRole="button"
+            accessibilityLabel="Print receipt"
+            style={[styles.printIconBtn, isTablet && styles.printIconBtnTablet, compact && { width: 40, height: 40 }]}
             onPress={(e: any) => {
               e.stopPropagation?.();
               onPrint(order);
@@ -594,7 +648,7 @@ const OrderCardItem: React.FC<OrderCardProps> = ({
         return (
           <View style={[styles.actionButtonsRow, isTablet && styles.actionButtonsRowTablet, compact && { gap: 6, marginTop: 8 }]}>
             <TouchableOpacity
-              style={[styles.acceptBtn, isTablet && styles.acceptBtnTablet, { backgroundColor: '#7C3AED' }, compact && { paddingVertical: 7, paddingHorizontal: 6 }]}
+              style={[styles.acceptBtn, isTablet && styles.acceptBtnTablet, { backgroundColor: '#7C3AED' }, compact && { paddingVertical: 10, paddingHorizontal: 8 }]}
               onPress={(e: any) => {
                 e.stopPropagation?.();
                 onUpdateStatus(order._id, 'delivered');
@@ -602,10 +656,12 @@ const OrderCardItem: React.FC<OrderCardProps> = ({
               activeOpacity={0.8}
             >
               <UtensilsCrossed size={isTablet ? 15 : compact ? 12 : 13} color="#FFFFFF" />
-              <Text style={[styles.acceptBtnText, isTablet && styles.acceptBtnTextTablet, compact && { fontSize: 11 }]} numberOfLines={1}>Prepared</Text>
+              <Text style={[styles.acceptBtnText, isTablet && styles.acceptBtnTextTablet, compact && { fontSize: 12 }]} numberOfLines={1}>Prepared</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.printIconBtn, isTablet && styles.printIconBtnTablet, compact && { width: 34, height: 32 }]}
+              accessibilityRole="button"
+              accessibilityLabel="Print receipt"
+              style={[styles.printIconBtn, isTablet && styles.printIconBtnTablet, compact && { width: 40, height: 40 }]}
               onPress={(e: any) => {
                 e.stopPropagation?.();
                 onPrint(order);
@@ -621,7 +677,7 @@ const OrderCardItem: React.FC<OrderCardProps> = ({
         return (
           <View style={[styles.actionButtonsRow, isTablet && styles.actionButtonsRowTablet, compact && { gap: 6, marginTop: 8 }]}>
             <TouchableOpacity
-              style={[styles.acceptBtn, isTablet && styles.acceptBtnTablet, { backgroundColor: '#FF5C39' }, compact && { paddingVertical: 7, paddingHorizontal: 6 }]}
+              style={[styles.acceptBtn, isTablet && styles.acceptBtnTablet, { backgroundColor: '#FF5C39' }, compact && { paddingVertical: 10, paddingHorizontal: 8 }]}
               onPress={(e: any) => {
                 e.stopPropagation?.();
                 onUpdateStatus(order._id, 'ready_for_pickup');
@@ -629,12 +685,14 @@ const OrderCardItem: React.FC<OrderCardProps> = ({
               activeOpacity={0.8}
             >
               <Check size={isTablet ? 15 : compact ? 12 : 13} color="#FFFFFF" />
-              <Text style={[styles.acceptBtnText, isTablet && styles.acceptBtnTextTablet, compact && { fontSize: 11 }]} numberOfLines={1}>
+              <Text style={[styles.acceptBtnText, isTablet && styles.acceptBtnTextTablet, compact && { fontSize: 12 }]} numberOfLines={1}>
                 {fulfillmentType === 'takeaway' ? (compact ? 'Ready (Takeaway)' : 'Ready for Takeaway') : (compact ? 'Ready (Pickup)' : 'Ready for Pickup')}
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.printIconBtn, isTablet && styles.printIconBtnTablet, compact && { width: 34, height: 32 }]}
+              accessibilityRole="button"
+              accessibilityLabel="Print receipt"
+              style={[styles.printIconBtn, isTablet && styles.printIconBtnTablet, compact && { width: 40, height: 40 }]}
               onPress={(e: any) => {
                 e.stopPropagation?.();
                 onPrint(order);
@@ -652,7 +710,7 @@ const OrderCardItem: React.FC<OrderCardProps> = ({
             <View style={[styles.actionButtonsRow, { flexDirection: 'column', gap: 6, marginTop: 8 }]}>
               <View style={{ flexDirection: 'row', gap: 6, width: '100%' }}>
                 <TouchableOpacity
-                  style={[styles.assignDriverIconBtn, { flex: 1, paddingVertical: 7, paddingHorizontal: 6 }]}
+                  style={[styles.assignDriverIconBtn, { flex: 1, paddingVertical: 10, paddingHorizontal: 8 }]}
                   onPress={(e: any) => {
                     e.stopPropagation?.();
                     onAssignDelivery(order);
@@ -660,13 +718,15 @@ const OrderCardItem: React.FC<OrderCardProps> = ({
                   activeOpacity={0.8}
                 >
                   <Bike size={12} color="#FFFFFF" />
-                  <Text style={[styles.assignDriverText, { fontSize: 11 }]} numberOfLines={1}>
+                  <Text style={[styles.assignDriverText, { fontSize: 12 }]} numberOfLines={1}>
                     {deliveryPartnerName ? `Rider: ${deliveryPartnerName}` : 'Assign Rider'}
                   </Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
-                  style={[styles.printIconBtn, { width: 34, height: 32 }]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Print receipt"
+                  style={[styles.printIconBtn, { width: 40, height: 40 }]}
                   onPress={(e: any) => {
                     e.stopPropagation?.();
                     onPrint(order);
@@ -678,7 +738,7 @@ const OrderCardItem: React.FC<OrderCardProps> = ({
               </View>
 
               <TouchableOpacity
-                style={[styles.outForDeliveryBtn, { width: '100%', paddingVertical: 7, paddingHorizontal: 6 }]}
+                style={[styles.outForDeliveryBtn, { width: '100%', paddingVertical: 10, paddingHorizontal: 8 }]}
                 onPress={(e: any) => {
                   e.stopPropagation?.();
                   onUpdateStatus(order._id, 'out_for_delivery');
@@ -686,7 +746,7 @@ const OrderCardItem: React.FC<OrderCardProps> = ({
                 activeOpacity={0.8}
               >
                 <Truck size={13} color="#FFFFFF" />
-                <Text style={[styles.outForDeliveryBtnText, { fontSize: 11 }]} numberOfLines={1}>
+                <Text style={[styles.outForDeliveryBtnText, { fontSize: 12 }]} numberOfLines={1}>
                   Out for Delivery
                 </Text>
               </TouchableOpacity>
@@ -723,6 +783,8 @@ const OrderCardItem: React.FC<OrderCardProps> = ({
             </TouchableOpacity>
 
             <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityLabel="Print receipt"
               style={[styles.printIconBtn, isTablet && styles.printIconBtnTablet]}
               onPress={(e: any) => {
                 e.stopPropagation?.();
@@ -742,7 +804,7 @@ const OrderCardItem: React.FC<OrderCardProps> = ({
       return (
         <View style={[styles.actionButtonsRow, isTablet && styles.actionButtonsRowTablet, compact && { gap: 6, marginTop: 8 }]}>
           <TouchableOpacity
-            style={[styles.acceptBtn, isTablet && styles.acceptBtnTablet, { backgroundColor: '#10B981' }, compact && { paddingVertical: 7, paddingHorizontal: 6 }]}
+            style={[styles.acceptBtn, isTablet && styles.acceptBtnTablet, { backgroundColor: '#10B981' }, compact && { paddingVertical: 10, paddingHorizontal: 8 }]}
             onPress={(e: any) => {
               e.stopPropagation?.();
               onUpdateStatus(order._id, 'delivered');
@@ -750,12 +812,14 @@ const OrderCardItem: React.FC<OrderCardProps> = ({
             activeOpacity={0.8}
           >
             <Check size={isTablet ? 15 : compact ? 12 : 13} color="#FFFFFF" />
-            <Text style={[styles.acceptBtnText, isTablet && styles.acceptBtnTextTablet, compact && { fontSize: 11 }]} numberOfLines={1}>
+            <Text style={[styles.acceptBtnText, isTablet && styles.acceptBtnTextTablet, compact && { fontSize: 12 }]} numberOfLines={1}>
               {fulfillmentType === 'takeaway' ? (compact ? 'Collected' : 'Mark Collected (Takeaway)') : (compact ? 'Collected' : 'Delivered')}
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.printIconBtn, isTablet && styles.printIconBtnTablet, compact && { width: 34, height: 32 }]}
+            accessibilityRole="button"
+            accessibilityLabel="Print receipt"
+            style={[styles.printIconBtn, isTablet && styles.printIconBtnTablet, compact && { width: 40, height: 40 }]}
             onPress={(e: any) => {
               e.stopPropagation?.();
               onPrint(order);
@@ -775,7 +839,7 @@ const OrderCardItem: React.FC<OrderCardProps> = ({
           <View style={[styles.actionButtonsRow, { flexDirection: 'column', gap: 6, marginTop: 8 }]}>
             <View style={{ flexDirection: 'row', gap: 6, width: '100%' }}>
               <TouchableOpacity
-                style={[styles.acceptBtn, { flex: 1, paddingVertical: 7, paddingHorizontal: 6 }]}
+                style={[styles.acceptBtn, { flex: 1, paddingVertical: 10, paddingHorizontal: 8 }]}
                 onPress={(e: any) => {
                   e.stopPropagation?.();
                   onUpdateStatus(order._id, 'delivered');
@@ -783,10 +847,12 @@ const OrderCardItem: React.FC<OrderCardProps> = ({
                 activeOpacity={0.8}
               >
                 <Check size={12} color="#FFFFFF" />
-                <Text style={[styles.acceptBtnText, { fontSize: 11 }]} numberOfLines={1}>Delivered</Text>
+                <Text style={[styles.acceptBtnText, { fontSize: 12 }]} numberOfLines={1}>Delivered</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.printIconBtn, { width: 34, height: 32 }]}
+                accessibilityRole="button"
+                accessibilityLabel="Print receipt"
+                style={[styles.printIconBtn, { width: 40, height: 40 }]}
                 onPress={(e: any) => {
                   e.stopPropagation?.();
                   onPrint(order);
@@ -798,7 +864,7 @@ const OrderCardItem: React.FC<OrderCardProps> = ({
             </View>
 
             <TouchableOpacity
-              style={[styles.assignDriverIconBtn, { width: '100%', paddingVertical: 7, paddingHorizontal: 6 }]}
+              style={[styles.assignDriverIconBtn, { width: '100%', paddingVertical: 10, paddingHorizontal: 8 }]}
               onPress={(e: any) => {
                 e.stopPropagation?.();
                 onAssignDelivery(order);
@@ -806,7 +872,7 @@ const OrderCardItem: React.FC<OrderCardProps> = ({
               activeOpacity={0.8}
             >
               <Bike size={12} color="#FFFFFF" />
-              <Text style={[styles.assignDriverText, { fontSize: 11 }]} numberOfLines={1}>
+              <Text style={[styles.assignDriverText, { fontSize: 12 }]} numberOfLines={1}>
                 {deliveryPartnerName ? `Rider: ${deliveryPartnerName}` : 'Assign Rider'}
               </Text>
             </TouchableOpacity>
@@ -824,7 +890,7 @@ const OrderCardItem: React.FC<OrderCardProps> = ({
             activeOpacity={0.8}
           >
             <Check size={isTablet ? 15 : 13} color="#FFFFFF" />
-            <Text style={[styles.acceptBtnText, isTablet && styles.acceptBtnTextTablet]}>Mark Delivered</Text>
+            <Text style={[styles.acceptBtnText, isTablet && styles.acceptBtnTextTablet]}>Delivered</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.assignDriverIconBtn, isTablet && styles.assignDriverIconBtnTablet]}
@@ -840,6 +906,8 @@ const OrderCardItem: React.FC<OrderCardProps> = ({
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel="Print receipt"
             style={[styles.printIconBtn, isTablet && styles.printIconBtnTablet]}
             onPress={(e: any) => {
               e.stopPropagation?.();
@@ -858,7 +926,7 @@ const OrderCardItem: React.FC<OrderCardProps> = ({
       return (
         <View style={[styles.actionButtonsRow, isTablet && styles.actionButtonsRowTablet, compact && { gap: 6, marginTop: 8 }]}>
           <TouchableOpacity
-            style={[styles.acceptBtn, isTablet && styles.acceptBtnTablet, { backgroundColor: '#10B981' }, compact && { paddingVertical: 7, paddingHorizontal: 6 }]}
+            style={[styles.acceptBtn, isTablet && styles.acceptBtnTablet, { backgroundColor: '#10B981' }, compact && { paddingVertical: 10, paddingHorizontal: 8 }]}
             onPress={(e: any) => {
               e.stopPropagation?.();
               onUpdateStatus(order._id, 'delivered');
@@ -866,10 +934,12 @@ const OrderCardItem: React.FC<OrderCardProps> = ({
             activeOpacity={0.8}
           >
             <Check size={isTablet ? 15 : compact ? 12 : 13} color="#FFFFFF" />
-            <Text style={[styles.acceptBtnText, isTablet && styles.acceptBtnTextTablet, compact && { fontSize: 11 }]}>Delivered</Text>
+            <Text style={[styles.acceptBtnText, isTablet && styles.acceptBtnTextTablet, compact && { fontSize: 12 }]}>Delivered</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.printIconBtn, isTablet && styles.printIconBtnTablet, compact && { width: 34, height: 32 }]}
+            accessibilityRole="button"
+            accessibilityLabel="Print receipt"
+            style={[styles.printIconBtn, isTablet && styles.printIconBtnTablet, compact && { width: 40, height: 40 }]}
             onPress={(e: any) => {
               e.stopPropagation?.();
               onPrint(order);
@@ -982,12 +1052,26 @@ const OrderCardItem: React.FC<OrderCardProps> = ({
 
       <View style={[styles.sourceBadgeContainer, isTablet && styles.sourceBadgeContainerTablet]}>
         <View style={[sourceDetails.isExternal ? styles.sourceBadgeExternal : styles.sourceBadgeKrifoo, isTablet && (sourceDetails.isExternal ? styles.sourceBadgeExternalTablet : styles.sourceBadgeKrifooTablet), compact && { paddingHorizontal: 6, paddingVertical: 2.5, maxWidth: '100%' }]}>
+          {(() => {
+            const SourceIcon = !sourceDetails.isExternal
+              ? Smartphone
+              : sourceDetails.domainUrl.includes('Takeaway')
+              ? ShoppingBag
+              : Globe;
+            return (
+              <SourceIcon
+                size={isTablet ? 13 : 12}
+                color={sourceDetails.isExternal ? '#B45309' : '#2563EB'}
+                style={{ marginRight: 5 }}
+              />
+            );
+          })()}
           <Text
-            style={[sourceDetails.isExternal ? styles.sourceBadgeTextExternal : styles.sourceBadgeTextKrifoo, isTablet && (sourceDetails.isExternal ? styles.sourceBadgeTextExternalTablet : styles.sourceBadgeTextKrifooTablet), compact && { fontSize: 10 }]}
+            style={[sourceDetails.isExternal ? styles.sourceBadgeTextExternal : styles.sourceBadgeTextKrifoo, isTablet && (sourceDetails.isExternal ? styles.sourceBadgeTextExternalTablet : styles.sourceBadgeTextKrifooTablet), compact && { fontSize: 11 }, { flexShrink: 1 }]}
             numberOfLines={1}
             ellipsizeMode="tail"
           >
-            {sourceDetails.isExternal ? (sourceDetails.domainUrl.includes('Takeaway') ? `🥡${sourceDetails.domainUrl}` : `🌐${sourceDetails.domainUrl}`) : '📱 Krifoo App'}
+            {sourceDetails.isExternal ? sourceDetails.domainUrl : 'Krifoo App'}
           </Text>
         </View>
       </View>
@@ -1005,7 +1089,7 @@ const OrderCardItem: React.FC<OrderCardProps> = ({
       </View>
 
       {fulfillmentType === 'delivery' && deliveryAddressText ? (
-        <View style={[styles.kanbanAddressRow, isTablet && styles.kanbanAddressRowTablet, compact && { paddingHorizontal: 0, paddingVertical: 1, marginBottom: 5, gap: 5, minWidth: 0 }]}>
+        <View style={[styles.kanbanAddressRow, isTablet && styles.kanbanAddressRowTablet, compact && { paddingHorizontal: 8, paddingVertical: 6, marginBottom: 6, gap: 6, minWidth: 0 }]}>
           <MapPin size={isTablet ? 15 : compact ? 11 : 13} color="#2563EB" style={[styles.addressPinIcon, compact && { marginTop: 1 }]} />
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text style={[styles.kanbanAddressHeader, isTablet && styles.kanbanAddressHeaderTablet, compact && { fontSize: 9, marginBottom: 0 }]}>DELIVERY ADDRESS:</Text>
@@ -1016,6 +1100,7 @@ const OrderCardItem: React.FC<OrderCardProps> = ({
         </View>
       ) : null}
 
+      {isActiveOrder(order) && (
       <View style={[styles.expectedDeliveryRow, isTablet && styles.expectedDeliveryRowTablet, compact && { marginBottom: 4 }]}>
         <View style={[styles.expectedDeliveryBadge, isTablet && styles.expectedDeliveryBadgeTablet, compact && { paddingHorizontal: 6, paddingVertical: 2.5 }]}>
           <Clock size={isTablet ? 12 : compact ? 10 : 11} color="#1D4ED8" />
@@ -1031,6 +1116,8 @@ const OrderCardItem: React.FC<OrderCardProps> = ({
               onEditDeliveryTime(order);
             }}
             activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Edit expected time"
           >
             <Text style={[styles.editDeliveryTimeBtnText, isTablet && { fontSize: 10.5 }, compact && { fontSize: 9 }]}>
               Edit
@@ -1038,6 +1125,7 @@ const OrderCardItem: React.FC<OrderCardProps> = ({
           </TouchableOpacity>
         ) : null}
       </View>
+      )}
 
       <View style={[styles.kanbanTypeRow, isTablet && styles.kanbanTypeRowTablet, compact && { gap: 4, marginBottom: 5 }]}>
         {scheduleInfo.isScheduled && (
@@ -1144,20 +1232,32 @@ const OrderCardItem: React.FC<OrderCardProps> = ({
         </View>
       )}
 
-      {renderCardActions()}
+      {/* While a change is being sent, block further taps on the action buttons. */}
+      <View pointerEvents={isUpdating ? 'none' : 'auto'} accessibilityState={{ busy: isUpdating }}>
+        <View style={isUpdating ? styles.actionsUpdating : undefined}>{renderCardActions()}</View>
+        {isUpdating && (
+          <View style={styles.updatingOverlay}>
+            <ActivityIndicator size="small" color="#FF5C39" />
+            <Text style={styles.updatingText}>Updating…</Text>
+          </View>
+        )}
+      </View>
     </TouchableOpacity>
   );
 };
 
 export default function OrdersScreen() {
+  const router = useRouter();
   const insets = useSafeAreaInsets();
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const isTablet = windowWidth >= TABLET_BREAKPOINT;
   const isMobile = windowWidth < TABLET_BREAKPOINT;
+  // Tabs-view grid: 1 column on phones, 2 on tablets, 3 on wide landscape tablets.
+  const tabColumns = windowWidth >= 1200 ? 3 : isTablet ? 2 : 1;
 
   const [headerHeight, setHeaderHeight] = useState(65);
   const [searchHeight, setSearchHeight] = useState(54);
-  const [toolbarHeight, setToolbarHeight] = useState(isTablet ? 42 : 46);
+  const toolbarHeight = isTablet ? 42 : 46;
   const [isHeaderCollapsed, setIsHeaderCollapsed] = useState(false);
 
   const routeParams = useLocalSearchParams<{ channel?: string }>();
@@ -1194,7 +1294,7 @@ export default function OrdersScreen() {
         : Math.round(windowWidth * 0.9);
     }
     const rawWidth = Math.floor(windowWidth / effectiveColumns);
-    return Math.max(isTablet ? 200 : 160, rawWidth);
+    return Math.max(isTablet ? BOARD_MIN_COLUMN_WIDTH.tablet : BOARD_MIN_COLUMN_WIDTH.phone, rawWidth);
   }, [effectiveColumns, boardColumnsSetting, windowWidth, isTablet]);
 
   const isCompact = columnWidth < 260 || effectiveColumns >= 4;
@@ -1231,11 +1331,15 @@ export default function OrdersScreen() {
     }
   }, []);
 
-  const handleStepColumns = useCallback((delta: -1 | 1) => {
-    const currentNum = boardColumnsSetting === 'auto' ? autoColumns : boardColumnsSetting;
-    const nextNum = Math.max(1, Math.min(6, currentNum + delta));
-    handleSetBoardColumns(nextNum as 1 | 2 | 3 | 4 | 5 | 6);
-  }, [boardColumnsSetting, autoColumns, handleSetBoardColumns]);
+  // Width of the live preview frame inside the board layout sheet
+  const [boardPreviewWidth, setBoardPreviewWidth] = useState(0);
+  const boardMinColumnWidth = isTablet ? BOARD_MIN_COLUMN_WIDTH.tablet : BOARD_MIN_COLUMN_WIDTH.phone;
+  /** How many columns actually fit at full size on this screen for a given choice */
+  const presetFitsScreen = useCallback(
+    (n: number) => n === 1 || Math.floor(windowWidth / n) >= boardMinColumnWidth,
+    [windowWidth, boardMinColumnWidth],
+  );
+
 
   const { showToast } = useToast();
   const [orders, setOrders] = useState<Order[]>([]);
@@ -1252,8 +1356,7 @@ export default function OrdersScreen() {
 
   useEffect(() => {
     if (routeParams?.channel && ['all', 'delivery', 'pickup', 'takeaway', 'dine_in'].includes(routeParams.channel)) {
-      const channelVal = routeParams.channel === 'takeaway' ? 'dine_in' : routeParams.channel;
-      setTypeFilter(channelVal);
+      setTypeFilter(routeParams.channel);
     }
   }, [routeParams?.channel]);
 
@@ -1282,6 +1385,7 @@ export default function OrdersScreen() {
     }
   }, [isHeaderCollapsed, toggleHeaderCollapse]);
 
+
   // Dateframe dropdown & Comprehensive filter modal
   const [dateDropdownOpen, setDateDropdownOpen] = useState(false);
   const [channelDropdownOpen, setChannelDropdownOpen] = useState(false);
@@ -1294,6 +1398,7 @@ export default function OrdersScreen() {
   const [customDateModalOpen, setCustomDateModalOpen] = useState(false);
   const [tempDateFrom, setTempDateFrom] = useState('');
   const [tempDateTo, setTempDateTo] = useState('');
+  const [customDateError, setCustomDateError] = useState<string | null>(null);
 
   const getDatePresetLabel = useCallback(() => {
     if (datePreset === 'today') return 'Today';
@@ -1343,7 +1448,7 @@ export default function OrdersScreen() {
     const delivery = orders.filter((o) => getOrderFulfillmentType(o) === 'delivery').length;
     const takeaway = orders.filter((o) => getOrderFulfillmentType(o) === 'takeaway').length;
     const pickup = orders.filter((o) => getOrderFulfillmentType(o) === 'pickup').length;
-    const dineIn = orders.filter((o) => { const f = getOrderFulfillmentType(o); return f === 'dine_in' || f === 'takeaway'; }).length;
+    const dineIn = orders.filter((o) => getOrderFulfillmentType(o) === 'dine_in').length;
 
     const scheduled = orders.filter((o) => getOrderScheduleInfo(o).isScheduled).length;
     const asap = total - scheduled;
@@ -1400,14 +1505,42 @@ export default function OrdersScreen() {
     loadPaperRollSize();
   }, [loadPaperRollSize]);
 
+  /**
+   * Optimistic-update bookkeeping.
+   * - pendingPatches: changes sent to the server but not yet confirmed (also acts as a double-tap guard).
+   * - recentMutations: when each order was last changed locally, so a refresh that STARTED before the
+   *   change finished can't overwrite it with stale server data.
+   */
+  const pendingPatchesRef = useRef<Map<string, Partial<Order>>>(new Map());
+  const recentMutationsRef = useRef<Map<string, number>>(new Map());
+  const [updatingIds, setUpdatingIds] = useState<Set<string>>(new Set());
+  const isFocusedRef = useRef(false);
+
   const fetchOrders = useCallback(async (isRefresh = false) => {
-    if (isFetchingRef.current) return;
+    if (isFetchingRef.current) {
+      if (isRefresh) setRefreshing(false);
+      return;
+    }
     isFetchingRef.current = true;
+    const startedAt = Date.now();
     try {
       if (!isRefresh) setLoading(true);
       const res: any = await orderService.fetchAllOrders();
       if (res.success && res.data) {
-        setOrders(res.data);
+        // Forget mutation timestamps older than a minute.
+        recentMutationsRef.current.forEach((at, id) => {
+          if (startedAt - at > 60000) recentMutationsRef.current.delete(id);
+        });
+        setOrders((prev) => {
+          const prevById = new Map(prev.map((o) => [o._id, o]));
+          return (res.data as Order[]).map((server) => {
+            const pending = pendingPatchesRef.current.get(server._id);
+            if (pending) return { ...server, ...pending } as Order;
+            const mutatedAt = recentMutationsRef.current.get(server._id);
+            if (mutatedAt && mutatedAt > startedAt) return prevById.get(server._id) ?? server;
+            return server;
+          });
+        });
         setOrdersError(null);
       } else {
         console.warn('Failed fetching orders:', res.message);
@@ -1430,17 +1563,31 @@ export default function OrdersScreen() {
     }
   }, []);
 
-  // 1. Refetch whenever screen comes into focus
+  // 1. Refetch whenever screen comes into focus (this also covers the very first load).
   useFocusEffect(
     useCallback(() => {
+      isFocusedRef.current = true;
       fetchOrders(true);
       loadPaperRollSize();
+      return () => {
+        isFocusedRef.current = false;
+      };
     }, [fetchOrders, loadPaperRollSize])
   );
 
-  // 2. Real-time WebSocket listener + auto polling + App foreground refresh
+  // 2. Real-time WebSocket listener + auto polling + App foreground refresh.
+  //    Only runs while this tab is visible and the app is in the foreground; bursts of socket
+  //    messages are collapsed into a single refresh.
   useEffect(() => {
-    fetchOrders();
+    const canRefresh = () => isFocusedRef.current && AppState.currentState === 'active';
+    let socketTimer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleRefresh = () => {
+      if (socketTimer) clearTimeout(socketTimer);
+      socketTimer = setTimeout(() => {
+        socketTimer = null;
+        if (canRefresh()) fetchOrders(true);
+      }, 600);
+    };
 
     const sub = DeviceEventEmitter.addListener('websocket_message', (data: any) => {
       // Refresh on any websocket event related to orders
@@ -1459,23 +1606,24 @@ export default function OrdersScreen() {
         data?.order ||
         data?.status
       ) {
-        fetchOrders(true);
+        scheduleRefresh();
       }
     });
 
     // Fallback poll every 12 seconds so orders stay fresh if WebSocket disconnects
     const interval = setInterval(() => {
-      fetchOrders(true);
+      if (canRefresh()) fetchOrders(true);
     }, 12000);
 
     // Refresh immediately when coming back from background
     const appStateSub = AppState.addEventListener('change', (nextState) => {
-      if (nextState === 'active') {
+      if (nextState === 'active' && isFocusedRef.current) {
         fetchOrders(true);
       }
     });
 
     return () => {
+      if (socketTimer) clearTimeout(socketTimer);
       sub.remove();
       clearInterval(interval);
       appStateSub.remove();
@@ -1502,32 +1650,45 @@ export default function OrdersScreen() {
       dateFrom = startOfDay(y);
       dateTo = endOfDay(y);
     } else if (datePreset === '7days') {
+      // "Last 7 days" = today plus the 6 days before it.
       const past7 = new Date(now);
-      past7.setDate(past7.getDate() - 7);
+      past7.setDate(past7.getDate() - 6);
       dateFrom = startOfDay(past7);
       dateTo = endOfDay(now);
     } else if (datePreset === '30days') {
       const past30 = new Date(now);
-      past30.setDate(past30.getDate() - 30);
+      past30.setDate(past30.getDate() - 29);
       dateFrom = startOfDay(past30);
       dateTo = endOfDay(now);
-    } else if (datePreset === 'custom' && customDateFrom && customDateTo) {
-      dateFrom = startOfDay(new Date(customDateFrom));
-      dateTo = endOfDay(new Date(customDateTo));
+    } else if (datePreset === 'custom') {
+      const from = parseLocalYMD(customDateFrom);
+      const to = parseLocalYMD(customDateTo);
+      if (from && to) {
+        dateFrom = startOfDay(from);
+        dateTo = endOfDay(to);
+      }
     }
+
+    // Normalise the search once: "#1234" should match order 1234; phone search ignores spaces.
+    const rawQuery = searchQuery.trim().toLowerCase();
+    const q = rawQuery.replace(/^#/, '');
+    const qDigits = q.replace(/\D/g, '');
 
     return orders.filter((order) => {
       const sourceDetails = getOrderSourceDetails(order);
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase();
-        const idMatch = order._id?.toLowerCase().includes(q) || order.orderNumber?.toLowerCase().includes(q);
+      if (q) {
+        const orderNum = String(order.orderNumber ?? '').toLowerCase();
+        const idMatch = String(order._id ?? '').toLowerCase().includes(q) || orderNum.includes(q);
         const restMatch = getRestaurantName(order).toLowerCase().includes(q);
         const custMatch = getCustomerName(order).toLowerCase().includes(q);
         const domainMatch = sourceDetails.domainUrl.toLowerCase().includes(q);
-        if (!idMatch && !restMatch && !custMatch && !domainMatch) return false;
+        const phoneMatch = qDigits.length >= 3 && getCustomerPhone(order).replace(/\D/g, '').includes(qDigits);
+        const itemMatch =
+          !idMatch && !custMatch && getOrderItems(order).some((it) => getItemName(it).toLowerCase().includes(q));
+        if (!idMatch && !restMatch && !custMatch && !domainMatch && !phoneMatch && !itemMatch) return false;
       }
       const fType = getOrderFulfillmentType(order);
-      if (typeFilter !== 'all' && (typeFilter === 'dine_in' ? (fType !== 'dine_in' && fType !== 'takeaway') : fType !== typeFilter)) return false;
+      if (typeFilter !== 'all' && fType !== typeFilter) return false;
 
       const isExt = sourceDetails.isExternal;
       if (sourceFilter === 'external' && !isExt) return false;
@@ -1550,9 +1711,11 @@ export default function OrdersScreen() {
       if (paymentStatusFilter === 'paid' && pStatus !== 'paid' && pStatus !== 'completed') return false;
       if (paymentStatusFilter === 'pending' && (pStatus === 'paid' || pStatus === 'completed')) return false;
 
-      // Date filter
-      if (dateFrom && dateTo && order.createdAt) {
-        const created = new Date(order.createdAt);
+      // Date filter — applies to finished orders only. Orders still in progress are always shown
+      // so nothing placed before midnight (or scheduled for later) can drop off the board.
+      if (dateFrom && dateTo && !isActiveOrder(order)) {
+        const created = order.createdAt ? new Date(order.createdAt) : null;
+        if (!created || isNaN(created.getTime())) return false;
         if (created < dateFrom || created > dateTo) return false;
       }
 
@@ -1586,80 +1749,111 @@ export default function OrdersScreen() {
     return filteredOrders.filter((o) => tabDef.statuses.includes(o.status));
   }, [filteredOrders, activeTab]);
 
+  // Never leave the header (with the Board/Tabs toggle) stuck hidden: re-show it whenever the
+  // user switches tab/view/filters, or when the current list is empty and can't be scrolled back up.
+  useEffect(() => {
+    toggleHeaderCollapse(false);
+  }, [activeTab, viewMode, typeFilter, sourceFilter, scheduleFilter, paymentFilter, paymentStatusFilter, datePreset, toggleHeaderCollapse]);
+
+  useEffect(() => {
+    if (isHeaderCollapsed && viewMode === 'tabs' && activeTabOrders.length === 0) toggleHeaderCollapse(false);
+  }, [isHeaderCollapsed, viewMode, activeTabOrders.length, toggleHeaderCollapse]);
+
   const activeOrderCount = useMemo(
     () => filteredOrders.filter((o) => o.status !== 'delivered' && o.status !== 'cancelled').length,
     [filteredOrders]
   );
 
-  const executeUpdateStatus = async (orderId: string, newStatus: string) => {
-    // 1. Snapshot previous state for instant rollback if network or server fails
-    const prevOrders = orders;
-    const prevSelected = selectedOrder;
+  const setOrderUpdating = (orderId: string, updating: boolean) =>
+    setUpdatingIds((prev) => {
+      const next = new Set(prev);
+      if (updating) next.add(orderId);
+      else next.delete(orderId);
+      return next;
+    });
 
-    // 2. Optimistic instant UI update (0ms latency)
-    const updateOrderLocally = (o: Order): Order => {
-      const updated: any = {
-        ...o,
-        status: newStatus as any,
-        ...(newStatus !== 'placed' && newStatus !== 'cancelled' && (o.acceptanceStatus === 'pending' || !o.acceptanceStatus)
-          ? { acceptanceStatus: 'accepted' as any }
-          : {}),
-      };
-      if (newStatus === 'delivered' && (o.paymentType === 'cash' || (o as any).paymentType === 'cod')) {
-        updated.paymentStatus = 'paid';
-      }
-      return updated;
+  const executeUpdateStatus = async (orderId: string, newStatus: string) => {
+    // 1. Double-tap guard: ignore further taps while this order already has a change in flight.
+    if (pendingPatchesRef.current.has(orderId)) return;
+
+    // 2. Snapshot ONLY this order so a failure rolls back just this order — not orders that
+    //    arrived (or were changed) in the meantime.
+    const prevOrder =
+      orders.find((o) => o._id === orderId) ?? (selectedOrder?._id === orderId ? selectedOrder : undefined);
+
+    const patch: Partial<Order> = { status: newStatus as OrderStatus };
+    if (
+      newStatus !== 'placed' &&
+      newStatus !== 'cancelled' &&
+      (!prevOrder?.acceptanceStatus || prevOrder.acceptanceStatus === 'pending')
+    ) {
+      (patch as any).acceptanceStatus = 'accepted';
+    }
+    const pType = String(prevOrder?.paymentType || (prevOrder as any)?.paymentMethod || '').toLowerCase();
+    if (newStatus === 'delivered' && (pType === 'cash' || pType === 'cod')) {
+      (patch as any).paymentStatus = 'paid';
+    }
+
+    // 3. Optimistic UI update — also registered as "pending" so background refreshes keep it.
+    pendingPatchesRef.current.set(orderId, patch);
+    setOrderUpdating(orderId, true);
+    setOrders((current) => current.map((o) => (o._id === orderId ? ({ ...o, ...patch } as Order) : o)));
+    setSelectedOrder((prev) => (prev && prev._id === orderId ? ({ ...prev, ...patch } as Order) : prev));
+
+    const rollback = () => {
+      if (!prevOrder) return;
+      setOrders((current) => current.map((o) => (o._id === orderId ? prevOrder : o)));
+      setSelectedOrder((prev) => (prev && prev._id === orderId ? prevOrder : prev));
     };
 
-    setOrders((current) => current.map((o) => (o._id === orderId ? updateOrderLocally(o) : o)));
-    if (selectedOrder && selectedOrder._id === orderId) {
-      setSelectedOrder((prev) => (prev ? updateOrderLocally(prev) : null));
-    }
+    const orderLabel = `#${prevOrder?.orderNumber || orderId.substring(0, 7).toUpperCase()}`;
 
-    // 3. Instant feedback
-    showToast({ title: 'Success', message: `Order status updated to '${newStatus}'.`, type: 'success' });
-
-    // 4. Auto-print asynchronously in the background so it never freezes the UI
-    if (newStatus === 'preparing') {
-      (async () => {
-        try {
-          const autoPrint = await isAutoPrintEnabled();
-          if (autoPrint) {
-            let orderToPrint: any = selectedOrder?._id === orderId ? selectedOrder : orders.find((o) => o._id === orderId);
-            if (!orderToPrint?.orderedItems?.length && !(orderToPrint as any)?.items?.length) {
-              const fullOrderRes = await orderService.getOrderById(orderId);
-              if (fullOrderRes.success && fullOrderRes.data) orderToPrint = fullOrderRes.data;
-            }
-            if (orderToPrint) await printThermalReceipt(orderToPrint, false);
-          }
-        } catch (printErr) {
-          console.error('[Orders] Auto-print failed:', printErr);
-        }
-      })();
-    }
-
-    // 5. Send server update in background without blocking UI
     try {
       const res = await orderService.updateOrderStatus(orderId, newStatus);
       if (res.success) {
+        const confirmed = { ...(prevOrder || {}), ...patch, ...(res.data || {}) } as Order;
         if (res.data) {
-          // Merge authoritative server fields silently
-          setOrders((current) => current.map((o) => (o._id === orderId ? { ...o, ...res.data } : o)));
-          if (selectedOrder && selectedOrder._id === orderId) {
-            setSelectedOrder((prev) => (prev ? { ...prev, ...res.data } : null));
-          }
+          setOrders((current) => current.map((o) => (o._id === orderId ? ({ ...o, ...res.data } as Order) : o)));
+          setSelectedOrder((prev) => (prev && prev._id === orderId ? ({ ...prev, ...res.data } as Order) : prev));
+        }
+        recentMutationsRef.current.set(orderId, Date.now());
+        showToast({
+          title: `Order ${statusLabel(newStatus)}`,
+          message: `${orderLabel} moved to ${statusLabel(newStatus)}.`,
+          type: 'success',
+        });
+
+        // 4. Auto-print the kitchen ticket only AFTER the server has accepted the order,
+        //    in the background so it never blocks the UI.
+        if (newStatus === 'preparing') {
+          (async () => {
+            try {
+              if (!(await isAutoPrintEnabled())) return;
+              let orderToPrint: any = confirmed;
+              if (!orderToPrint?.orderedItems?.length && !orderToPrint?.items?.length) {
+                const fullOrderRes = await orderService.getOrderById(orderId);
+                if (fullOrderRes.success && fullOrderRes.data) orderToPrint = fullOrderRes.data;
+              }
+              if (orderToPrint) await printThermalReceipt(orderToPrint, false, undefined, undefined, 'accepted');
+            } catch (printErr) {
+              console.error('[Orders] Auto-print failed:', printErr);
+            }
+          })();
         }
       } else {
-        // Rollback state on server rejection
-        setOrders(prevOrders);
-        if (prevSelected) setSelectedOrder(prevSelected);
-        showToast({ title: 'Error', message: res.message || 'Failed to update order.', type: 'error' });
+        rollback();
+        showToast({ title: 'Update failed', message: res.message || `Couldn’t update ${orderLabel}.`, type: 'error' });
       }
     } catch (err: any) {
-      // Rollback state on network error
-      setOrders(prevOrders);
-      if (prevSelected) setSelectedOrder(prevSelected);
-      showToast({ title: 'Error', message: err?.message || 'Network error updating status.', type: 'error' });
+      rollback();
+      showToast({
+        title: 'Update failed',
+        message: err?.message || `Network error — ${orderLabel} was not updated.`,
+        type: 'error',
+      });
+    } finally {
+      pendingPatchesRef.current.delete(orderId);
+      setOrderUpdating(orderId, false);
     }
   };
 
@@ -1683,35 +1877,35 @@ export default function OrdersScreen() {
     await executeUpdateStatus(orderId, newStatus);
   };
 
+  const assigningRef = useRef<Set<string>>(new Set());
+
   const handleAssignConfirm = async (deliveryPartnerId: string) => {
     if (!selectedOrder) return;
     const orderId = selectedOrder._id;
-    const prevOrders = orders;
-    const prevSelected = selectedOrder;
-
-    // Optimistic assignment update
-    setSelectedOrder((prev) => (prev ? { ...prev, deliveryPartner: deliveryPartnerId as any } : null));
-    setOrders((current) =>
-      current.map((o) => (o._id === orderId ? { ...o, deliveryPartner: deliveryPartnerId as any } : o))
-    );
-    showToast({ title: 'Success', message: 'Delivery partner assigned.', type: 'success' });
+    if (assigningRef.current.has(orderId)) return; // ignore double submits
+    assigningRef.current.add(orderId);
+    setOrderUpdating(orderId, true);
 
     try {
       const res = await orderService.assignDeliveryPartner(orderId, deliveryPartnerId);
       if (res.success) {
         if (res.data) {
-          setOrders((current) => current.map((o) => (o._id === orderId ? { ...o, ...res.data } : o)));
-          setSelectedOrder((prev) => (prev ? { ...prev, ...res.data } : null));
+          // The card reads `assignedDeliveryPartnerId`; merge whatever the server returned.
+          setOrders((current) => current.map((o) => (o._id === orderId ? ({ ...o, ...res.data } as Order) : o)));
+          setSelectedOrder((prev) => (prev && prev._id === orderId ? ({ ...prev, ...res.data } as Order) : prev));
         }
+        recentMutationsRef.current.set(orderId, Date.now());
+        showToast({ title: 'Rider assigned', message: 'The delivery partner has been assigned.', type: 'success' });
+        // Refresh so the rider's name is populated on the card even if the response only held an id.
+        fetchOrders(true);
       } else {
-        setOrders(prevOrders);
-        setSelectedOrder(prevSelected);
-        showToast({ title: 'Error', message: res.message || 'Failed to assign.', type: 'error' });
+        showToast({ title: 'Assignment failed', message: res.message || 'Could not assign the rider.', type: 'error' });
       }
     } catch {
-      setOrders(prevOrders);
-      setSelectedOrder(prevSelected);
-      showToast({ title: 'Error', message: 'Network error assigning delivery partner.', type: 'error' });
+      showToast({ title: 'Assignment failed', message: 'Network error assigning the delivery partner.', type: 'error' });
+    } finally {
+      assigningRef.current.delete(orderId);
+      setOrderUpdating(orderId, false);
     }
   };
 
@@ -1799,118 +1993,136 @@ export default function OrdersScreen() {
     }
   };
 
+  // Shared top-bar buttons (rendered inline on tablets, on a second row on phones).
+  const filterButton = (
+    <TouchableOpacity
+      style={[styles.filterBtn, styles.filterBtnIconOnly, activeFilterCount > 0 && styles.filterBtnActive]}
+      onPress={() => setFilterModalOpen(true)}
+      activeOpacity={0.8}
+      accessibilityRole="button"
+      accessibilityLabel={activeFilterCount > 0 ? `Filters, ${activeFilterCount} active` : 'Filters'}
+    >
+      <SlidersHorizontal size={18} color={activeFilterCount > 0 ? '#FFFFFF' : '#11181C'} />
+      {activeFilterCount > 0 && (
+        <View style={[styles.filterBadge, styles.filterBadgeCorner]}>
+          <Text style={[styles.filterBadgeText, { color: '#FFFFFF' }]}>{activeFilterCount}</Text>
+        </View>
+      )}
+    </TouchableOpacity>
+  );
+
+  const dateButton = (
+    <TouchableOpacity
+      style={[styles.dateDropdownBtn, styles.topBarBtnMobile, datePreset !== 'today' && styles.dateDropdownBtnActive]}
+      onPress={() => setDateDropdownOpen(true)}
+      activeOpacity={0.8}
+      accessibilityRole="button"
+      accessibilityLabel={`Date range: ${getDatePresetLabel()}`}
+    >
+      <Calendar size={15} color={datePreset === 'today' ? '#687076' : '#FF5C39'} />
+      <Text
+        style={[styles.dateDropdownBtnText, { flex: 0 }, datePreset !== 'today' && { color: '#FF5C39' }]}
+        numberOfLines={1}
+      >
+        {getDatePresetLabel()}
+      </Text>
+      <ChevronDown size={13} color={datePreset === 'today' ? '#9BA1A6' : '#FF5C39'} />
+    </TouchableOpacity>
+  );
+
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      {/* Page Header (collapses on scroll down to maximize board length) */}
-      {!isHeaderCollapsed && (
-        <View
-          style={[styles.pageHeader, isMobile && styles.pageHeaderMobile, isTablet && styles.pageHeaderTablet]}
-        >
-        <View style={{ flexShrink: 1 }}>
-          <View style={styles.pageTitleRow}>
-            <Text style={[styles.pageTitle, isMobile && styles.pageTitleMobile]}>Orders Board</Text>
-            <View style={styles.liveBadge}>
-              <View style={styles.liveDot} />
-              <Text style={styles.liveText}>Live</Text>
-            </View>
-            </View>
-        </View>
-
-        <View style={[styles.headerRightControls, isMobile && styles.headerRightControlsMobile]}>
-          {isTablet && viewMode === 'board' && (
-            <TouchableOpacity
-              style={styles.headerBoardLayoutBtn}
-              onPress={() => setBoardColumnsModalOpen(true)}
-              activeOpacity={0.7}
-            >
-              <LayoutGrid size={13} color="#FF5C39" />
-              <Text style={styles.headerBoardLayoutBtnText}>
-                {boardColumnsSetting === 'auto' ? `Auto (${autoColumns})` : `${boardColumnsSetting} Tabs`}
-              </Text>
-              <ChevronDown size={11} color="#FF5C39" />
-            </TouchableOpacity>
-          )}
-
-          <View style={[styles.viewToggleContainer, isMobile && styles.viewToggleContainerMobile]}>
-            <TouchableOpacity
-              style={[styles.toggleBtn, isMobile && styles.toggleBtnMobile, viewMode === 'board' && styles.toggleBtnActive]}
-              onPress={() => setViewMode('board')}
-              activeOpacity={0.7}
-            >
-              <LayoutGrid size={isMobile ? 12 : 13} color={viewMode === 'board' ? '#FFFFFF' : '#687076'} />
-              <Text style={[styles.toggleBtnText, isMobile && styles.toggleBtnTextMobile, viewMode === 'board' && styles.toggleBtnTextActive]}>Board</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.toggleBtn, isMobile && styles.toggleBtnMobile, viewMode === 'tabs' && styles.toggleBtnActive]}
-              onPress={() => setViewMode('tabs')}
-              activeOpacity={0.7}
-            >
-              <List size={isMobile ? 12 : 13} color={viewMode === 'tabs' ? '#FFFFFF' : '#687076'} />
-              <Text style={[styles.toggleBtnText, isMobile && styles.toggleBtnTextMobile, viewMode === 'tabs' && styles.toggleBtnTextActive]}>Tabs</Text>
-            </TouchableOpacity>
-          </View>
-
-
-        </View>
-      </View>
-      )}
-
-      {/* STICKY SEARCH SECTION */}
+      {/* TOP BAR: Home + Search & filters + view toggle (always visible) */}
       <View
         style={[styles.stickySearchWrapper, isHeaderCollapsed && styles.stickySearchWrapperElevated]}
       >
-        {/* Controls */}
         <View style={[styles.controlsRow, isTablet && styles.controlsRowTablet]}>
-        {/* Search + Filter + Channel Row */}
         <View style={[styles.searchAndChannelRow, isTablet && styles.searchAndChannelRowTablet]}>
+          <TouchableOpacity
+            style={styles.homeBtn}
+            onPress={() => router.navigate('/(tabs)')}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Go to Home"
+          >
+            <House size={20} color="#FF5C39" />
+          </TouchableOpacity>
+
           <View style={[styles.searchBox, { flex: 1 }]}>
-            <Search size={14} color={Colors.textSubtle} />
+            <Search size={16} color={Colors.textSubtle} />
             <TextInput
               style={styles.searchInput}
-              placeholder={isMobile ? "Search orders..." : "Search #ORD, customer, item..."}
+              placeholder={isMobile ? 'Search orders…' : 'Search order #, customer, phone or item…'}
               placeholderTextColor={Colors.textSubtle}
               value={searchQuery}
               onChangeText={setSearchQuery}
+              autoCorrect={false}
+              returnKeyType="search"
+              accessibilityLabel="Search orders"
             />
             {searchQuery.length > 0 && (
-              <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                <X size={13} color="#9BA1A6" />
+              <TouchableOpacity
+                onPress={() => setSearchQuery('')}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                accessibilityLabel="Clear search"
+              >
+                <X size={15} color="#9BA1A6" />
               </TouchableOpacity>
             )}
           </View>
 
-          {/* Filter Button */}
-          <TouchableOpacity
-            style={[styles.filterBtn, activeFilterCount > 0 && styles.filterBtnActive]}
-            onPress={() => setFilterModalOpen(true)}
-            activeOpacity={0.8}
-          >
-            <SlidersHorizontal size={13} color={activeFilterCount > 0 ? '#FFFFFF' : '#11181C'} />
-            <Text style={[styles.filterBtnText, activeFilterCount > 0 && styles.filterBtnTextActive]}>
-              Filter
-            </Text>
-            {activeFilterCount > 0 && (
-              <View style={styles.filterBadge}>
-                <Text style={styles.filterBadgeText}>{activeFilterCount}</Text>
-              </View>
-            )}
-          </TouchableOpacity>
+          {/* Filter sits right beside the search bar */}
+          {filterButton}
+        </View>
 
-          {/* Dateframe Selection Dropdown Button (Replaced Channel By) */}
-          <TouchableOpacity
-            style={[styles.dateDropdownBtn, datePreset !== 'today' && styles.dateDropdownBtnActive]}
-            onPress={() => setDateDropdownOpen(true)}
-            activeOpacity={0.8}
-          >
-            <Calendar size={13} color={datePreset === 'today' ? '#687076' : '#FF5C39'} />
-            <Text
-              style={[styles.dateDropdownBtnText, datePreset !== 'today' && { color: '#FF5C39' }]}
-              numberOfLines={1}
+        {/* Second row (all devices): time frame + Board / Tabs toggle — always visible */}
+        <View style={styles.mobileFilterRow}>
+          <View style={styles.flex1}>{dateButton}</View>
+
+          {/* Board / Tabs toggle — icon-only on phones.
+              When Board is active it becomes a dropdown: tap it again to choose tabs per screen. */}
+          <View style={styles.viewToggleContainer}>
+            <TouchableOpacity
+              style={[
+                styles.toggleBtn,
+                isMobile && styles.toggleBtnIconOnly,
+                isMobile && viewMode === 'board' && styles.toggleBtnIconWithChevron,
+                viewMode === 'board' && styles.toggleBtnActive,
+              ]}
+              onPress={() => (viewMode === 'board' ? setBoardColumnsModalOpen(true) : setViewMode('board'))}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel={
+                viewMode === 'board'
+                  ? `Board view, ${boardColumnsSetting === 'auto' ? `auto ${autoColumns}` : boardColumnsSetting} tabs per screen. Tap to change`
+                  : 'Board view'
+              }
+              accessibilityState={{ selected: viewMode === 'board' }}
             >
-              {getDatePresetLabel()}
-            </Text>
-            <ChevronDown size={11} color={datePreset === 'today' ? '#9BA1A6' : '#FF5C39'} />
-          </TouchableOpacity>
+              <LayoutGrid size={15} color={viewMode === 'board' ? '#FFFFFF' : '#687076'} />
+              {!isMobile && (
+                <Text style={[styles.toggleBtnText, viewMode === 'board' && styles.toggleBtnTextActive]}>
+                  {viewMode === 'board'
+                    ? `Board · ${boardColumnsSetting === 'auto' ? `Auto (${autoColumns})` : boardColumnsSetting}`
+                    : 'Board'}
+                </Text>
+              )}
+              {viewMode === 'board' && <ChevronDown size={13} color="#FFFFFF" />}
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.toggleBtn, isMobile && styles.toggleBtnIconOnly, viewMode === 'tabs' && styles.toggleBtnActive]}
+              onPress={() => setViewMode('tabs')}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Tabs view"
+              accessibilityState={{ selected: viewMode === 'tabs' }}
+            >
+              <List size={15} color={viewMode === 'tabs' ? '#FFFFFF' : '#687076'} />
+              {!isMobile && (
+                <Text style={[styles.toggleBtnText, viewMode === 'tabs' && styles.toggleBtnTextActive]}>Tabs</Text>
+              )}
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* Active Filter Chips (if any filter is applied) */}
@@ -1928,7 +2140,7 @@ export default function OrdersScreen() {
                   activeOpacity={0.7}
                 >
                   <Text style={styles.activeFilterChipText}>
-                      Type: {typeFilter === 'takeaway' || typeFilter === 'dine_in' ? 'Dine-In' : typeFilter === 'pickup' ? 'Self Pickup' : typeFilter === 'delivery' ? 'Delivery' : typeFilter}
+                      Type: {typeFilter === 'takeaway' ? 'Takeaway' : typeFilter === 'dine_in' ? 'Dine-In' : typeFilter === 'pickup' ? 'Self Pickup' : typeFilter === 'delivery' ? 'Delivery' : typeFilter}
                   </Text>
                   <X size={11} color="#FF5C39" />
                 </TouchableOpacity>
@@ -2366,8 +2578,9 @@ export default function OrdersScreen() {
                 onPress={() => {
                   setDateDropdownOpen(false);
                   if (dp.value === 'custom') {
-                    setTempDateFrom(customDateFrom || new Date().toISOString().slice(0, 10));
-                    setTempDateTo(customDateTo || new Date().toISOString().slice(0, 10));
+                    setTempDateFrom(customDateFrom || toLocalYMD(new Date()));
+                    setTempDateTo(customDateTo || toLocalYMD(new Date()));
+                    setCustomDateError(null);
                     setCustomDateModalOpen(true);
                   } else {
                     setDatePreset(dp.value);
@@ -2434,6 +2647,12 @@ export default function OrdersScreen() {
                 maxLength={10}
               />
 
+              {customDateError ? (
+                <Text style={styles.customDateError} accessibilityLiveRegion="polite">
+                  {customDateError}
+                </Text>
+              ) : null}
+
               <View style={styles.customDatePresets}>
                 {[
                   { label: 'Last 7 days', days: 7 },
@@ -2446,8 +2665,9 @@ export default function OrdersScreen() {
                     onPress={() => {
                       const to = new Date();
                       const from = new Date(); from.setDate(from.getDate() - (p.days - 1));
-                      setTempDateFrom(from.toISOString().slice(0, 10));
-                      setTempDateTo(to.toISOString().slice(0, 10));
+                      setTempDateFrom(toLocalYMD(from));
+                      setTempDateTo(toLocalYMD(to));
+                      setCustomDateError(null);
                     }}
                     activeOpacity={0.7}
                   >
@@ -2467,8 +2687,19 @@ export default function OrdersScreen() {
                 <TouchableOpacity
                   style={styles.customDateApply}
                   onPress={() => {
-                    setCustomDateFrom(tempDateFrom);
-                    setCustomDateTo(tempDateTo);
+                    const from = parseLocalYMD(tempDateFrom);
+                    const to = parseLocalYMD(tempDateTo);
+                    if (!from || !to) {
+                      setCustomDateError('Enter both dates as YYYY-MM-DD, e.g. 2026-11-07.');
+                      return;
+                    }
+                    if (from > to) {
+                      setCustomDateError('The “From” date must be on or before the “To” date.');
+                      return;
+                    }
+                    setCustomDateError(null);
+                    setCustomDateFrom(tempDateFrom.trim());
+                    setCustomDateTo(tempDateTo.trim());
                     setDatePreset('custom');
                     setCustomDateModalOpen(false);
                   }}
@@ -2482,134 +2713,208 @@ export default function OrdersScreen() {
         </TouchableOpacity>
       </Modal>
 
-      {/* Board Columns / Tabs Per Screen Customization Modal */}
+      {/* Board Layout sheet — choose how many status columns fit on screen */}
       <Modal
         visible={boardColumnsModalOpen}
         transparent
-        animationType="fade"
+        animationType={isTablet ? 'fade' : 'slide'}
+        statusBarTranslucent
         onRequestClose={() => setBoardColumnsModalOpen(false)}
       >
-        <TouchableOpacity
-          style={[styles.dropdownOverlay, isTablet && styles.modalOverlayTablet]}
-          activeOpacity={1}
-          onPress={() => setBoardColumnsModalOpen(false)}
-        >
+        <View style={[styles.boardSheetOverlay, isTablet && styles.boardSheetOverlayTablet]}>
+          <TouchableOpacity
+            style={StyleSheet.absoluteFillObject}
+            activeOpacity={1}
+            onPress={() => setBoardColumnsModalOpen(false)}
+            accessibilityLabel="Close board layout"
+          />
           <View
-            style={[styles.boardModalContainer, isTablet && styles.boardModalContainerTablet]}
-            onStartShouldSetResponder={() => true}
+            style={[
+              styles.boardSheet,
+              isTablet ? styles.boardSheetTablet : { paddingBottom: Math.max(insets.bottom, 12) },
+            ]}
           >
+            {!isTablet && <View style={styles.boardSheetHandle} />}
+
             {/* Header */}
-            <View style={styles.boardModalHeader}>
-              <Text style={styles.boardModalTitle}>Customize Board Tabs</Text>
+            <View style={styles.boardSheetHeader}>
+              <View style={styles.boardSheetHeaderIcon}>
+                <LayoutGrid size={18} color="#FF5C39" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.boardSheetTitle}>Board layout</Text>
+                <Text style={styles.boardSheetSubtitle}>Choose how many status columns fit on screen</Text>
+              </View>
               <TouchableOpacity
                 onPress={() => setBoardColumnsModalOpen(false)}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 style={styles.boardModalCloseBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Close"
               >
                 <X size={16} color="#64748B" />
               </TouchableOpacity>
             </View>
 
-            {/* Current Screen Metrics Box */}
-            <View style={styles.boardMetricsBox}>
-              <View style={styles.boardMetricItem}>
-                <Text style={styles.boardMetricLabel}>Screen Width</Text>
-                <Text style={styles.boardMetricValue}>{Math.round(windowWidth)}px</Text>
-              </View>
-              <View style={styles.boardMetricDivider} />
-              <View style={styles.boardMetricItem}>
-                <Text style={styles.boardMetricLabel}>Tabs on Screen</Text>
-                <Text style={[styles.boardMetricValue, { color: '#FF5C39' }]}>
-                  {boardColumnsSetting === 'auto' ? `${autoColumns} (Auto)` : `${boardColumnsSetting} Tabs`}
-                </Text>
-              </View>
-              <View style={styles.boardMetricDivider} />
-              <View style={styles.boardMetricItem}>
-                <Text style={styles.boardMetricLabel}>Each Tab Width</Text>
-                <Text style={styles.boardMetricValue}>{Math.round(columnWidth)}px</Text>
-              </View>
-            </View>
-
-            {/* Stepper Row */}
-            <View style={styles.boardStepperRow}>
-              <Text style={styles.boardStepperLabel}>Quick Adjust:</Text>
-              <View style={styles.boardStepperGroup}>
-                <TouchableOpacity
-                  style={[styles.stepperBtn, (boardColumnsSetting === 1 || (boardColumnsSetting === 'auto' && autoColumns <= 1)) && styles.stepperBtnDisabled]}
-                  onPress={() => handleStepColumns(-1)}
-                  disabled={boardColumnsSetting === 1}
-                  activeOpacity={0.7}
+            <ScrollView
+              style={styles.boardSheetScroll}
+              contentContainerStyle={styles.boardSheetScrollContent}
+              showsVerticalScrollIndicator={false}
+              bounces={false}
+            >
+              {/* Live preview — true-to-scale miniature of the board on this screen */}
+              <View style={styles.boardPreviewCard}>
+                <View
+                  style={styles.boardPreviewFrame}
+                  onLayout={(e) => setBoardPreviewWidth(Math.round(e.nativeEvent.layout.width))}
                 >
-                  <Minus size={16} color={boardColumnsSetting === 1 ? '#CBD5E1' : '#11181C'} />
-                </TouchableOpacity>
-
-                <View style={styles.stepperValueBox}>
-                  <Text style={styles.stepperValueText}>
-                    {boardColumnsSetting === 'auto' ? `Auto (${autoColumns})` : `${boardColumnsSetting} Tabs`}
-                  </Text>
+                  {boardPreviewWidth > 0 && (
+                    <View style={styles.boardPreviewTrack}>
+                      {STATUS_TABS.filter((c) => c.id !== 'all').map((col) => {
+                        const miniWidth = Math.max(10, (boardPreviewWidth * columnWidth) / windowWidth);
+                        return (
+                          <View key={col.id} style={[styles.boardPreviewCol, { width: miniWidth }]}>
+                            <View style={[styles.boardPreviewColHeader, { backgroundColor: col.accentColor }]} />
+                            <View style={styles.boardPreviewCardStub} />
+                            <View style={[styles.boardPreviewCardStub, { opacity: 0.7 }]} />
+                            {miniWidth > 40 && <View style={[styles.boardPreviewCardStub, { opacity: 0.45 }]} />}
+                          </View>
+                        );
+                      })}
+                    </View>
+                  )}
                 </View>
 
-                <TouchableOpacity
-                  style={[styles.stepperBtn, (boardColumnsSetting === 6 || (boardColumnsSetting === 'auto' && autoColumns >= 6)) && styles.stepperBtnDisabled]}
-                  onPress={() => handleStepColumns(1)}
-                  disabled={boardColumnsSetting === 6}
-                  activeOpacity={0.7}
-                >
-                  <Plus size={16} color={boardColumnsSetting === 6 ? '#CBD5E1' : '#11181C'} />
-                </TouchableOpacity>
+                <View style={styles.boardPreviewMeta}>
+                  <Text style={styles.boardPreviewMetaStrong}>
+                    {Math.min(BOARD_STATUS_COLUMN_COUNT, Math.floor(windowWidth / columnWidth) || 1)} of {BOARD_STATUS_COLUMN_COUNT} columns visible
+                  </Text>
+                  <Text style={styles.boardPreviewMetaMuted}>
+                    {Math.round(columnWidth)}px each
+                    {Math.floor(windowWidth / columnWidth) < BOARD_STATUS_COLUMN_COUNT ? ' · swipe for more' : ''}
+                  </Text>
+                </View>
               </View>
-            </View>
 
-            {/* Presets List */}
-            <ScrollView style={styles.boardPresetsScroll} showsVerticalScrollIndicator={false}>
-              {BOARD_COLUMN_PRESETS.map((preset) => {
-                const isSelected = boardColumnsSetting === preset.value;
+              {/* Auto — recommended */}
+              {(() => {
+                const isSelected = boardColumnsSetting === 'auto';
                 return (
                   <TouchableOpacity
-                    key={String(preset.value)}
-                    style={[styles.boardPresetItem, isSelected && styles.boardPresetItemActive]}
-                    onPress={() => handleSetBoardColumns(preset.value)}
-                    activeOpacity={0.7}
+                    style={[styles.boardAutoTile, isSelected && styles.boardTileActive]}
+                    onPress={() => handleSetBoardColumns('auto')}
+                    activeOpacity={0.75}
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected: isSelected }}
+                    accessibilityLabel={`Auto, currently ${autoColumns} columns on this screen`}
                   >
-                    <Text
-                      style={[
-                        styles.boardPresetTitle,
-                        isSelected && styles.boardPresetTitleActive,
-                      ]}
-                    >
-                      {preset.title}
-                    </Text>
-                    {isSelected && (
-                      <View style={styles.boardPresetCheck}>
-                        <Check size={12} color="#FFFFFF" />
+                    <View style={[styles.boardAutoIcon, isSelected && styles.boardAutoIconActive]}>
+                      <Sparkles size={18} color={isSelected ? '#FFFFFF' : '#FF5C39'} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <View style={styles.boardAutoTitleRow}>
+                        <Text style={[styles.boardTileTitle, isSelected && styles.boardTileTitleActive]}>
+                          {BOARD_AUTO_PRESET.title}
+                        </Text>
+                        <View style={styles.boardRecommendedBadge}>
+                          <Text style={styles.boardRecommendedBadgeText}>Recommended</Text>
+                        </View>
                       </View>
-                    )}
+                      <Text style={styles.boardTileDescription} numberOfLines={1}>
+                        {BOARD_AUTO_PRESET.description} · {autoColumns} here
+                      </Text>
+                    </View>
+                    <View style={[styles.boardRadio, isSelected && styles.boardRadioActive]}>
+                      {isSelected && <Check size={12} color="#FFFFFF" strokeWidth={3} />}
+                    </View>
                   </TouchableOpacity>
                 );
-              })}
+              })()}
+
+              <Text style={styles.boardSectionLabel}>Or pick a fixed layout</Text>
+
+              {/* Fixed presets grid */}
+              <View style={styles.boardTileGrid}>
+                {BOARD_COLUMN_PRESETS.map((preset) => {
+                  const n = preset.value as number;
+                  const isSelected = boardColumnsSetting === preset.value;
+                  const fits = presetFitsScreen(n);
+                  const isBestFit = n === autoColumns;
+                  return (
+                    <TouchableOpacity
+                      key={String(preset.value)}
+                      style={[
+                        styles.boardTile,
+                        { width: isTablet ? '31.6%' : '31%' },
+                        isSelected && styles.boardTileActive,
+                      ]}
+                      onPress={() => handleSetBoardColumns(preset.value)}
+                      activeOpacity={0.75}
+                      accessibilityRole="radio"
+                      accessibilityState={{ selected: isSelected }}
+                      accessibilityLabel={`${n} ${n === 1 ? 'column' : 'columns'}, ${preset.title}. ${preset.description}${fits ? '' : '. Too narrow for this screen, will scroll'}`}
+                    >
+                      {/* Column glyph */}
+                      <View style={styles.boardTileGlyph}>
+                        {Array.from({ length: n }).map((_, i) => (
+                          <View
+                            key={i}
+                            style={[
+                              styles.boardTileGlyphBar,
+                              isSelected && styles.boardTileGlyphBarActive,
+                            ]}
+                          />
+                        ))}
+                      </View>
+
+                      <View style={styles.boardTileTextRow}>
+                        <Text style={[styles.boardTileCount, isSelected && styles.boardTileTitleActive]}>{n}</Text>
+                        <Text style={[styles.boardTileTitle, isSelected && styles.boardTileTitleActive]} numberOfLines={1}>
+                          {preset.title}
+                        </Text>
+                      </View>
+                      <Text
+                        style={[styles.boardTileDescription, !fits && styles.boardTileWarning]}
+                        numberOfLines={1}
+                      >
+                        {fits ? preset.description : 'Narrow · scrolls'}
+                      </Text>
+
+                      {isSelected ? (
+                        <View style={styles.boardTileCheck}>
+                          <Check size={10} color="#FFFFFF" strokeWidth={3} />
+                        </View>
+                      ) : isBestFit ? (
+                        <View style={styles.boardTileBestFitDot} />
+                      ) : null}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
             </ScrollView>
 
             {/* Footer */}
             <View style={styles.boardModalFooter}>
               <TouchableOpacity
-                style={styles.boardModalResetBtn}
+                style={[styles.boardModalResetBtn, boardColumnsSetting === 'auto' && { opacity: 0.5 }]}
                 onPress={() => handleSetBoardColumns('auto')}
+                disabled={boardColumnsSetting === 'auto'}
                 activeOpacity={0.8}
               >
                 <RotateCcw size={13} color="#64748B" />
-                <Text style={styles.boardModalResetBtnText}>Reset to Auto</Text>
+                <Text style={styles.boardModalResetBtnText}>Reset</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.boardModalApplyBtn}
                 onPress={() => setBoardColumnsModalOpen(false)}
-                activeOpacity={0.8}
+                activeOpacity={0.85}
               >
-                <Check size={14} color="#FFFFFF" />
+                <Check size={15} color="#FFFFFF" />
                 <Text style={styles.boardModalApplyBtnText}>Done</Text>
               </TouchableOpacity>
             </View>
           </View>
-        </TouchableOpacity>
+        </View>
       </Modal>
     </View>
 
@@ -2641,60 +2946,6 @@ export default function OrdersScreen() {
               );
             })}
           </ScrollView>
-        </View>
-      )}
-
-      {/* Board View Column / Tab Size Customizer Toolbar (Shown in Board mode) */}
-      {viewMode === 'board' && (
-        <View
-          onLayout={(e) => setToolbarHeight(e.nativeEvent.layout.height)}
-          style={[styles.boardToolbarContainer, isTablet ? styles.boardToolbarContainerTablet : styles.boardToolbarContainerMobile]}
-        >
-          <View style={[styles.boardToolbarLeft, isMobile && { flex: 1, marginRight: 8 }]}>
-            {isTablet && (
-              <View style={styles.boardToolbarLabelRow}>
-                <LayoutGrid size={13} color="#687076" />
-                <Text style={styles.boardToolbarLabel}>Tabs / screen:</Text>
-              </View>
-            )}
-
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={[styles.boardColPillsScroll, isMobile && { paddingRight: 4 }]}>
-              {(['auto', 1, 2, 3, 4, 5, 6] as const).map((count) => {
-                const isSelected = boardColumnsSetting === count;
-                const labelText = count === 'auto'
-                  ? (isTablet ? `Auto (${autoColumns})` : 'Auto')
-                  : (isMobile ? `${count} Tab${count > 1 ? 's' : ''}` : `${count}`);
-                return (
-                  <TouchableOpacity
-                    key={String(count)}
-                    style={[styles.colPill, isMobile && styles.colPillMobile, isSelected && styles.colPillActive]}
-                    onPress={() => handleSetBoardColumns(count)}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={[styles.colPillText, isMobile && styles.colPillTextMobile, isSelected && styles.colPillTextActive]}>
-                      {labelText}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-          </View>
-
-          <TouchableOpacity
-            style={[styles.boardSettingsTrigger, isMobile && styles.boardSettingsTriggerMobile]}
-            onPress={() => setBoardColumnsModalOpen(true)}
-            activeOpacity={0.7}
-          >
-            <SlidersHorizontal size={isMobile ? 11 : 12} color="#FF5C39" />
-            <Text style={[styles.boardSettingsTriggerText, isMobile && { fontSize: 10 }]}>
-              {isTablet ? 'Customize' : 'Adjust'}
-            </Text>
-            <View style={styles.boardSettingsTriggerBadge}>
-              <Text style={styles.boardSettingsTriggerBadgeText}>
-                {Math.round(columnWidth)}px
-              </Text>
-            </View>
-          </TouchableOpacity>
         </View>
       )}
 
@@ -2734,24 +2985,75 @@ export default function OrdersScreen() {
             )}
           </ScrollView>
         ) : activeTabOrders.length === 0 ? (
-          <View style={styles.centerEmpty}>
-            <ShoppingBag size={48} color="#EEEEEE" />
-            <Text style={styles.emptyTitle}>No Orders Found</Text>
-            <Text style={styles.emptySubtitle}>There are no orders for the selected status tab or search query.</Text>
-          </View>
+          <ScrollView
+            contentContainerStyle={[styles.centerEmpty, { flex: undefined, flexGrow: 1, paddingBottom: 120 }]}
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#FF5C39" colors={['#FF5C39']} />}
+          >
+            {(() => {
+              const q = searchQuery.trim();
+              const filtersOn = activeFilterCount > 0 || datePreset !== 'today';
+              const tab = STATUS_TABS.find((t) => t.id === activeTab);
+              const EmptyIcon = q ? Search : tab?.Icon || ShoppingBag;
+              const title = q
+                ? 'No matching orders'
+                : activeTab === 'new'
+                ? 'No new orders'
+                : activeTab === 'kitchen'
+                ? 'Kitchen is clear'
+                : filtersOn
+                ? 'No orders match your filters'
+                : 'No orders yet';
+              const message = q
+                ? `Nothing matches “${q}”. Try an order number, customer name, phone or item.`
+                : activeTab === 'new'
+                ? 'New orders will appear here as soon as they come in.'
+                : filtersOn
+                ? 'Try clearing filters or choosing a wider date range.'
+                : 'Pull down to refresh.';
+              return (
+                <>
+                  <View style={styles.emptyIconCircle}>
+                    <EmptyIcon size={30} color="#9BA1A6" />
+                  </View>
+                  <Text style={styles.emptyTitle}>{title}</Text>
+                  <Text style={styles.emptySubtitle}>{message}</Text>
+                  {(q || filtersOn) && (
+                    <TouchableOpacity
+                      style={styles.emptyClearBtn}
+                      onPress={() => {
+                        setSearchQuery('');
+                        resetAllFilters();
+                        setDatePreset('today');
+                      }}
+                      activeOpacity={0.8}
+                    >
+                      <RotateCcw size={14} color="#11181C" />
+                      <Text style={styles.emptyClearBtnText}>Clear search & filters</Text>
+                    </TouchableOpacity>
+                  )}
+                </>
+              );
+            })()}
+          </ScrollView>
         ) : (
           <FlatList
-            key={isTablet ? 'orders-tab-grid-2col' : 'orders-tab-list-1col'}
+            key={`orders-tab-grid-${tabColumns}`}
             data={activeTabOrders}
+            extraData={updatingIds}
             keyExtractor={(item) => item._id}
-            numColumns={isTablet ? 2 : 1}
-            columnWrapperStyle={isTablet ? styles.ordersColumnWrapper : undefined}
-            contentContainerStyle={[styles.tabOrdersList, isTablet && styles.tabOrdersListTablet]}
+            numColumns={tabColumns}
+            contentContainerStyle={[
+              styles.tabOrdersList,
+              isTablet && styles.tabOrdersListTablet,
+              tabColumns > 1 && { paddingHorizontal: (isTablet ? 24 : 16) - 7 },
+            ]}
             onScroll={handleListScroll}
             scrollEventThrottle={16}
+            keyboardShouldPersistTaps="handled"
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#FF5C39" colors={['#FF5C39']} />}
             renderItem={({ item }) => (
-              <View style={isTablet ? styles.orderGridItemWrapper : undefined}>
+              // Fixed-width cells: a lone card on the last row keeps its column width instead of stretching.
+              <View style={tabColumns > 1 ? { width: `${100 / tabColumns}%`, paddingHorizontal: 7 } : undefined}>
                 <OrderCardItem
                   order={item}
                   onPress={(o) => { setSelectedOrder(o); setDetailModalVisible(true); }}
@@ -2760,6 +3062,7 @@ export default function OrdersScreen() {
                   onPrint={handlePrintOrder}
                   onEditDeliveryTime={handleOpenEditDeliveryTime}
                   paperRollSize={paperRollSize}
+                  isUpdating={updatingIds.has(item._id)}
                 />
               </View>
             )}
@@ -2867,6 +3170,7 @@ export default function OrdersScreen() {
                       { paddingBottom: isTablet ? 95 : 85 },
                     ]}
                     refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={accentColor} colors={[accentColor]} />}
+                    extraData={updatingIds}
                     renderItem={({ item }) => (
                       <OrderCardItem
                         order={item}
@@ -2877,6 +3181,7 @@ export default function OrdersScreen() {
                         onEditDeliveryTime={handleOpenEditDeliveryTime}
                         paperRollSize={paperRollSize}
                         compact={isCompact}
+                        isUpdating={updatingIds.has(item._id)}
                       />
                     )}
                   />
@@ -3345,7 +3650,30 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF', borderBottomWidth: 1, borderBottomColor: '#EEEEEE',
   },
   pageTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  pageTitle: { fontSize: 20, fontWeight: '800', color: '#11181C', letterSpacing: -0.3 },
+  pageTitle: { fontSize: 22, fontWeight: '800', color: '#11181C', letterSpacing: -0.5 },
+  homeBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: '#FFF0EC',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  toggleBtnIconOnly: { paddingHorizontal: 0, width: 36, justifyContent: 'center' },
+  toggleBtnIconWithChevron: { width: 50, gap: 2 },
+  filterBtnIconOnly: { width: 44, paddingHorizontal: 0, justifyContent: 'center', flexShrink: 0 },
+  filterBadgeCorner: {
+    position: 'absolute',
+    top: -6,
+    right: -6,
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+    backgroundColor: '#11181C',
+  },
+  mobileFilterRow: { flexDirection: 'row', gap: 8, marginTop: 6 },
+  flex1: { flex: 1 },
+  topBarBtnMobile: { justifyContent: 'center', minWidth: 0 },
   liveBadge: {
     flexDirection: 'row', alignItems: 'center', backgroundColor: '#ECFDF5',
     borderRadius: 20, paddingHorizontal: 8, paddingVertical: 3, gap: 4,
@@ -3355,13 +3683,14 @@ const styles = StyleSheet.create({
   pageSubtitle: { fontSize: 12, color: '#9BA1A6', marginTop: 2 },
   headerRightControls: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   viewToggleContainer: {
-    flexDirection: 'row', backgroundColor: '#F0F0F0', borderRadius: 8, padding: 3, gap: 2,
+    flexDirection: 'row', backgroundColor: '#F1F3F5', borderRadius: 12, padding: 4, gap: 2,
+    borderWidth: 1, borderColor: '#EEEEEE',
   },
   toggleBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6,
+    flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, minHeight: 34, borderRadius: 9,
   },
   toggleBtnActive: { backgroundColor: '#FF5C39' },
-  toggleBtnText: { fontSize: 12, fontWeight: '700', color: '#687076' },
+  toggleBtnText: { fontSize: 13, fontWeight: '700', color: '#687076' },
   toggleBtnTextActive: { color: '#FFFFFF' },
   refreshBtn: {
     padding: 8, borderRadius: 8, backgroundColor: '#F8F9FA',
@@ -3373,9 +3702,9 @@ const styles = StyleSheet.create({
   },
   searchBox: {
     flexDirection: 'row', alignItems: 'center', backgroundColor: '#F8F9FA',
-    borderRadius: 8, borderWidth: 1, borderColor: '#EEEEEE', paddingHorizontal: 10, gap: 8, height: 38,
+    borderRadius: 12, borderWidth: 1, borderColor: '#EEEEEE', paddingHorizontal: 12, gap: 8, height: 44,
   },
-  searchInput: { flex: 1, fontSize: 13, color: '#11181C', height: 38 },
+  searchInput: { flex: 1, minWidth: 0, fontSize: 14, color: '#11181C', height: 44, paddingVertical: 0 },
   typeFilters: { flexDirection: 'row', gap: 8, alignItems: 'center' },
   typeChip: {
     flexDirection: 'row',
@@ -3406,10 +3735,10 @@ const styles = StyleSheet.create({
   filterBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: 11,
-    paddingVertical: 9,
-    borderRadius: 8,
+    gap: 6,
+    paddingHorizontal: 14,
+    height: 44,
+    borderRadius: 12,
     backgroundColor: '#F8F9FA',
     borderWidth: 1,
     borderColor: '#EEEEEE',
@@ -3420,7 +3749,7 @@ const styles = StyleSheet.create({
     borderColor: '#FF5C39',
   },
   filterBtnText: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '700',
     color: '#11181C',
   },
@@ -3445,10 +3774,10 @@ const styles = StyleSheet.create({
   dateDropdownBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: 10,
-    paddingVertical: 9,
-    borderRadius: 8,
+    gap: 6,
+    paddingHorizontal: 12,
+    height: 44,
+    borderRadius: 12,
     backgroundColor: '#F8F9FA',
     borderWidth: 1,
     borderColor: '#EEEEEE',
@@ -3460,7 +3789,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFF7ED',
   },
   dateDropdownBtnText: {
-    fontSize: 11.5,
+    fontSize: 13,
     fontWeight: '700',
     color: '#687076',
     flex: 1,
@@ -3514,32 +3843,32 @@ const styles = StyleSheet.create({
   activeFilterChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: 9,
-    paddingVertical: 4,
-    borderRadius: 14,
+    gap: 6,
+    paddingHorizontal: 12,
+    height: 32,
+    borderRadius: 16,
     backgroundColor: '#FFF4F2',
     borderWidth: 1,
     borderColor: '#FED7AA',
   },
   activeFilterChipText: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '700',
     color: '#FF5C39',
   },
   clearAllBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 14,
+    gap: 5,
+    paddingHorizontal: 12,
+    height: 32,
+    borderRadius: 16,
     backgroundColor: '#FEF2F2',
     borderWidth: 1,
     borderColor: '#FECACA',
   },
   clearAllBtnText: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '700',
     color: '#EF4444',
   },
@@ -4023,22 +4352,45 @@ const styles = StyleSheet.create({
   },
   statusTabsBar: { flexDirection: 'row', gap: 8, alignItems: 'center' },
   statusTabPill: {
-    flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 7,
-    borderRadius: 20, backgroundColor: '#F8F9FA', borderWidth: 1, borderColor: '#EEEEEE',
+    flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14, height: 38,
+    borderRadius: 19, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E6E8EB',
   },
-  statusTabLabel: { fontSize: 12, fontWeight: '700', color: '#11181C' },
+  statusTabLabel: { fontSize: 13, fontWeight: '700', color: '#11181C' },
   statusTabLabelActive: { color: '#FFFFFF' },
   tabBadge: {
-    borderRadius: 10, paddingHorizontal: 6, paddingVertical: 1, minWidth: 18, alignItems: 'center', justifyContent: 'center',
+    borderRadius: 11, paddingHorizontal: 7, height: 22, minWidth: 22, alignItems: 'center', justifyContent: 'center',
   },
   tabBadgeActive: { backgroundColor: '#FFFFFF' },
-  tabBadgeText: { fontSize: 10, fontWeight: '800', color: '#FFFFFF' },
+  tabBadgeText: { fontSize: 11, fontWeight: '800', color: '#FFFFFF' },
 
-  tabOrdersList: { padding: 16, gap: 12, paddingBottom: 110 },
+  tabOrdersList: { padding: 16, gap: 14, paddingBottom: 110 },
   centerLoader: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingVertical: 60 },
   centerEmpty: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 40, gap: 8 },
-  emptyTitle: { fontSize: 16, fontWeight: '700', color: '#11181C', marginTop: 8 },
-  emptySubtitle: { fontSize: 12, color: '#9BA1A6', textAlign: 'center' },
+  emptyTitle: { fontSize: 18, fontWeight: '800', color: '#11181C', marginTop: 8 },
+  emptySubtitle: { fontSize: 14, color: '#687076', textAlign: 'center', lineHeight: 20, maxWidth: 360 },
+  emptyIconCircle: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#EEEEEE',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emptyClearBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 12,
+    height: 44,
+    paddingHorizontal: 18,
+    borderRadius: 12,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#E6E8EB',
+  },
+  emptyClearBtnText: { fontSize: 14, fontWeight: '700', color: '#11181C' },
 
   kanbanScrollView: {
     flex: 1,
@@ -4077,14 +4429,14 @@ const styles = StyleSheet.create({
 
   kanbanCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 10,
+    borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#F0F0F0',
-    padding: 12,
-    paddingTop: 15,
+    borderColor: '#EEEEEE',
+    padding: 14,
+    paddingTop: 18,
     shadowColor: '#000',
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
+    shadowOpacity: 0.05,
+    shadowRadius: 10,
     shadowOffset: { width: 0, height: 2 },
     elevation: 1,
     position: 'relative',
@@ -4095,46 +4447,44 @@ const styles = StyleSheet.create({
     top: 0,
     left: 0,
     right: 0,
-    height: 4,
-    borderTopLeftRadius: 9,
-    borderTopRightRadius: 9,
+    height: 5,
     zIndex: 1,
   },
   cardTopStatusStripTablet: {
-    height: 5,
-    borderTopLeftRadius: 11,
-    borderTopRightRadius: 11,
+    height: 6,
   },
   kanbanCardTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
   kanbanOrderIdCol: { gap: 2 },
-  kanbanOrderIdRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  kanbanOrderId: { fontSize: 13, fontWeight: '700', color: '#11181C' },
-  kanbanPaymentBelowId: { fontSize: 11, fontWeight: '700', color: '#687076', marginTop: 2 },
-  paidBadge: { backgroundColor: '#ECFDF5', borderRadius: 4, paddingHorizontal: 5, paddingVertical: 2 },
-  paidBadgeText: { fontSize: 9, fontWeight: '800', color: '#065F46', letterSpacing: 0.5 },
-  pendingBadge: { backgroundColor: '#FFFBEB', borderRadius: 4, paddingHorizontal: 5, paddingVertical: 2 },
-  pendingBadgeText: { fontSize: 9, fontWeight: '800', color: '#B45309', letterSpacing: 0.5 },
-  failedBadge: { backgroundColor: '#FEF2F2', borderRadius: 4, paddingHorizontal: 5, paddingVertical: 2 },
-  failedBadgeText: { fontSize: 9, fontWeight: '800', color: '#DC2626', letterSpacing: 0.5 },
-  refundedBadge: { backgroundColor: '#F3E8FF', borderRadius: 4, paddingHorizontal: 5, paddingVertical: 2 },
-  refundedBadgeText: { fontSize: 9, fontWeight: '800', color: '#7C3AED', letterSpacing: 0.5 },
+  kanbanOrderIdRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  kanbanOrderId: { fontSize: 16, fontWeight: '800', color: '#11181C', letterSpacing: -0.2 },
+  kanbanPaymentBelowId: { fontSize: 12, fontWeight: '600', color: '#687076', marginTop: 3 },
+  paidBadge: { backgroundColor: '#ECFDF5', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 },
+  paidBadgeText: { fontSize: 10, fontWeight: '800', color: '#065F46', letterSpacing: 0.4 },
+  pendingBadge: { backgroundColor: '#FFF8E7', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 },
+  pendingBadgeText: { fontSize: 10, fontWeight: '800', color: '#B45309', letterSpacing: 0.4 },
+  failedBadge: { backgroundColor: '#FEF2F2', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 },
+  failedBadgeText: { fontSize: 10, fontWeight: '800', color: '#DC2626', letterSpacing: 0.4 },
+  refundedBadge: { backgroundColor: '#F3E8FF', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 },
+  refundedBadgeText: { fontSize: 10, fontWeight: '800', color: '#7C3AED', letterSpacing: 0.4 },
   kanbanAmountRow: { alignItems: 'flex-end' },
-  kanbanAmount: { fontSize: 15, fontWeight: '800', color: '#11181C' },
-  kanbanItemCount: { fontSize: 11, fontWeight: '600', color: '#687076' },
+  kanbanAmount: { fontSize: 18, fontWeight: '800', color: '#11181C', letterSpacing: -0.3 },
+  kanbanItemCount: { fontSize: 12, fontWeight: '600', color: '#687076' },
 
-  kanbanDivider: { height: 1, backgroundColor: '#F5F5F5', marginVertical: 10 },
-  kanbanCustomerRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
-  kanbanAvatar: { width: 28, height: 28, borderRadius: 14, backgroundColor: '#F0F0F0', alignItems: 'center', justifyContent: 'center' },
-  kanbanAvatarText: { fontSize: 12, fontWeight: '700', color: '#687076' },
-  kanbanCustomerName: { fontSize: 13, fontWeight: '600', color: '#11181C' },
-  kanbanCustomerPhone: { fontSize: 11, color: '#9BA1A6' },
+  kanbanDivider: { height: 1, backgroundColor: '#F0F0F0', marginVertical: 12 },
+  kanbanCustomerRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10 },
+  kanbanAvatar: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#FFF0EC', alignItems: 'center', justifyContent: 'center' },
+  kanbanAvatarText: { fontSize: 14, fontWeight: '800', color: '#FF5C39' },
+  kanbanCustomerName: { fontSize: 15, fontWeight: '700', color: '#11181C' },
+  kanbanCustomerPhone: { fontSize: 12, color: '#687076', marginTop: 1 },
   kanbanAddressRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    paddingHorizontal: 0,
-    paddingVertical: 2,
-    marginBottom: 8,
-    gap: 7,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginBottom: 10,
+    gap: 8,
+    borderRadius: 10,
+    backgroundColor: '#F8FAFF',
   },
   addressPinIcon: {
     marginTop: 2,
@@ -4142,18 +4492,18 @@ const styles = StyleSheet.create({
   kanbanAddressHeader: {
     fontSize: 10,
     fontWeight: '800',
-    color: '#1E40AF',
+    color: '#64748B',
     textTransform: 'uppercase',
-    letterSpacing: 0.3,
-    marginBottom: 1,
+    letterSpacing: 0.5,
+    marginBottom: 2,
   },
   kanbanAddressText: {
-    fontSize: 11.5,
-    color: '#1E3A8A',
-    fontWeight: '600',
-    lineHeight: 16,
+    fontSize: 13,
+    color: '#1E293B',
+    fontWeight: '500',
+    lineHeight: 18,
   },
-  kanbanTypeRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginBottom: 8 },
+  kanbanTypeRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginBottom: 10 },
   scheduledTag: {
     flexDirection: 'row', alignItems: 'center', gap: 4,
     backgroundColor: '#FEF3C7', borderRadius: 6,
@@ -4200,66 +4550,81 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: '#FDE68A',
   },
   takeawayTagText: { fontSize: 11, fontWeight: '700', color: '#B45309' },
-  riderBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#F8F9FA', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 3, borderWidth: 1, borderColor: '#EEEEEE' },
-  riderText: { fontSize: 10, color: '#687076' },
+  riderBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#F8F9FA', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, borderWidth: 1, borderColor: '#EEEEEE' },
+  riderText: { fontSize: 11, fontWeight: '600', color: '#687076' },
   kanbanFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   kanbanDateRow: { flexDirection: 'row', alignItems: 'center', gap: 4, flexShrink: 0 },
-  kanbanDate: { fontSize: 10, color: '#9BA1A6' },
-  orderTypeBadge: { borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2, borderWidth: 1 },
-  orderTypeText: { fontSize: 9, fontWeight: '800', letterSpacing: 0.5 },
-  viewItemsBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, marginTop: 10, paddingTop: 8, borderTopWidth: 1, borderTopColor: '#F5F5F5' },
-  viewItemsBtnText: { fontSize: 10, fontWeight: '700', color: '#9BA1A6', letterSpacing: 0.3 },
-  itemsList: { marginTop: 8, gap: 4 },
-  itemRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  itemQty: { fontSize: 11, fontWeight: '700', color: '#9BA1A6', width: 22 },
-  itemName: { flex: 1, fontSize: 11, color: '#11181C' },
-  itemPrice: { fontSize: 11, fontWeight: '600', color: '#687076' },
-  noteRow: { flexDirection: 'row', marginTop: 4, paddingTop: 4, borderTopWidth: 1, borderTopColor: '#F5F5F5' },
-  noteLabel: { fontSize: 11, fontWeight: '700', color: '#9BA1A6' },
-  noteText: { fontSize: 11, color: '#687076', flex: 1 },
-  actionButtonsRow: { flexDirection: 'row', gap: 8, marginTop: 10, flexWrap: 'wrap' },
-  acceptBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, backgroundColor: '#10B981', borderRadius: 8, paddingVertical: 8 },
-  acceptBtnText: { color: '#FFFFFF', fontSize: 12, fontWeight: '700' },
-  rejectBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, backgroundColor: '#FEF2F2', borderWidth: 1, borderColor: '#EF4444', borderRadius: 8, paddingVertical: 8 },
-  rejectBtnText: { color: '#EF4444', fontSize: 12, fontWeight: '700' },
-  outForDeliveryBtn: { flex: 1.3, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, backgroundColor: '#8B5CF6', borderRadius: 8, paddingVertical: 8 },
-  outForDeliveryBtnText: { color: '#FFFFFF', fontSize: 12, fontWeight: '700' },
-  assignDriverIconBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, backgroundColor: '#FF5C39', borderRadius: 8, paddingVertical: 8 },
-  assignDriverText: { color: '#FFFFFF', fontSize: 12, fontWeight: '700' },
-  printIconBtn: {
-    width: 36,
-    height: 34,
-    backgroundColor: '#F8FAFC',
-    borderRadius: 8,
+  kanbanDate: { fontSize: 11, fontWeight: '500', color: '#9BA1A6' },
+  orderTypeBadge: { borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2, borderWidth: 1 },
+  orderTypeText: { fontSize: 10, fontWeight: '800', letterSpacing: 0.4 },
+  viewItemsBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 4, paddingVertical: 10, borderTopWidth: 1, borderTopColor: '#F0F0F0' },
+  viewItemsBtnText: { fontSize: 11, fontWeight: '800', color: '#687076', letterSpacing: 0.4 },
+  itemsList: { marginTop: 2, marginBottom: 4, gap: 8, padding: 12, borderRadius: 12, backgroundColor: '#F8F9FA' },
+  itemRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
+  itemQty: { fontSize: 13, fontWeight: '800', color: '#FF5C39', width: 26 },
+  itemName: { flex: 1, fontSize: 13, fontWeight: '600', color: '#11181C' },
+  itemPrice: { fontSize: 13, fontWeight: '700', color: '#11181C' },
+  noteRow: { flexDirection: 'row', marginTop: 2, paddingTop: 8, borderTopWidth: 1, borderTopColor: '#EEEEEE' },
+  noteLabel: { fontSize: 12, fontWeight: '800', color: '#B45309' },
+  noteText: { fontSize: 12, color: '#11181C', flex: 1, lineHeight: 17 },
+  actionButtonsRow: { flexDirection: 'row', gap: 8, marginTop: 12, flexWrap: 'wrap' },
+  actionsUpdating: { opacity: 0.25 },
+  updatingOverlay: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 12,
+    bottom: 0,
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
+    gap: 8,
+  },
+  updatingText: { fontSize: 13, fontWeight: '800', color: '#11181C' },
+  customDateError: { fontSize: 12, fontWeight: '600', color: '#EF4444', marginTop: 10, lineHeight: 16 },
+  acceptBtn: { flex: 1, minHeight: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: '#1B942F', borderRadius: 12, paddingVertical: 11, paddingHorizontal: 10 },
+  acceptBtnText: { color: '#FFFFFF', fontSize: 14, fontWeight: '800' },
+  rejectBtn: { flex: 1, minHeight: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: '#FFFFFF', borderWidth: 1.5, borderColor: '#FECACA', borderRadius: 12, paddingVertical: 11 },
+  rejectBtnText: { color: '#EF4444', fontSize: 14, fontWeight: '800' },
+  outForDeliveryBtn: { flex: 1.3, minHeight: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: '#7C3AED', borderRadius: 12, paddingVertical: 11, paddingHorizontal: 10 },
+  outForDeliveryBtnText: { color: '#FFFFFF', fontSize: 14, fontWeight: '800' },
+  assignDriverIconBtn: { flex: 1, minHeight: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: '#FF5C39', borderRadius: 12, paddingVertical: 11, paddingHorizontal: 10 },
+  assignDriverText: { color: '#FFFFFF', fontSize: 14, fontWeight: '800' },
+  printIconBtn: {
+    width: 44,
+    height: 44,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
     borderColor: '#E2E8F0',
   },
   printFullBtn: {
     flex: 1,
+    minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
-    backgroundColor: '#F8FAFC',
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    borderRadius: 8,
-    paddingVertical: 8,
+    gap: 8,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    paddingVertical: 11,
   },
   printFullBtnText: {
     color: '#0F172A',
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '700',
   },
   itemMeta: {
-    fontSize: 10,
-    color: '#94A3B8',
-    marginTop: 1,
+    fontSize: 12,
+    color: '#687076',
+    marginTop: 2,
   },
 
-  /* Watermark Stamp Styles */
+  /* Watermark Stamp Styles — kept subtle so the card stays readable */
   stampOverlay: {
     position: 'absolute',
     top: 0,
@@ -4269,6 +4634,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 10,
+    opacity: 0.45,
   },
   stampBox: {
     flexDirection: 'row',
@@ -4340,104 +4706,108 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   kanbanCardTablet: {
-    padding: 16,
-    paddingTop: 19,
-    borderRadius: 12,
-    borderWidth: 1.5,
+    padding: 18,
+    paddingTop: 22,
+    borderRadius: 18,
   },
   kanbanOrderIdTablet: {
-    fontSize: 15,
+    fontSize: 18,
   },
   kanbanPaymentBelowIdTablet: {
-    fontSize: 12,
-  },
-  kanbanAmountTablet: {
-    fontSize: 17,
-  },
-  kanbanItemCountTablet: {
-    fontSize: 11,
-  },
-  kanbanRestaurantTablet: {
-    fontSize: 12.5,
-  },
-  kanbanCustomerRowTablet: {
-    marginBottom: 8,
-    gap: 10,
-  },
-  kanbanAvatarTablet: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-  },
-  kanbanAvatarTextTablet: {
     fontSize: 13,
   },
+  kanbanAmountTablet: {
+    fontSize: 21,
+  },
+  kanbanItemCountTablet: {
+    fontSize: 13,
+  },
+  kanbanRestaurantTablet: {
+    fontSize: 14,
+  },
+  kanbanCustomerRowTablet: {
+    marginBottom: 12,
+    gap: 12,
+  },
+  kanbanAvatarTablet: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+  },
+  kanbanAvatarTextTablet: {
+    fontSize: 16,
+  },
   kanbanCustomerNameTablet: {
-    fontSize: 14.5,
+    fontSize: 16,
   },
   kanbanCustomerPhoneTablet: {
-    fontSize: 12,
+    fontSize: 13,
   },
   kanbanAddressRowTablet: {
-    paddingHorizontal: 0,
-    paddingVertical: 3,
-    marginBottom: 10,
-    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 12,
+    gap: 10,
   },
   kanbanAddressHeaderTablet: {
     fontSize: 11,
   },
   kanbanAddressTextTablet: {
-    fontSize: 12.5,
-    lineHeight: 18,
+    fontSize: 14,
+    lineHeight: 20,
   },
   kanbanTypeRowTablet: {
-    marginBottom: 10,
+    marginBottom: 12,
     gap: 8,
   },
   actionButtonsRowTablet: {
     gap: 10,
-    marginTop: 12,
+    marginTop: 14,
   },
   acceptBtnTablet: {
-    paddingVertical: 10,
-    borderRadius: 9,
+    minHeight: 50,
+    paddingVertical: 13,
+    borderRadius: 14,
   },
   acceptBtnTextTablet: {
-    fontSize: 13,
+    fontSize: 15,
   },
   rejectBtnTablet: {
-    paddingVertical: 10,
-    borderRadius: 9,
+    minHeight: 50,
+    paddingVertical: 13,
+    borderRadius: 14,
   },
   rejectBtnTextTablet: {
-    fontSize: 13,
+    fontSize: 15,
   },
   outForDeliveryBtnTablet: {
-    paddingVertical: 10,
-    borderRadius: 9,
+    minHeight: 50,
+    paddingVertical: 13,
+    borderRadius: 14,
   },
   outForDeliveryBtnTextTablet: {
-    fontSize: 13,
+    fontSize: 15,
   },
   assignDriverIconBtnTablet: {
-    paddingVertical: 10,
-    borderRadius: 9,
+    minHeight: 50,
+    paddingVertical: 13,
+    borderRadius: 14,
   },
   assignDriverTextTablet: {
-    fontSize: 13,
+    fontSize: 15,
   },
   printFullBtnTablet: {
-    paddingVertical: 10,
-    borderRadius: 9,
+    minHeight: 50,
+    paddingVertical: 13,
+    borderRadius: 14,
   },
   printFullBtnTextTablet: {
-    fontSize: 13,
+    fontSize: 15,
   },
   printIconBtnTablet: {
-    width: 42,
-    height: 40,
-    borderRadius: 9,
+    width: 50,
+    height: 50,
+    borderRadius: 14,
   },
   tabOrdersListTablet: {
     maxWidth: 1300,
@@ -4687,37 +5057,71 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#EA580C',
   },
-  boardModalContainer: {
+  /* Board Layout sheet */
+  boardSheetOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.45)',
+    justifyContent: 'flex-end',
+  },
+  boardSheetOverlayTablet: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  boardSheet: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    width: '92%',
-    maxWidth: 520,
-    maxHeight: '88%',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    maxHeight: '90%',
+    width: '100%',
     overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.15,
-    shadowRadius: 16,
-    elevation: 12,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: -6 },
+    shadowOpacity: 0.12,
+    shadowRadius: 18,
+    elevation: 16,
   },
-  boardModalContainerTablet: {
-    width: 520,
+  boardSheetTablet: {
+    width: 560,
+    maxWidth: '100%',
+    maxHeight: '86%',
+    borderRadius: 24,
+    shadowOffset: { width: 0, height: 10 },
   },
-  boardModalHeader: {
+  boardSheetHandle: {
+    alignSelf: 'center',
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#E2E8F0',
+    marginTop: 10,
+  },
+  boardSheetHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    gap: 12,
     paddingHorizontal: 20,
-    paddingTop: 18,
+    paddingTop: 14,
     paddingBottom: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
   },
-  boardModalTitle: {
-    fontSize: 16,
+  boardSheetHeaderIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: '#FFF0EC',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  boardSheetTitle: {
+    fontSize: 17,
     fontWeight: '800',
     color: '#11181C',
     letterSpacing: -0.2,
+  },
+  boardSheetSubtitle: {
+    fontSize: 12.5,
+    color: '#687076',
+    marginTop: 2,
   },
   boardModalCloseBtn: {
     width: 32,
@@ -4727,125 +5131,217 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  boardMetricsBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-around',
+  boardSheetScroll: {
+    flexGrow: 0,
+  },
+  boardSheetScrollContent: {
+    paddingHorizontal: 20,
+    paddingBottom: 8,
+  },
+
+  // Live preview
+  boardPreviewCard: {
     backgroundColor: '#F8FAFC',
-    marginHorizontal: 20,
-    marginTop: 14,
-    paddingVertical: 12,
-    borderRadius: 12,
+    borderRadius: 16,
     borderWidth: 1,
+    borderColor: '#EEF2F6',
+    padding: 12,
+  },
+  boardPreviewFrame: {
+    height: 92,
+    borderRadius: 10,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
     borderColor: '#E2E8F0',
+    overflow: 'hidden',
   },
-  boardMetricItem: {
-    alignItems: 'center',
+  boardPreviewTrack: {
+    flexDirection: 'row',
+    height: '100%',
   },
-  boardMetricLabel: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: '#64748B',
-    textTransform: 'uppercase',
-    letterSpacing: 0.3,
+  boardPreviewCol: {
+    height: '100%',
+    paddingHorizontal: 3,
+    paddingTop: 4,
+    gap: 4,
+    borderRightWidth: 1,
+    borderRightColor: '#F1F5F9',
   },
-  boardMetricValue: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: '#11181C',
-    marginTop: 2,
+  boardPreviewColHeader: {
+    height: 6,
+    borderRadius: 3,
   },
-  boardMetricDivider: {
-    width: 1,
-    height: 28,
-    backgroundColor: '#CBD5E1',
+  boardPreviewCardStub: {
+    height: 16,
+    borderRadius: 4,
+    backgroundColor: '#EEF2F6',
   },
-  boardStepperRow: {
+  boardPreviewMeta: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginHorizontal: 20,
-    marginTop: 14,
-    paddingBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
+    flexWrap: 'wrap',
+    gap: 4,
+    marginTop: 10,
   },
-  boardStepperLabel: {
+  boardPreviewMetaStrong: {
     fontSize: 13,
     fontWeight: '700',
     color: '#11181C',
   },
-  boardStepperGroup: {
+  boardPreviewMetaMuted: {
+    fontSize: 12,
+    color: '#687076',
+  },
+
+  // Auto tile
+  boardAutoTile: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginTop: 14,
+    padding: 14,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: '#E6E8EB',
+    backgroundColor: '#FFFFFF',
+  },
+  boardAutoIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: '#FFF0EC',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  boardAutoIconActive: {
+    backgroundColor: '#FF5C39',
+  },
+  boardAutoTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
   },
-  stepperBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: '#F1F5F9',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
+  boardRecommendedBadge: {
+    backgroundColor: '#ECFDF5',
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
   },
-  stepperBtnDisabled: {
-    opacity: 0.4,
-  },
-  stepperValueBox: {
-    minWidth: 95,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1.5,
-    borderColor: '#FF5C39',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 10,
-  },
-  stepperValueText: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#FF5C39',
-  },
-  boardPresetsScroll: {
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    maxHeight: 280,
-  },
-  boardPresetItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 10,
-    borderWidth: 1.5,
-    borderColor: '#E2E8F0',
-    marginBottom: 8,
-    backgroundColor: '#FAFAFA',
-  },
-  boardPresetItemActive: {
-    borderColor: '#FF5C39',
-    backgroundColor: '#FFF4F2',
-  },
-  boardPresetTitle: {
-    fontSize: 14,
+  boardRecommendedBadgeText: {
+    fontSize: 10,
     fontWeight: '700',
-    color: '#11181C',
+    color: '#047857',
+    letterSpacing: 0.2,
   },
-  boardPresetTitleActive: {
-    color: '#FF5C39',
-    fontWeight: '800',
-  },
-  boardPresetCheck: {
+  boardRadio: {
     width: 22,
     height: 22,
     borderRadius: 11,
-    backgroundColor: '#FF5C39',
+    borderWidth: 2,
+    borderColor: '#CBD5E1',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  boardRadioActive: {
+    backgroundColor: '#FF5C39',
+    borderColor: '#FF5C39',
+  },
+
+  boardSectionLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#9BA1A6',
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    marginTop: 18,
+    marginBottom: 10,
+  },
+
+  // Fixed preset tiles
+  boardTileGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    rowGap: 10,
+  },
+  boardTile: {
+    minHeight: 104,
+    padding: 10,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: '#E6E8EB',
+    backgroundColor: '#FFFFFF',
+  },
+  boardTileActive: {
+    borderColor: '#FF5C39',
+    backgroundColor: '#FFF6F3',
+  },
+  boardTileGlyph: {
+    flexDirection: 'row',
+    gap: 2,
+    height: 26,
+    padding: 3,
+    borderRadius: 6,
+    backgroundColor: '#F1F5F9',
+    marginBottom: 8,
+  },
+  boardTileGlyphBar: {
+    flex: 1,
+    borderRadius: 2,
+    backgroundColor: '#CBD5E1',
+  },
+  boardTileGlyphBarActive: {
+    backgroundColor: '#FF5C39',
+  },
+  boardTileTextRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 5,
+  },
+  boardTileCount: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#11181C',
+  },
+  boardTileTitle: {
+    flexShrink: 1,
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#11181C',
+  },
+  boardTileTitleActive: {
+    color: '#FF5C39',
+  },
+  boardTileDescription: {
+    fontSize: 11,
+    color: '#687076',
+    marginTop: 2,
+  },
+  boardTileWarning: {
+    color: '#B45309',
+  },
+  boardTileCheck: {
+    position: 'absolute',
+    top: -6,
+    right: -6,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#FF5C39',
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  boardTileBestFitDot: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: '#10B981',
   },
   boardModalFooter: {
     flexDirection: 'row',

@@ -18,6 +18,7 @@ import { Header } from '../../components/Header';
 import { StatCard } from '../../components/StatCard';
 import { StatusBadge } from '../../components/StatusBadge';
 import { RestaurantAnalytics } from '../../components/RestaurantAnalytics';
+import { SuperAdminDashboard } from '../../components/admin/SuperAdminDashboard';
 import { CreateOrderModal } from '../../components/CreateOrderModal';
 import { ErrorState } from '../../components/ErrorState';
 import { ApiErrorType } from '../../services/api';
@@ -27,7 +28,7 @@ import { orderService } from '../../services/order.service';
 import { userService } from '../../services/user.service';
 import { restaurantOwnerService } from '../../services/restaurant-owner.service';
 import { Restaurant, Order } from '../../types';
-import { printThermalReceipt, isAutoPrintEnabled } from '../../services/thermal-print.service';
+import { printThermalReceipt } from '../../services/thermal-print.service';
 import {
   Store,
   Clock,
@@ -217,7 +218,7 @@ export default function DashboardScreen() {
   } | null>(null);
 
   const [createOrderModalVisible, setCreateOrderModalVisible] = useState(false);
-  const [createOrderInitialChannel, setCreateOrderInitialChannel] = useState<'dine_in' | 'takeaway' | 'delivery'>('dine_in');
+  const [createOrderInitialChannel, setCreateOrderInitialChannel] = useState<'dine_in' | 'takeaway'>('dine_in');
 
   const [updatingOrderId, setUpdatingOrderId] = useState<string | null>(null);
   const [statusPickerOrder, setStatusPickerOrder] = useState<Order | null>(null);
@@ -236,26 +237,7 @@ export default function DashboardScreen() {
       current.map((o) => (o._id === order._id ? { ...o, status: newStatus as any } : o))
     );
 
-    // 2. Auto-print receipt if moving to preparing/confirmed
-    if (newStatus === 'preparing' || newStatus === 'confirmed') {
-      (async () => {
-        try {
-          const autoPrint = await isAutoPrintEnabled();
-          if (autoPrint) {
-            let orderToPrint: any = order;
-            if (!orderToPrint?.orderedItems?.length && !(orderToPrint as any)?.items?.length) {
-              const fullOrderRes = await orderService.getOrderById(order._id);
-              if (fullOrderRes.success && fullOrderRes.data) orderToPrint = fullOrderRes.data;
-            }
-            if (orderToPrint) await printThermalReceipt(orderToPrint, false);
-          }
-        } catch (printErr) {
-          console.error('[Dashboard] Auto-print failed:', printErr);
-        }
-      })();
-    }
-
-    // 3. Update server
+    // 2. Update server
     try {
       const res = await orderService.updateOrderStatus(order._id, newStatus);
       if (res.success) {
@@ -263,6 +245,21 @@ export default function DashboardScreen() {
           setOrders((current) =>
             current.map((o) => (o._id === order._id ? { ...o, ...res.data } : o))
           );
+        }
+        // 2. Auto-print only AFTER the server accepted the change (in the background)
+        if (newStatus === 'preparing' || newStatus === 'confirmed') {
+          (async () => {
+            try {
+              let orderToPrint: any = res.data ? { ...order, ...res.data } : order;
+              if (!orderToPrint?.orderedItems?.length && !orderToPrint?.items?.length) {
+                const fullOrderRes = await orderService.getOrderById(order._id);
+                if (fullOrderRes.success && fullOrderRes.data) orderToPrint = fullOrderRes.data;
+              }
+              if (orderToPrint) await printThermalReceipt(orderToPrint, false, undefined, undefined, 'accepted');
+            } catch (printErr) {
+              console.error('[Dashboard] Auto-print failed:', printErr);
+            }
+          })();
         }
       } else {
         setOrders(prevOrders);
@@ -413,6 +410,7 @@ export default function DashboardScreen() {
       });
     } finally {
       setRefreshing(false);
+      setLastUpdated(new Date());
     }
   };
 
@@ -434,21 +432,9 @@ export default function DashboardScreen() {
     return () => sub.remove();
   }, [isSuperAdmin]);
 
-  // Compute stats
-  const pendingApprovals = restaurants.filter((r) => r.verificationStatus === 'pending').length;
-  const activeRestaurants = restaurants.filter((r) => r.isActive).length;
-  const totalRevenue = orders
-    .filter((o) => o.status === 'delivered')
-    .reduce((sum, o) => {
-      const amt = o.pricing?.totalAmount ?? o.pricing?.total ?? o.totalAmount ?? o.totalPrice ?? 0;
-      return sum + amt;
-    }, 0);
-  const activeOrdersCount = orders.filter(
-    (o) => o.status !== 'delivered' && o.status !== 'cancelled'
-  ).length;
-
   // Super Admin Timeframe State & Filtered Metrics
-  const [superTimeframe, setSuperTimeframe] = useState<'today' | '7d' | '30d' | 'all' | 'custom'>('today');
+  const [superTimeframe, setSuperTimeframe] = useState<'today' | 'yesterday' | '7d' | '30d' | 'month' | 'all' | 'custom'>('today');
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [customStartDate, setCustomStartDate] = useState<Date>(() => {
     const d = new Date();
     d.setHours(0, 0, 0, 0);
@@ -463,119 +449,6 @@ export default function DashboardScreen() {
   const [pickerStartDate, setPickerStartDate] = useState<Date>(customStartDate);
   const [pickerEndDate, setPickerEndDate] = useState<Date | null>(customEndDate);
   const [calendarMonth, setCalendarMonth] = useState<Date>(new Date());
-
-  const filteredSuperOrders = useMemo(() => {
-    if (superTimeframe === 'all') return orders;
-    const now = new Date();
-    let startCutoff = 0;
-    let endCutoff = Infinity;
-
-    if (superTimeframe === 'today') {
-      startCutoff = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0).getTime();
-      endCutoff = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999).getTime();
-    } else if (superTimeframe === '7d') {
-      startCutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
-    } else if (superTimeframe === '30d') {
-      startCutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
-    } else if (superTimeframe === 'custom') {
-      const s = new Date(customStartDate);
-      s.setHours(0, 0, 0, 0);
-      startCutoff = s.getTime();
-
-      const e = new Date(customEndDate);
-      e.setHours(23, 59, 59, 999);
-      endCutoff = e.getTime();
-    }
-
-    return orders.filter((o) => {
-      const d = new Date(o.createdAt).getTime();
-      return !isNaN(d) && d >= startCutoff && d <= endCutoff;
-    });
-  }, [orders, superTimeframe, customStartDate, customEndDate]);
-
-  const superGmv = useMemo(() => {
-    return filteredSuperOrders
-      .filter((o) => o.status !== 'cancelled')
-      .reduce((sum, o) => {
-        const amt = o.pricing?.totalAmount ?? o.pricing?.total ?? o.totalAmount ?? o.totalPrice ?? 0;
-        return sum + amt;
-      }, 0);
-  }, [filteredSuperOrders]);
-
-  const superCommission = useMemo(() => {
-    return superGmv * 0.12;
-  }, [superGmv]);
-
-  const superOrdersCount = filteredSuperOrders.length;
-
-  const livePreparingCount = useMemo(() => {
-    return orders.filter((o) => o.status === 'preparing' || o.status === 'confirmed').length;
-  }, [orders]);
-
-  const liveInTransitCount = useMemo(() => {
-    return orders.filter((o) => o.status === 'out_for_delivery' || o.status === 'ready_for_pickup').length;
-  }, [orders]);
-
-  const liveDeliveredTodayCount = useMemo(() => {
-    const now = new Date();
-    return orders.filter((o) => {
-      if (o.status !== 'delivered') return false;
-      const d = new Date(o.updatedAt || o.createdAt);
-      return (
-        d.getDate() === now.getDate() &&
-        d.getMonth() === now.getMonth() &&
-        d.getFullYear() === now.getFullYear()
-      );
-    }).length;
-  }, [orders]);
-
-  const topRestaurants = useMemo(() => {
-    const map = new Map<string, { id: string; name: string; orders: number; gmv: number }>();
-    filteredSuperOrders.forEach((o) => {
-      if (o.status === 'cancelled') return;
-      const restId =
-        (o as any).restaurantId?._id ||
-        (o as any).restaurantId ||
-        (o.restaurant as any)?._id ||
-        (o.restaurant as any)?.id ||
-        'unknown';
-      const restName =
-        (o as any).restaurantId?.restaurantName ||
-        (o as any).restaurantId?.name ||
-        (o.restaurant as any)?.name ||
-        (o as any).restaurantName ||
-        'Restaurant';
-      const amt = o.pricing?.totalAmount ?? o.pricing?.total ?? o.totalAmount ?? o.totalPrice ?? 0;
-      const cur = map.get(restId) || { id: restId, name: restName, orders: 0, gmv: 0 };
-      cur.orders += 1;
-      cur.gmv += amt;
-      map.set(restId, cur);
-    });
-    return Array.from(map.values())
-      .sort((a, b) => b.gmv - a.gmv)
-      .slice(0, 4);
-  }, [filteredSuperOrders]);
-
-  // Selected range label helper
-  const selectedRangeLabel = useMemo(() => {
-    switch (superTimeframe) {
-      case 'today':
-        return 'Today';
-      case '7d':
-        return '7 Days';
-      case '30d':
-        return '30 Days';
-      case 'all':
-        return 'All Time';
-      case 'custom': {
-        const startStr = customStartDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
-        const endStr = customEndDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
-        return `${startStr} - ${endStr}`;
-      }
-      default:
-        return 'Selected Range';
-    }
-  }, [superTimeframe, customStartDate, customEndDate]);
 
   // Selected restaurant for individual performance analytics
   const activeAnalyticsRestaurant = useMemo(() => {
@@ -729,102 +602,6 @@ export default function DashboardScreen() {
     setDateRangeModalVisible(false);
   };
 
-  // Comprehensive table data for ALL restaurants across the selected range
-  const restaurantTableData = useMemo(() => {
-    const map = new Map<
-      string,
-      {
-        id: string;
-        name: string;
-        isActive?: boolean;
-        totalOrders: number;
-        deliveredOrders: number;
-        totalIncome: number;
-      }
-    >();
-
-    // 1. Initialize with all registered restaurants
-    restaurants.forEach((r) => {
-      const id = r._id || (r as any).id;
-      const name = r.restaurantName || (r as any).name || 'Unnamed Store';
-      map.set(id, {
-        id,
-        name,
-        isActive: r.isActive,
-        totalOrders: 0,
-        deliveredOrders: 0,
-        totalIncome: 0,
-      });
-    });
-
-    // 2. Tally metrics from filteredSuperOrders (the active selected range)
-    filteredSuperOrders.forEach((o) => {
-      const restId =
-        (o as any).restaurantId?._id ||
-        (o as any).restaurantId ||
-        (o.restaurant as any)?._id ||
-        (o.restaurant as any)?.id ||
-        'unknown';
-      const restName =
-        (o as any).restaurantId?.restaurantName ||
-        (o as any).restaurantId?.name ||
-        (o.restaurant as any)?.name ||
-        (o as any).restaurantName ||
-        'Restaurant';
-
-      let row = map.get(restId);
-      if (!row) {
-        row = {
-          id: restId,
-          name: restName,
-          isActive: true,
-          totalOrders: 0,
-          deliveredOrders: 0,
-          totalIncome: 0,
-        };
-        map.set(restId, row);
-      }
-
-      row.totalOrders += 1;
-      if (o.status === 'delivered') {
-        row.deliveredOrders += 1;
-        const amt =
-          o.pricing?.totalAmount ??
-          o.pricing?.total ??
-          o.totalAmount ??
-          o.totalPrice ??
-          0;
-        row.totalIncome += amt;
-      }
-    });
-
-    return Array.from(map.values()).sort((a, b) => {
-      if (b.totalIncome !== a.totalIncome) return b.totalIncome - a.totalIncome;
-      if (b.totalOrders !== a.totalOrders) return b.totalOrders - a.totalOrders;
-      return a.name.localeCompare(b.name);
-    });
-  }, [restaurants, filteredSuperOrders]);
-
-  const tableTotals = useMemo(() => {
-    return restaurantTableData.reduce(
-      (acc, r) => {
-        acc.totalOrders += r.totalOrders;
-        acc.deliveredOrders += r.deliveredOrders;
-        acc.totalIncome += r.totalIncome;
-        return acc;
-      },
-      { totalOrders: 0, deliveredOrders: 0, totalIncome: 0 }
-    );
-  }, [restaurantTableData]);
-
-  const tabletHorizontalPadding = 56;
-  const tabletContentWidth = Math.min(windowWidth - tabletHorizontalPadding, 1200 - tabletHorizontalPadding);
-  const superCardWidth = isTablet
-    ? Math.floor((tabletContentWidth - 3 * 12) / 4)
-    : Math.floor((windowWidth - 32 - (isSmallScreen ? 8 : 10)) / 2);
-  const superIllustrationSize = isSmallScreen ? 44 : isTablet ? 58 : 52;
-  const superGlowSize = isSmallScreen ? 60 : isTablet ? 78 : 72;
-
   return (
     <View style={styles.container}>
       <Header
@@ -860,556 +637,32 @@ export default function DashboardScreen() {
 
 
         {isSuperAdmin ? (
-          /* ================= SUPER ADMIN COMMAND CENTER ================= */
-          <>
-            {/* 1. Action Required Triage Banner */}
-            {pendingApprovals > 0 ? (
-              <TouchableOpacity
-                style={styles.triageBanner}
-                onPress={() => router.push('/(tabs)/restaurants')}
-                activeOpacity={0.85}
-              >
-                <View style={styles.triageLeft}>
-                  <View style={styles.triageIconBadge}>
-                    <AlertTriangle size={18} color="#D97706" />
-                  </View>
-                  <View style={styles.triageContent}>
-                    <Text style={styles.triageTitle}>
-                      {pendingApprovals} Restaurant Application{pendingApprovals > 1 ? 's' : ''} Pending
-                    </Text>
-                    <Text style={styles.triageSub}>Requires Super Admin verification and review</Text>
-                  </View>
-                </View>
-                <View style={styles.triageReviewBtn}>
-                  <Text style={styles.triageReviewBtnText}>Review</Text>
-                  <ArrowRight size={13} color="#FFFFFF" />
-                </View>
-              </TouchableOpacity>
-            ) : null}
-
-            {/* 2. Super Admin Quick Actions Dock */}
-            <View style={styles.quickDockCard}>
-              <Text style={styles.quickDockHeaderTitle}>Quick Actions</Text>
-              <View style={styles.quickDockRow}>
-                <TouchableOpacity
-                  style={styles.quickDockItem}
-                  onPress={() => router.push('/(tabs)/restaurants')}
-                  activeOpacity={0.75}
-                >
-                  <View style={[styles.quickDockIconCircle, { backgroundColor: '#FFF7ED' }]}>
-                    <Plus size={20} color="#EA580C" />
-                  </View>
-                  <Text style={styles.quickDockLabel} numberOfLines={1}>Add Store</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={styles.quickDockItem}
-                  onPress={() => router.push('/marketing')}
-                  activeOpacity={0.75}
-                >
-                  <View style={[styles.quickDockIconCircle, { backgroundColor: '#EFF6FF' }]}>
-                    <Megaphone size={19} color="#2563EB" />
-                  </View>
-                  <Text style={styles.quickDockLabel} numberOfLines={1}>Broadcast</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={styles.quickDockItem}
-                  onPress={() =>
-                    router.push({
-                      pathname: '/(tabs)/users',
-                      params: { role: 'delivery_partner' },
-                    })
-                  }
-                  activeOpacity={0.75}
-                >
-                  <View style={[styles.quickDockIconCircle, { backgroundColor: '#F5F3FF' }]}>
-                    <Bike size={19} color="#7C3AED" />
-                    {deliveryPartnersCount > 0 && (
-                      <View style={styles.dockCountBadge}>
-                        <Text style={styles.dockCountBadgeText}>{deliveryPartnersCount}</Text>
-                      </View>
-                    )}
-                  </View>
-                  <Text style={styles.quickDockLabel} numberOfLines={1}>Riders</Text>
-
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={styles.quickDockItem}
-                  onPress={() => router.push('/(tabs)/orders')}
-                  activeOpacity={0.75}
-                >
-                  <View style={[styles.quickDockIconCircle, { backgroundColor: '#ECFDF5' }]}>
-                    <ShoppingBag size={19} color="#059669" />
-                  </View>
-                  <Text style={styles.quickDockLabel} numberOfLines={1}>All Orders</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-
-            {/* 5. Live Operations Pulse Pipeline */}
-            <View style={styles.livePipelineCard}>
-              <View style={styles.livePipelineHeaderRow}>
-                <View style={styles.livePipelineTitleGroup}>
-                  <View style={styles.livePulseDot} />
-                  <Text style={styles.livePipelineTitle}>Live Operations Pulse</Text>
-                </View>
-
-              </View>
-
-              <View style={styles.pipelineChipsRow}>
-                <View style={[styles.pipelineChip, { backgroundColor: '#FFF7ED', borderColor: '#FED7AA' }]}>
-                  <Clock size={15} color="#EA580C" />
-                  <Text style={[styles.pipelineCount, { color: '#C2410C' }]}>{livePreparingCount}</Text>
-                  <Text style={styles.pipelineLabel}>Preparing</Text>
-                </View>
-                <View style={[styles.pipelineChip, { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }]}>
-                  <Truck size={15} color="#2563EB" />
-                  <Text style={[styles.pipelineCount, { color: '#1E40AF' }]}>{liveInTransitCount}</Text>
-                  <Text style={styles.pipelineLabel}>In Transit</Text>
-                </View>
-
-                <View style={[styles.pipelineChip, { backgroundColor: '#ECFDF5', borderColor: '#A7F3D0' }]}>
-                  <Check size={15} color="#059669" />
-                  <Text style={[styles.pipelineCount, { color: '#065F46' }]}>{liveDeliveredTodayCount}</Text>
-                  <Text style={styles.pipelineLabel}>Delivered</Text>
-                </View>
-              </View>
-            </View>
-
-
-            {/* 3. Timeframe Filter Section */}
-            <View style={styles.timeframeSection}>
-              <View style={styles.timeframeHeaderRow}>
-                <View style={styles.timeframeTitleGroup}>
-                  <Calendar size={15} color="#475569" />
-                  <Text style={styles.timeframeTitle}>Select Range</Text>
-                </View>
-                <TouchableOpacity
-                  style={[
-                    styles.superTimeframePill,
-                    styles.superTimeframeCustomPill,
-                    superTimeframe === 'custom' && styles.superTimeframePillActive,
-                  ]}
-                  onPress={() => {
-                    setPickerStartDate(customStartDate);
-                    setPickerEndDate(customEndDate);
-                    setCalendarMonth(new Date(customStartDate));
-                    setDateRangeModalVisible(true);
-                  }}
-                  activeOpacity={0.8}
-                >
-                  <Calendar
-                    size={13}
-                    color={superTimeframe === 'custom' ? '#FFFFFF' : '#4B5563'}
-                    style={{ marginRight: 5 }}
-                  />
-                  <Text
-                    style={[
-                      styles.superTimeframePillText,
-                      superTimeframe === 'custom' && styles.superTimeframePillTextActive,
-                    ]}
-                    numberOfLines={1}
-                  >
-                    {superTimeframe === 'custom' ? selectedRangeLabel : 'Custom'}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-
-              <View style={styles.superTimeframeRow}>
-                {(['today', '7d', '30d', 'all'] as const).map((tf) => {
-                  const labels = { today: 'Today', '7d': '7 Days', '30d': '30 Days', all: 'All Time' };
-                  const isSelected = superTimeframe === tf;
-                  return (
-                    <TouchableOpacity
-                      key={tf}
-                      style={[
-                        styles.superTimeframePill,
-                        styles.superTimeframeQuickPill,
-                        isSelected && styles.superTimeframePillActive,
-                      ]}
-                      onPress={() => setSuperTimeframe(tf)}
-                      activeOpacity={0.8}
-                    >
-                      <Text style={[styles.superTimeframePillText, isSelected && styles.superTimeframePillTextActive]}>
-                        {labels[tf]}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            </View>
-
-            {/* 4. Super Admin Executive 3D KPI Grid */}
-            <View style={[styles.kpiGrid, isSmallScreen && { gap: 8 }]}>
-              {/* Card 1: Platform Net Commission */}
-              <View style={[styles.kpiCard, styles.kpiCardCash, { width: superCardWidth }, isSmallScreen && { padding: 10 }]}>
-                <View
-                  style={[
-                    styles.kpiGlowBackdrop,
-                    { backgroundColor: '#D1FAE5', width: superGlowSize, height: superGlowSize, borderRadius: superGlowSize / 2 },
-                  ]}
-                  pointerEvents="none"
-                />
-                <View style={[styles.kpiWatermarkBox, isTablet && styles.kpiWatermarkBoxTablet]} pointerEvents="none">
-                  <TrendingUp size={isSmallScreen ? 24 : isTablet ? 32 : 28} color="#059669" style={{ opacity: 0.35 }} />
-                </View>
-                <View style={styles.kpiContentContainer}>
-                  <View style={styles.kpiTopRow}>
-                    <View style={[styles.kpiIconBox, { backgroundColor: '#ECFDF5' }]}>
-                      <TrendingUp size={isSmallScreen ? 15 : 17} color="#059669" />
-                    </View>
-                    <View style={[styles.kpiBadge, { backgroundColor: '#D1FAE5' }]}>
-                      <Text style={[styles.kpiBadgeText, { color: '#065F46' }]}>PLATFORM</Text>
-                    </View>
-                  </View>
-                  <Text
-                    style={[styles.kpiValue, isSmallScreen && { fontSize: 14 }]}
-                    numberOfLines={1}
-                    adjustsFontSizeToFit
-                    minimumFontScale={0.7}
-                  >
-                    £{superCommission.toFixed(2)}
-                  </Text>
-                  <Text style={styles.kpiLabel} numberOfLines={1}>Platform Net Rev</Text>
-                  <Text style={styles.kpiSub} numberOfLines={1} ellipsizeMode="tail">
-                    Est. 12% take-rate
-                  </Text>
-                </View>
-              </View>
-
-              {/* Card 2: Platform GMV */}
-              <View style={[styles.kpiCard, styles.kpiCardRevenue, { width: superCardWidth }, isSmallScreen && { padding: 10 }]}>
-                <View
-                  style={[
-                    styles.kpiGlowBackdrop,
-                    { backgroundColor: '#FFEDD5', width: superGlowSize, height: superGlowSize, borderRadius: superGlowSize / 2 },
-                  ]}
-                  pointerEvents="none"
-                />
-                <View style={[styles.kpiWatermarkBox, isTablet && styles.kpiWatermarkBoxTablet]} pointerEvents="none">
-                  <ShoppingBag size={isSmallScreen ? 24 : isTablet ? 32 : 28} color="#EA580C" style={{ opacity: 0.35 }} />
-                </View>
-                <View style={styles.kpiContentContainer}>
-                  <View style={styles.kpiTopRow}>
-                    <View style={[styles.kpiIconBox, { backgroundColor: '#FFF7ED' }]}>
-                      <ShoppingBag size={isSmallScreen ? 15 : 17} color="#EA580C" />
-                    </View>
-                    <View style={[styles.kpiBadge, { backgroundColor: '#FFEDD5' }]}>
-                      <Text style={[styles.kpiBadgeText, { color: '#C2410C' }]}>GMV</Text>
-                    </View>
-                  </View>
-                  <Text
-                    style={[styles.kpiValue, isSmallScreen && { fontSize: 14 }]}
-                    numberOfLines={1}
-                    adjustsFontSizeToFit
-                    minimumFontScale={0.7}
-                  >
-                    £{superGmv.toFixed(2)}
-                  </Text>
-                  <Text style={styles.kpiLabel} numberOfLines={1}>Platform GMV</Text>
-                  <Text style={styles.kpiSub} numberOfLines={1} ellipsizeMode="tail">
-                    Gross order sales
-                  </Text>
-                </View>
-              </View>
-
-              {/* Card 3: Active Stores */}
-              <View style={[styles.kpiCard, styles.kpiCardVolume, { width: superCardWidth }, isSmallScreen && { padding: 10 }]}>
-                <View
-                  style={[
-                    styles.kpiGlowBackdrop,
-                    { backgroundColor: '#DBEAFE', width: superGlowSize, height: superGlowSize, borderRadius: superGlowSize / 2 },
-                  ]}
-                  pointerEvents="none"
-                />
-                <View style={[styles.kpiWatermarkBox, isTablet && styles.kpiWatermarkBoxTablet]} pointerEvents="none">
-                  <Store size={isSmallScreen ? 24 : isTablet ? 32 : 28} color="#2563EB" style={{ opacity: 0.35 }} />
-                </View>
-                <View style={styles.kpiContentContainer}>
-                  <View style={styles.kpiTopRow}>
-                    <View style={[styles.kpiIconBox, { backgroundColor: '#EFF6FF' }]}>
-                      <Store size={isSmallScreen ? 15 : 17} color="#2563EB" />
-                    </View>
-                    <View style={[styles.kpiBadge, { backgroundColor: '#DBEAFE' }]}>
-                      <Text style={[styles.kpiBadgeText, { color: '#1E40AF' }]}>STORES</Text>
-                    </View>
-                  </View>
-                  <Text
-                    style={[styles.kpiValue, isSmallScreen && { fontSize: 14 }]}
-                    numberOfLines={1}
-                    adjustsFontSizeToFit
-                    minimumFontScale={0.7}
-                  >
-                    {activeRestaurants} / {restaurants.length}
-                  </Text>
-                  <Text style={styles.kpiLabel} numberOfLines={1}>Active Stores</Text>
-                  <Text style={styles.kpiSub} numberOfLines={1} ellipsizeMode="tail">
-                    {pendingApprovals > 0 ? `${pendingApprovals} pending review` : 'All verified stores'}
-                  </Text>
-                </View>
-              </View>
-
-              {/* Card 4: Total Orders */}
-              <View style={[styles.kpiCard, styles.kpiCardAov, { width: superCardWidth }, isSmallScreen && { padding: 10 }]}>
-                <View
-                  style={[
-                    styles.kpiGlowBackdrop,
-                    { backgroundColor: '#EDE9FE', width: superGlowSize, height: superGlowSize, borderRadius: superGlowSize / 2 },
-                  ]}
-                  pointerEvents="none"
-                />
-                <View style={[styles.kpiWatermarkBox, isTablet && styles.kpiWatermarkBoxTablet]} pointerEvents="none">
-                  <Clock size={isSmallScreen ? 24 : isTablet ? 32 : 28} color="#7C3AED" style={{ opacity: 0.35 }} />
-                </View>
-                <View style={styles.kpiContentContainer}>
-                  <View style={styles.kpiTopRow}>
-                    <View style={[styles.kpiIconBox, { backgroundColor: '#F5F3FF' }]}>
-                      <Clock size={isSmallScreen ? 15 : 17} color="#7C3AED" />
-                    </View>
-                    <View style={[styles.kpiBadge, { backgroundColor: '#EDE9FE' }]}>
-                      <Text style={[styles.kpiBadgeText, { color: '#6D28D9' }]}>VOLUME</Text>
-                    </View>
-                  </View>
-                  <Text
-                    style={[styles.kpiValue, isSmallScreen && { fontSize: 14 }]}
-                    numberOfLines={1}
-                    adjustsFontSizeToFit
-                    minimumFontScale={0.7}
-                  >
-                    {superOrdersCount}
-                  </Text>
-                  <Text style={styles.kpiLabel} numberOfLines={1}>Total Orders</Text>
-                  <Text style={styles.kpiSub} numberOfLines={1} ellipsizeMode="tail">
-                    {filteredSuperOrders.filter(o => o.status === 'delivered').length} fulfilled
-                  </Text>
-                </View>
-              </View>
-            </View>
-
-
-                {/* 6. Analytics Card button to see all the individual restaurant performance */}
-                <View style={[styles.analyticsHubCard, isTablet && styles.analyticsHubCardTablet]}>
-                  {/* Header */}
-                  <View style={styles.analyticsHubHeader}>
-                    <View style={styles.analyticsHubTitleGroup}>
-                      <View style={styles.analyticsIconBadge}>
-                        <BarChart3 size={18} color="#4F46E5" />
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <View style={styles.analyticsTitleRow}>
-                          <Text style={styles.analyticsHubTitle}>Restaurant Analytics</Text>
-                          <View style={styles.analyticsLivePill}>
-                            <View style={styles.analyticsLiveDot} />
-                            <Text style={styles.analyticsLiveText}>LIVE</Text>
-                          </View>
-                        </View>
-                        <Text style={styles.analyticsHubSubtitle} numberOfLines={1}>
-                          Individual store performance, sales & lifecycle metrics
-                        </Text>
-                      </View>
-                    </View>
-
-                    {/* Store count badge */}
-                    <View style={styles.storeCountBadge}>
-                      <Store size={12} color="#4F46E5" />
-                      <Text style={styles.storeCountBadgeText}>{restaurants.length} Stores</Text>
-                    </View>
-                  </View>
-
-                  {/* Horizontal Store Selector Ribbon */}
-                  {restaurants.length > 0 && (
-                    <View style={styles.analyticsStoreRibbonWrapper}>
-                      <ScrollView
-                        horizontal
-                        showsHorizontalScrollIndicator={false}
-                        contentContainerStyle={styles.analyticsStoreRibbon}
-                      >
-                        {restaurants.map((r) => {
-                          const rId = r._id || (r as any).id;
-                          const isCur =
-                            (activeAnalyticsRestaurant?._id || (activeAnalyticsRestaurant as any)?.id) === rId;
-                          return (
-                            <TouchableOpacity
-                              key={rId}
-                              style={[
-                                styles.storeSelectorChip,
-                                isCur && styles.storeSelectorChipActive,
-                              ]}
-                              onPress={() => setSelectedAnalyticsRestaurantId(rId)}
-                              activeOpacity={0.75}
-                            >
-                            <View
-                              style={[
-                                  styles.storeStatusDot,
-                                  { backgroundColor: r.isActive ? '#10B981' : '#94A3B8' },
-                              ]}
-                            />
-                              <Text
-                                style={[
-                                  styles.storeSelectorChipText,
-                                  isCur && styles.storeSelectorChipTextActive,
-                                ]}
-                                numberOfLines={1}
-                              >
-                                {r.restaurantName || (r as any).name || 'Store'}
-                            </Text>
-                            </TouchableOpacity>
-                          );
-                        })}
-                      </ScrollView>
-                    </View>
-                  )}
-
-                  {/* Selected Store Highlight Preview Box */}
-                  {activeAnalyticsRestaurant && (
-                    <View style={styles.selectedStorePreviewBox}>
-                      <View style={styles.selectedStoreTopRow}>
-                        <View style={styles.selectedStoreInfo}>
-                          <Text style={styles.selectedStoreName} numberOfLines={1}>
-                            {activeAnalyticsRestaurant.restaurantName || (activeAnalyticsRestaurant as any).name}
-                          </Text>
-                          <Text style={styles.selectedStoreSub} numberOfLines={1}>
-                            {(typeof activeAnalyticsRestaurant.address === 'object' ? activeAnalyticsRestaurant.address?.city : activeAnalyticsRestaurant.address) ||
-                              activeAnalyticsRestaurant.cuisineTypes?.join(', ') ||
-                              'Active Merchant Partner'}
-                          </Text>
-                        </View>
-                        <View
-                          style={[
-                            styles.storeActiveBadge,
-                            {
-                              backgroundColor: activeAnalyticsRestaurant.isActive ? '#ECFDF5' : '#F1F5F9',
-                              borderColor: activeAnalyticsRestaurant.isActive ? '#A7F3D0' : '#CBD5E1',
-                            },
-                          ]}
-                        >
-                          <Text
-                            style={[
-                              styles.storeActiveBadgeText,
-                              { color: activeAnalyticsRestaurant.isActive ? '#065F46' : '#64748B' },
-                            ]}
-                          >
-                            {activeAnalyticsRestaurant.isActive ? 'Active' : 'Offline'}
-                          </Text>
-                        </View>
-                      </View>
-
-                      {/* 3 Quick Metric Pills */}
-                      <View style={styles.selectedStoreMetricsRow}>
-                        <View style={styles.previewMetricPill}>
-                          <Text style={styles.previewMetricLabel}>Revenue</Text>
-                          <Text style={[styles.previewMetricValue, { color: '#059669' }]} numberOfLines={1}>
-                            £{activeAnalyticsStats.totalIncome.toFixed(2)}
-                          </Text>
-                        </View>
-                        <View style={styles.previewMetricPill}>
-                          <Text style={styles.previewMetricLabel}>Total Orders</Text>
-                          <Text style={[styles.previewMetricValue, { color: '#1E293B' }]} numberOfLines={1}>
-                            {activeAnalyticsStats.totalOrders}
-                          </Text>
-                        </View>
-                        <View style={styles.previewMetricPill}>
-                          <Text style={styles.previewMetricLabel}>Fulfilled</Text>
-                          <Text style={[styles.previewMetricValue, { color: '#2563EB' }]} numberOfLines={1}>
-                            {activeAnalyticsStats.totalDelivered}
-                          </Text>
-                        </View>
-                      </View>
-
-                      {/* Primary CTA: Open Restaurant Analytics */}
-                      <TouchableOpacity
-                        style={styles.openAnalyticsBtn}
-                        onPress={() => setShowAnalyticsModal(true)}
-                        activeOpacity={0.85}
-                      >
-                        <BarChart3 size={17} color="#FFFFFF" style={{ marginRight: 8 }} />
-                        <Text style={styles.openAnalyticsBtnText} numberOfLines={1}>
-                          View {activeAnalyticsRestaurant.restaurantName || 'Store'} Analytics
-                        </Text>
-                        <ChevronRight size={17} color="#FFFFFF" style={{ marginLeft: 'auto' }} />
-                      </TouchableOpacity>
-                    </View>
-                  )}
-
-                  {/* Comprehensive Store Performance Leaderboard */}
-                  {restaurantTableData.length > 0 && (
-                    <View style={styles.storeLeaderboardSection}>
-                      <View style={styles.leaderboardHeader}>
-                        <Text style={styles.leaderboardTitle}>Individual Store Leaderboard</Text>
-                        <Text style={styles.leaderboardSub}>
-                          Tap Analytics on any store to inspect deep metrics
-                        </Text>
-                      </View>
-
-                      <View style={styles.leaderboardList}>
-                        {restaurantTableData.slice(0, 6).map((item, idx) => {
-                          const isItemActive =
-                            item.id ===
-                            (activeAnalyticsRestaurant?._id || (activeAnalyticsRestaurant as any)?.id);
-                          return (
-                            <View
-                              key={item.id}
-                              style={[
-                                styles.leaderboardRow,
-                                isItemActive && styles.leaderboardRowSelected,
-                                idx === Math.min(restaurantTableData.length, 6) - 1 && { borderBottomWidth: 0 },
-                              ]}
-                            >
-                              <View style={styles.leaderboardRankBadge}>
-                                <Text style={styles.leaderboardRankText}>#{idx + 1}</Text>
-                              </View>
-
-                              <View style={styles.leaderboardStoreInfo}>
-                                <Text style={styles.leaderboardStoreName} numberOfLines={1}>
-                                  {item.name}
-                                </Text>
-                                <Text style={styles.leaderboardStoreSub} numberOfLines={1}>
-                                  {item.totalOrders} orders • {item.deliveredOrders} delivered
-                                </Text>
-                              </View>
-
-                              <View style={styles.leaderboardRevenueBox}>
-                                <Text style={styles.leaderboardRevenueText} numberOfLines={1}>
-                                  £{item.totalIncome.toFixed(2)}
-                                </Text>
-                              </View>
-
-                              <TouchableOpacity
-                                style={[
-                                  styles.rowAnalyticsBtn,
-                                  isItemActive && styles.rowAnalyticsBtnActive,
-                                ]}
-                                onPress={() => {
-                                  setSelectedAnalyticsRestaurantId(item.id);
-                                  setShowAnalyticsModal(true);
-                                }}
-                                activeOpacity={0.8}
-                              >
-                                <BarChart3
-                                  size={12}
-                                  color={isItemActive ? '#FFFFFF' : '#4F46E5'}
-                                  style={{ marginRight: 4 }}
-                                />
-                                <Text
-                                  style={[
-                                    styles.rowAnalyticsBtnText,
-                                    isItemActive && styles.rowAnalyticsBtnTextActive,
-                                  ]}
-                                >
-                                  Analytics
-                                </Text>
-                              </TouchableOpacity>
-                            </View>
-                          );
-                        })}
-                      </View>
-                    </View>
-                  )}
-                </View>
-
-          </>
+          /* ================= SUPER ADMIN OVERVIEW ================= */
+          <SuperAdminDashboard
+            orders={orders}
+            restaurants={restaurants}
+            ridersCount={deliveryPartnersCount}
+            preset={superTimeframe === 'all' ? '30d' : superTimeframe}
+            onPresetChange={(p) => setSuperTimeframe(p)}
+            customRange={{ start: customStartDate, end: customEndDate }}
+            onOpenCustomRange={() => {
+              setPickerStartDate(customStartDate);
+              setPickerEndDate(customEndDate);
+              setCalendarMonth(new Date(customStartDate));
+              setDateRangeModalVisible(true);
+            }}
+            onOpenStore={(id) => {
+              setSelectedAnalyticsRestaurantId(id);
+              setShowAnalyticsModal(true);
+            }}
+            onNavigate={(route) => {
+              if (route === 'orders') router.push('/(tabs)/orders');
+              else if (route === 'restaurants') router.push('/(tabs)/restaurants');
+              else if (route === 'marketing') router.push('/marketing');
+              else router.push({ pathname: '/(tabs)/users', params: { role: 'delivery_partner' } } as any);
+            }}
+            lastUpdated={lastUpdated}
+          />
         ) : (
           /* ================= RESTAURANT OWNER DASHBOARD ================= */
           <>
@@ -1417,12 +670,12 @@ export default function DashboardScreen() {
                   <View style={[styles.orderTerminalSection, isTablet && styles.orderTerminalSectionTablet]}>
                     <View style={[styles.orderSectionHeaderRow, isTablet && styles.orderSectionHeaderRowTablet]}>
                       <View style={styles.orderSectionTitleGroup}>
-                        <Text style={[styles.orderSectionTitle, isTablet && styles.orderSectionTitleTablet]}>
-                          Order Operations
-                        </Text>
+                        {/* <Text style={[styles.orderSectionTitle, isTablet && styles.orderSectionTitleTablet]}>
+                          Quick Orders 
+                        </Text> */}
 
                       </View>
-                      <TouchableOpacity
+                      {/* <TouchableOpacity
                         style={styles.quickNewOrderBtn}
                         onPress={() => {
                           setCreateOrderInitialChannel('dine_in');
@@ -1431,8 +684,8 @@ export default function DashboardScreen() {
                         activeOpacity={0.8}
                       >
                         <Plus size={13} color="#FFFFFF" />
-                        <Text style={styles.quickNewOrderBtnText}>Punch Order</Text>
-                      </TouchableOpacity>
+                        <Text style={styles.quickNewOrderBtnText}>Create Order</Text>
+                      </TouchableOpacity> */}
                     </View>
 
                     {/* 4 Cards Grid - Responsive: 4 in 1 row on iPad, 2x2 on mobile */}
@@ -1565,8 +818,8 @@ export default function DashboardScreen() {
                       onPress={() => router.push('/bookings')}
                       activeOpacity={0.7}
                     >
-                      <View style={[styles.quickActionCircle, { backgroundColor: '#FFF0EC', borderColor: '#FED7AA' }, isTablet && styles.quickActionCircleTablet]}>
-                        <CalendarDays size={isTablet ? 26 : 22} color="#EA580C" />
+                      <View style={[styles.quickActionCircle, { backgroundColor: '#eeeeee', borderColor: '#cccbc9' }, isTablet && styles.quickActionCircleTablet]}>
+                        <CalendarDays size={isTablet ? 26 : 22} color="#807e7d" />
                       </View>
                       <Text style={[styles.quickActionLabel, isTablet && styles.quickActionLabelTablet]} numberOfLines={1}>
                         Bookings
@@ -1579,13 +832,13 @@ export default function DashboardScreen() {
                       onPress={() => router.push('/tables')}
                       activeOpacity={0.7}
                     >
-                      <View style={[styles.quickActionCircle, { backgroundColor: '#F5F3FF', borderColor: '#DDD6FE' }, isTablet && styles.quickActionCircleTablet]}>
+                      <View style={[styles.quickActionCircle, { backgroundColor: '#eeeeee', borderColor: '#cccbc9' }, isTablet && styles.quickActionCircleTablet]}>
                         {tablesCount > 0 && (
                           <View style={styles.quickActionBadge}>
                             <Text style={styles.quickActionBadgeText}>{tablesCount}</Text>
                           </View>
                         )}
-                        <UtensilsCrossed size={isTablet ? 26 : 22} color="#7C3AED" />
+                        <UtensilsCrossed size={isTablet ? 26 : 22} color="#807e7d" />
                       </View>
                       <Text style={[styles.quickActionLabel, isTablet && styles.quickActionLabelTablet]} numberOfLines={1}>
                         Tables
@@ -1598,13 +851,13 @@ export default function DashboardScreen() {
                       onPress={() => router.push('/fleet')}
                       activeOpacity={0.7}
                     >
-                      <View style={[styles.quickActionCircle, { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }, isTablet && styles.quickActionCircleTablet]}>
+                      <View style={[styles.quickActionCircle, { backgroundColor: '#eeeeee', borderColor: '#cccbc9' }, isTablet && styles.quickActionCircleTablet]}>
                         {deliveryPartnersCount > 0 && (
                           <View style={styles.quickActionBadge}>
                             <Text style={styles.quickActionBadgeText}>{deliveryPartnersCount}</Text>
                           </View>
                         )}
-                        <Bike size={isTablet ? 26 : 22} color="#2563EB" />
+                        <Bike size={isTablet ? 26 : 22} color="#807e7d" />
                       </View>
                       <Text style={[styles.quickActionLabel, isTablet && styles.quickActionLabelTablet]} numberOfLines={1}>
                         Fleet
@@ -1617,8 +870,8 @@ export default function DashboardScreen() {
                       onPress={() => router.push('/marketing')}
                       activeOpacity={0.7}
                     >
-                      <View style={[styles.quickActionCircle, { backgroundColor: '#ECFDF5', borderColor: '#A7F3D0' }, isTablet && styles.quickActionCircleTablet]}>
-                        <Sparkles size={isTablet ? 26 : 22} color="#059669" />
+                      <View style={[styles.quickActionCircle, { backgroundColor: '#eeeeee', borderColor: '#cccbc9' }, isTablet && styles.quickActionCircleTablet]}>
+                        <Sparkles size={isTablet ? 26 : 22} color="#807e7d" />
                       </View>
                       <Text style={[styles.quickActionLabel, isTablet && styles.quickActionLabelTablet]} numberOfLines={1}>
                         Promo
@@ -1631,8 +884,8 @@ export default function DashboardScreen() {
                       onPress={() => router.push('/analytics')}
                       activeOpacity={0.7}
                     >
-                      <View style={[styles.quickActionCircle, { backgroundColor: '#EEF2FF', borderColor: '#C7D2FE' }, isTablet && styles.quickActionCircleTablet]}>
-                        <BarChart3 size={isTablet ? 26 : 22} color="#4F46E5" />
+                      <View style={[styles.quickActionCircle, { backgroundColor: '#eeeeee', borderColor: '#cccbc9' }, isTablet && styles.quickActionCircleTablet]}>
+                        <BarChart3 size={isTablet ? 26 : 22} color="#807e7d" />
                       </View>
                       <Text style={[styles.quickActionLabel, isTablet && styles.quickActionLabelTablet]} numberOfLines={1}>
                         Analytics
@@ -1642,16 +895,7 @@ export default function DashboardScreen() {
           </>
         )}
 
-        {/* <View style={styles.singleKpiRow}>
-          <StatCard
-            title="Total Platform Users"
-            value={totalUsersCount}
-            subtitle="Customers & Delivery Partners"
-            icon={<Users size={18} color="#38BDF8" />}
-            accentColor="#38BDF8"
-            onPress={() => router.push('/(tabs)/users')}
-          />
-        </View> */}
+  
 
         {/* Recent Orders Section (Restaurant Owner Only) */}
         {!isSuperAdmin && (
@@ -3052,11 +2296,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderWidth: 1.5,
     position: 'relative',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
-    elevation: 1,
+   
     marginBottom: 5,
   },
   quickActionCircleTablet: {

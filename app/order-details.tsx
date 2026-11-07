@@ -204,7 +204,7 @@ export default function OrderDetailsScreen() {
           const autoPrint = await isAutoPrintEnabled();
           if (autoPrint) {
             console.log('[OrderDetails] Order accepted. Auto-printing receipt...');
-            await printThermalReceipt(updatedOrder);
+            await printThermalReceipt(updatedOrder, false, undefined, undefined, 'accepted');
           }
         }
       } else {

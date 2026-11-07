@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Header } from '../components/Header';
+import { ScreenHeader } from '../components/ScreenHeader';
 import { Colors } from '../constants/colors';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
@@ -209,7 +209,7 @@ export default function OperationSettingsScreen() {
 
   return (
     <View style={styles.container}>
-      <Header
+      <ScreenHeader
         title="Acceptance & Payments"
         showBackButton={true}
         rightElement={

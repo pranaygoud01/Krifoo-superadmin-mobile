@@ -42,6 +42,8 @@ export interface ExternalDeliverySettings {
 
 export interface ExternalWebsiteSettings {
   domain?: string;
+  customDomain?: string;
+  subdomain?: string;
   brandName?: string;
   primaryColor?: string;
   secondaryColor?: string;

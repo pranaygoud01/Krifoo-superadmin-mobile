@@ -77,14 +77,21 @@ export interface ReceiptTemplate {
 
 const TEMPLATES_STORAGE_KEY = '@krifoo_receipt_templates';
 const ACTIVE_TEMPLATE_KEY = '@krifoo_active_receipt_template_id';
+const DELETED_TEMPLATES_KEY = '@krifoo_deleted_receipt_templates';
+
+/**
+ * Built-in templates carry a FIXED timestamp. (Previously they used `new Date()` at app start,
+ * which made them "newer" than any saved edit, so edits to built-in templates were lost on restart.)
+ */
+const PRELOADED_TIMESTAMP = '2024-01-01T00:00:00.000Z';
 
 export const DEFAULT_RECEIPT_TEMPLATE: ReceiptTemplate = {
   id: 'standard_pos',
   name: 'Standard POS Receipt',
   description: 'Balanced, elegant thermal receipt layout suitable for everyday orders',
   isDefault: true,
-  createdAt: new Date().toISOString(),
-  updatedAt: new Date().toISOString(),
+  createdAt: PRELOADED_TIMESTAMP,
+  updatedAt: PRELOADED_TIMESTAMP,
   layout: {
     paperWidth: '80mm',
     fontSize: 'medium',
@@ -117,11 +124,11 @@ export const DEFAULT_RECEIPT_TEMPLATE: ReceiptTemplate = {
     showPhone: true,
     showTaxId: false,
     taxIdLabel: 'VAT Reg No:',
-    taxIdValue: 'GB 123 4567 89',
+    taxIdValue: '',
     showOrderNumber: true,
     showTableNumber: true,
     showServerWaiterName: false,
-    serverWaiterName: 'Front Counter',
+    serverWaiterName: '',
     showDateTime: true,
     dateTimeFormat: 'uk',
     showCustomerInfo: true,
@@ -145,8 +152,8 @@ export const COMPACT_TAKEAWAY_TEMPLATE: ReceiptTemplate = {
   name: 'Compact Takeaway',
   description: 'Fast, compact layout optimized for takeaway counters',
   isDefault: false,
-  createdAt: new Date().toISOString(),
-  updatedAt: new Date().toISOString(),
+  createdAt: PRELOADED_TIMESTAMP,
+  updatedAt: PRELOADED_TIMESTAMP,
   layout: {
     paperWidth: '58mm',
     fontSize: 'medium',
@@ -207,8 +214,8 @@ export const DINE_IN_INVOICE_TEMPLATE: ReceiptTemplate = {
   name: 'Full Dine-In & Tax Invoice',
   description: 'Detailed dining receipt with table number, waiter, VAT breakdown, and feedback QR',
   isDefault: false,
-  createdAt: new Date().toISOString(),
-  updatedAt: new Date().toISOString(),
+  createdAt: PRELOADED_TIMESTAMP,
+  updatedAt: PRELOADED_TIMESTAMP,
   layout: {
     paperWidth: '80mm',
     fontSize: 'medium',
@@ -239,13 +246,13 @@ export const DINE_IN_INVOICE_TEMPLATE: ReceiptTemplate = {
     customHeaderTitle: 'TAX INVOICE / GUEST RECEIPT',
     showAddress: true,
     showPhone: true,
-    showTaxId: true,
+    showTaxId: true, // only prints once the restaurant enters its own VAT number
     taxIdLabel: 'VAT Reg No:',
-    taxIdValue: 'GB 987 6543 21',
+    taxIdValue: '',
     showOrderNumber: true,
     showTableNumber: true,
     showServerWaiterName: true,
-    serverWaiterName: 'Alex / Table Service',
+    serverWaiterName: '',
     showDateTime: true,
     dateTimeFormat: 'uk',
     showCustomerInfo: false,
@@ -258,42 +265,52 @@ export const DINE_IN_INVOICE_TEMPLATE: ReceiptTemplate = {
     footerMessage: 'Service charge not included. We appreciate your feedback!',
     showQrCode: true,
     qrCodeType: 'feedback',
-    qrCodeData: 'https://g.page/r/krifoo-feedback/review',
-    qrCodeLabel: 'Scan for Google Review & Feedback',
+    qrCodeData: '', // restaurant must enter its own review link
+    qrCodeLabel: 'Scan to leave us a review',
     showScheduledTime: true,
   },
 };
 
 /**
- * Ensures all receipt templates maintain the exact font size & hierarchy from the physical receipt standard:
- * - Base font: medium (Font A)
- * - Line spacing: normal
- * - Prominent bold: restaurant name, order #, total amount, item names, customer details
+ * Fills in any fields missing from a stored template (older app versions, partial saves)
+ * WITHOUT overriding the restaurant's own choices.
+ *
+ * (Previously this forced font size / family / spacing / bold / italic back to defaults on
+ * every load and save, so those editor controls never persisted.)
  */
-export function normalizeTemplateFontHierarchy(template: ReceiptTemplate): ReceiptTemplate {
-  if (!template) return normalizeTemplateFontHierarchy(DEFAULT_RECEIPT_TEMPLATE);
+export function normalizeTemplate(template: ReceiptTemplate | null | undefined): ReceiptTemplate {
+  const base = DEFAULT_RECEIPT_TEMPLATE;
+  if (!template) return cloneTemplate(base);
+  const layout: Partial<ReceiptLayoutConfig> = template.layout || {};
+  const content: Partial<ReceiptContentConfig> = { ...(template.content || {}) };
+  // Scrub placeholder values shipped by older app versions so they never print on real receipts
+  if (content.taxIdValue && PLACEHOLDER_TAX_IDS.includes(content.taxIdValue.trim())) content.taxIdValue = '';
+  if (content.serverWaiterName && PLACEHOLDER_WAITERS.includes(content.serverWaiterName.trim())) content.serverWaiterName = '';
+  if (content.qrCodeData && PLACEHOLDER_QR_LINKS.includes(content.qrCodeData.trim())) content.qrCodeData = '';
   return {
+    ...base,
     ...template,
     layout: {
-      ...template.layout,
-      fontSize: 'medium',
-      fontFamily: 'fontA',
-      lineSpacing: 'normal',
-      boldElements: {
-        ...(template.layout?.boldElements || {}),
-        restaurantName: true,
-        orderNumber: true,
-        totalAmount: true,
-        itemNames: true,
-        customerDetails: true,
-      },
-      italicElements: {
-        ...(template.layout?.italicElements || {}),
-        tagline: false,
-        footerMessage: false,
-      },
+      ...base.layout,
+      ...layout,
+      alignment: { ...base.layout.alignment, ...(layout.alignment || {}) },
+      boldElements: { ...base.layout.boldElements, ...(layout.boldElements || {}) },
+      italicElements: { ...base.layout.italicElements, ...(layout.italicElements || {}) },
     },
+    content: { ...base.content, ...content },
   };
+}
+
+const PLACEHOLDER_TAX_IDS = ['GB 123 4567 89', 'GB 987 6543 21', 'GB123456789'];
+const PLACEHOLDER_WAITERS = ['Front Counter', 'Alex / Table Service', 'Front Staff'];
+const PLACEHOLDER_QR_LINKS = ['https://g.page/r/krifoo-feedback/review'];
+
+/** @deprecated kept for backward compatibility — now only fills missing fields. */
+export const normalizeTemplateFontHierarchy = normalizeTemplate;
+
+/** Deep copy so callers can never mutate cached / constant template objects. */
+export function cloneTemplate(template: ReceiptTemplate): ReceiptTemplate {
+  return JSON.parse(JSON.stringify(template));
 }
 
 export const PRELOADED_TEMPLATES: ReceiptTemplate[] = [
@@ -302,112 +319,108 @@ export const PRELOADED_TEMPLATES: ReceiptTemplate[] = [
   DINE_IN_INVOICE_TEMPLATE,
 ];
 
-/**
- * Helper to merge template arrays by ID, keeping the latest updatedAt version
- */
-function mergeTemplatesByLatest(listA: ReceiptTemplate[], listB: ReceiptTemplate[]): ReceiptTemplate[] {
-  const map = new Map<string, ReceiptTemplate>();
+const templatesKey = (restaurantId?: string) =>
+  restaurantId ? `${TEMPLATES_STORAGE_KEY}_${restaurantId}` : TEMPLATES_STORAGE_KEY;
+const activeKey = (restaurantId?: string) =>
+  restaurantId ? `${ACTIVE_TEMPLATE_KEY}_${restaurantId}` : ACTIVE_TEMPLATE_KEY;
+const deletedKey = (restaurantId?: string) =>
+  restaurantId ? `${DELETED_TEMPLATES_KEY}_${restaurantId}` : DELETED_TEMPLATES_KEY;
 
-  for (const item of listA) {
-    if (item && item.id) {
-      map.set(item.id, item);
-    }
+async function readJsonArray<T>(key: string): Promise<T[] | null> {
+  const raw = await AsyncStorage.getItem(key);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null; // corrupted key — ignore
   }
-
-  for (const item of listB) {
-    if (item && item.id) {
-      const existing = map.get(item.id);
-      if (!existing) {
-        map.set(item.id, item);
-      } else {
-        const timeExisting = new Date(existing.updatedAt || 0).getTime();
-        const timeNew = new Date(item.updatedAt || 0).getTime();
-        if (timeNew >= timeExisting) {
-          map.set(item.id, item);
-        }
-      }
-    }
-  }
-
-  return Array.from(map.values());
 }
 
 /**
- * Get all receipt templates for a restaurant, seamlessly merging restaurant-specific & global customizations
+ * Reads the stored templates for a restaurant.
+ * The restaurant's own key wins; the global key is only used as a legacy fallback
+ * (so one restaurant's edits can no longer override another's).
+ */
+async function readStoredTemplates(restaurantId?: string): Promise<ReceiptTemplate[]> {
+  if (restaurantId) {
+    const own = await readJsonArray<ReceiptTemplate>(templatesKey(restaurantId));
+    if (own) return own;
+  }
+  return (await readJsonArray<ReceiptTemplate>(templatesKey())) || [];
+}
+
+async function readDeletedIds(restaurantId?: string): Promise<string[]> {
+  if (restaurantId) {
+    const own = await readJsonArray<string>(deletedKey(restaurantId));
+    if (own) return own;
+  }
+  return (await readJsonArray<string>(deletedKey())) || [];
+}
+
+/** Writes to the restaurant key, and to the global key so screens opened without a restaurantId stay in sync. */
+async function writeScoped(keyFn: (r?: string) => string, value: string, restaurantId?: string) {
+  if (restaurantId) await AsyncStorage.setItem(keyFn(restaurantId), value);
+  await AsyncStorage.setItem(keyFn(), value);
+}
+
+/**
+ * Get all receipt templates for a restaurant.
+ * Stored templates always override the built-in version with the same id, and
+ * deleted built-in templates stay deleted.
  */
 export async function getAllReceiptTemplates(restaurantId?: string): Promise<ReceiptTemplate[]> {
   try {
-    let localTemplates: ReceiptTemplate[] = [];
-    let globalTemplates: ReceiptTemplate[] = [];
+    const stored = await readStoredTemplates(restaurantId);
+    const deleted = new Set(await readDeletedIds(restaurantId));
+    const storedById = new Map(stored.filter((t) => t && t.id).map((t) => [t.id, t]));
 
-    // 1. Load restaurant-specific templates if ID provided
-    if (restaurantId) {
-      const key = `${TEMPLATES_STORAGE_KEY}_${restaurantId}`;
-      const raw = await AsyncStorage.getItem(key);
-      if (raw) {
-        try {
-          const parsed = JSON.parse(raw);
-          if (Array.isArray(parsed)) localTemplates = parsed;
-        } catch {
-          // ignore corrupted local key
-        }
-      }
+    const result: ReceiptTemplate[] = [];
+    // Built-ins first (in their usual order), replaced by the stored copy when edited
+    for (const builtIn of PRELOADED_TEMPLATES) {
+      if (deleted.has(builtIn.id)) continue;
+      result.push(storedById.get(builtIn.id) || builtIn);
+      storedById.delete(builtIn.id);
+    }
+    // Then custom templates
+    for (const custom of storedById.values()) {
+      if (!deleted.has(custom.id)) result.push(custom);
     }
 
-    // 2. Load global templates
-    const globalRaw = await AsyncStorage.getItem(TEMPLATES_STORAGE_KEY);
-    if (globalRaw) {
-      try {
-        const parsedGlobal = JSON.parse(globalRaw);
-        if (Array.isArray(parsedGlobal)) globalTemplates = parsedGlobal;
-      } catch {
-        // ignore
-      }
-    }
-
-    // Merge: preloaded -> local -> global (latest edit wins)
-    let merged = mergeTemplatesByLatest(PRELOADED_TEMPLATES, localTemplates);
-    merged = mergeTemplatesByLatest(merged, globalTemplates);
-
-    const finalTemplates = merged.length > 0 ? merged : PRELOADED_TEMPLATES;
-    return finalTemplates.map(normalizeTemplateFontHierarchy);
+    const finalList = result.length > 0 ? result : [DEFAULT_RECEIPT_TEMPLATE];
+    return finalList.map(normalizeTemplate);
   } catch (err) {
     console.warn('[ReceiptCustomization] Failed to load templates, returning defaults:', err);
-    return PRELOADED_TEMPLATES.map(normalizeTemplateFontHierarchy);
+    return PRELOADED_TEMPLATES.map(normalizeTemplate);
   }
 }
 
 /**
- * Get active template for a restaurant, with unified global and restaurant synchronization
+ * Get active template for a restaurant (always a fresh copy — safe to modify).
  */
 export async function getActiveReceiptTemplate(restaurantId?: string): Promise<ReceiptTemplate> {
   try {
-    // Check restaurant active key, fallback to global active key
     let activeId: string | null = null;
-    if (restaurantId) {
-      activeId = await AsyncStorage.getItem(`${ACTIVE_TEMPLATE_KEY}_${restaurantId}`);
-    }
-    if (!activeId) {
-      activeId = await AsyncStorage.getItem(ACTIVE_TEMPLATE_KEY);
-    }
+    if (restaurantId) activeId = await AsyncStorage.getItem(activeKey(restaurantId));
+    if (!activeId) activeId = await AsyncStorage.getItem(activeKey());
 
     const templates = await getAllReceiptTemplates(restaurantId);
-
-    if (activeId) {
-      const found = templates.find((t) => t.id === activeId);
-      if (found) return normalizeTemplateFontHierarchy(found);
-    }
-
-    const defaultTpl = templates.find((t) => t.isDefault) || templates[0] || DEFAULT_RECEIPT_TEMPLATE;
-    return normalizeTemplateFontHierarchy(defaultTpl);
+    const found =
+      (activeId && templates.find((t) => t.id === activeId)) ||
+      templates.find((t) => t.isDefault) ||
+      templates[0];
+    return normalizeTemplate(found || DEFAULT_RECEIPT_TEMPLATE);
   } catch (err) {
     console.warn('[ReceiptCustomization] Failed to load active template, using default:', err);
-    return DEFAULT_RECEIPT_TEMPLATE;
+    return cloneTemplate(DEFAULT_RECEIPT_TEMPLATE);
   }
 }
 
+/** Rough size guard — AsyncStorage on Android fails on very large single values. */
+const MAX_TEMPLATES_JSON_BYTES = 1_500_000;
+
 /**
- * Save or update a receipt template, synchronizing both restaurant and global scopes
+ * Save or update a receipt template.
  */
 export async function saveReceiptTemplate(
   template: ReceiptTemplate,
@@ -415,47 +428,33 @@ export async function saveReceiptTemplate(
   setAsActive: boolean = true
 ): Promise<ReceiptTemplate> {
   try {
-    const existing = await getAllReceiptTemplates(restaurantId);
-
-    const now = new Date().toISOString();
-    const updatedTemplate: ReceiptTemplate = normalizeTemplateFontHierarchy({
+    const stored = await readStoredTemplates(restaurantId);
+    const updatedTemplate = normalizeTemplate({
       ...template,
-      updatedAt: now,
-      content: {
-        ...template.content,
-        showScheduledTime: template.content.showScheduledTime !== false,
-      },
+      updatedAt: new Date().toISOString(),
     });
 
-    const index = existing.findIndex((t) => t.id === template.id);
-    let newList: ReceiptTemplate[];
-    if (index >= 0) {
-      newList = [...existing];
-      newList[index] = updatedTemplate;
-    } else {
-      newList = [updatedTemplate, ...existing];
-    }
+    const index = stored.findIndex((t) => t.id === template.id);
+    const newList = index >= 0
+      ? stored.map((t, i) => (i === index ? updatedTemplate : t))
+      : [...stored, updatedTemplate];
 
     const jsonString = JSON.stringify(newList);
+    if (jsonString.length > MAX_TEMPLATES_JSON_BYTES) {
+      throw new Error('Templates are too large to save. Try a smaller logo image.');
+    }
+    await writeScoped(templatesKey, jsonString, restaurantId);
 
-    // Synchronize to global templates storage
-    await AsyncStorage.setItem(TEMPLATES_STORAGE_KEY, jsonString);
-
-    // Synchronize to specific restaurant key if provided
-    if (restaurantId) {
-      await AsyncStorage.setItem(`${TEMPLATES_STORAGE_KEY}_${restaurantId}`, jsonString);
+    // Saving a template that was previously deleted brings it back
+    const deleted = await readDeletedIds(restaurantId);
+    if (deleted.includes(template.id)) {
+      await writeScoped(deletedKey, JSON.stringify(deleted.filter((id) => id !== template.id)), restaurantId);
     }
 
     if (setAsActive) {
-      // Synchronize active template ID globally
-      await AsyncStorage.setItem(ACTIVE_TEMPLATE_KEY, template.id);
-
-      if (restaurantId) {
-        await AsyncStorage.setItem(`${ACTIVE_TEMPLATE_KEY}_${restaurantId}`, template.id);
-      }
+      await writeScoped(activeKey, template.id, restaurantId);
     }
 
-    console.log(`[ReceiptCustomization] Saved template '${template.name}' (${template.id}) as active: ${setAsActive}`);
     return updatedTemplate;
   } catch (err) {
     console.error('[ReceiptCustomization] Failed to save template:', err);
@@ -464,26 +463,26 @@ export async function saveReceiptTemplate(
 }
 
 /**
- * Delete a receipt template (defaults to standard if active is deleted)
+ * Delete a receipt template. Built-in templates are remembered as deleted so they don't reappear.
+ * If the active template is deleted, the first remaining template becomes active.
  */
 export async function deleteReceiptTemplate(templateId: string, restaurantId?: string): Promise<void> {
   try {
-    const existing = await getAllReceiptTemplates(restaurantId);
-    const filtered = existing.filter((t) => t.id !== templateId);
+    const stored = await readStoredTemplates(restaurantId);
+    await writeScoped(templatesKey, JSON.stringify(stored.filter((t) => t.id !== templateId)), restaurantId);
 
-    const jsonString = JSON.stringify(filtered);
-    await AsyncStorage.setItem(TEMPLATES_STORAGE_KEY, jsonString);
-    if (restaurantId) {
-      await AsyncStorage.setItem(`${TEMPLATES_STORAGE_KEY}_${restaurantId}`, jsonString);
+    const deleted = await readDeletedIds(restaurantId);
+    if (!deleted.includes(templateId)) {
+      await writeScoped(deletedKey, JSON.stringify([...deleted, templateId]), restaurantId);
     }
 
-    const activeId = await AsyncStorage.getItem(ACTIVE_TEMPLATE_KEY);
-    if (activeId === templateId) {
-      const fallback = filtered[0]?.id || DEFAULT_RECEIPT_TEMPLATE.id;
-      await AsyncStorage.setItem(ACTIVE_TEMPLATE_KEY, fallback);
-      if (restaurantId) {
-        await AsyncStorage.setItem(`${ACTIVE_TEMPLATE_KEY}_${restaurantId}`, fallback);
-      }
+    const currentActive =
+      (restaurantId && (await AsyncStorage.getItem(activeKey(restaurantId)))) ||
+      (await AsyncStorage.getItem(activeKey()));
+    if (!currentActive || currentActive === templateId) {
+      const remaining = await getAllReceiptTemplates(restaurantId);
+      const fallback = remaining.find((t) => t.id !== templateId)?.id || DEFAULT_RECEIPT_TEMPLATE.id;
+      await writeScoped(activeKey, fallback, restaurantId);
     }
   } catch (err) {
     console.error('[ReceiptCustomization] Failed to delete template:', err);
@@ -492,38 +491,24 @@ export async function deleteReceiptTemplate(templateId: string, restaurantId?: s
 }
 
 /**
- * Set active receipt template, syncing both restaurant and global scopes
+ * Set active receipt template.
  */
 export async function setActiveReceiptTemplateId(templateId: string, restaurantId?: string): Promise<void> {
-  try {
-    await AsyncStorage.setItem(ACTIVE_TEMPLATE_KEY, templateId);
-    if (restaurantId) {
-      await AsyncStorage.setItem(`${ACTIVE_TEMPLATE_KEY}_${restaurantId}`, templateId);
-    }
-    console.log(`[ReceiptCustomization] Active template updated globally to: ${templateId}`);
-  } catch (err) {
-    console.error('[ReceiptCustomization] Failed to set active template:', err);
-  }
+  await writeScoped(activeKey, templateId, restaurantId);
 }
 
 /**
- * Reset restaurant templates to default system templates
+ * Reset this restaurant's templates to the built-in defaults.
  */
 export async function resetToDefaultTemplate(restaurantId?: string): Promise<ReceiptTemplate> {
   try {
-    const key = restaurantId ? `${TEMPLATES_STORAGE_KEY}_${restaurantId}` : TEMPLATES_STORAGE_KEY;
-    const activeKey = restaurantId ? `${ACTIVE_TEMPLATE_KEY}_${restaurantId}` : ACTIVE_TEMPLATE_KEY;
-
-    await AsyncStorage.removeItem(key);
-    await AsyncStorage.removeItem(activeKey);
-    await AsyncStorage.removeItem(TEMPLATES_STORAGE_KEY);
-    await AsyncStorage.removeItem(ACTIVE_TEMPLATE_KEY);
-
-    return DEFAULT_RECEIPT_TEMPLATE;
+    const keys = [templatesKey(), activeKey(), deletedKey()];
+    if (restaurantId) keys.push(templatesKey(restaurantId), activeKey(restaurantId), deletedKey(restaurantId));
+    await AsyncStorage.multiRemove(keys);
   } catch (err) {
     console.error('[ReceiptCustomization] Failed to reset templates:', err);
-    return DEFAULT_RECEIPT_TEMPLATE;
   }
+  return cloneTemplate(DEFAULT_RECEIPT_TEMPLATE);
 }
 
 /**
@@ -674,14 +659,23 @@ export function getSampleOrderForPreview(
         ],
       },
     ],
+    // Totals are consistent with the item list so previews and test prints add up
     pricing: {
-      subtotal: 8.97,
-      deliveryFee: 1.49,
-      handlingCharge: 0.50,
-      total: 10.96,
+      subtotal: SAMPLE_SUBTOTAL,
+      deliveryFee: type === 'delivery' ? SAMPLE_DELIVERY_FEE : 0,
+      handlingCharge: SAMPLE_HANDLING,
+      discount: SAMPLE_DISCOUNT,
+      total: Number(
+        (SAMPLE_SUBTOTAL + (type === 'delivery' ? SAMPLE_DELIVERY_FEE : 0) + SAMPLE_HANDLING - SAMPLE_DISCOUNT).toFixed(2)
+      ),
     },
   };
 }
+
+const SAMPLE_SUBTOTAL = 26.45;
+const SAMPLE_DELIVERY_FEE = 1.49;
+const SAMPLE_HANDLING = 0.5;
+const SAMPLE_DISCOUNT = 2.0;
 
 /**
  * Resolves all modifiers, variants, and add-ons for an ordered item into clean printable display lines.

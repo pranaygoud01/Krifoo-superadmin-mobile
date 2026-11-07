@@ -1,22 +1,17 @@
-import React, { useState, useEffect } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  FlatList,
-  TouchableOpacity,
-  Modal,
-  TextInput,
-  ActivityIndicator,
-  Alert,
-  ScrollView,
-  Platform,
-} from 'react-native';
-import { useRouter } from 'expo-router';
-import { Header } from '../components/Header';
+/**
+ * Drivers — your own delivery riders.
+ */
+import React, { useCallback, useMemo, useState } from 'react';
+import { View, Text, StyleSheet, FlatList, RefreshControl, Alert, Linking, TouchableOpacity } from 'react-native';
+import { useFocusEffect } from 'expo-router';
+import { Plus, Phone, Star, Bike, Car, Truck, UserMinus, Eye, EyeOff, UserPlus, Link2 } from 'lucide-react-native';
 import { Colors } from '../constants/colors';
+import { useToast } from '../context/ToastContext';
+import { ScreenHeader } from '../components/ScreenHeader';
+import { BottomSheet } from '../components/ui/BottomSheet';
+import { Field, FieldRow, Segmented, Notice, PrimaryButton } from '../components/settings/FormKit';
+import { SearchBar, FilterChips, Card, Badge, IconAction, EmptyState, LoadError, Fab, FAB_SPACE, initials, listStyles } from '../components/ui/ListKit';
 import { restaurantOwnerService } from '../services/restaurant-owner.service';
-import { Plus, User, Phone, Trash2, X, Check, Search, Star, Key, MapPin, Truck } from 'lucide-react-native';
 
 interface Driver {
   _id: string;
@@ -25,811 +20,416 @@ interface Driver {
   phoneNumber: string;
   isActive: boolean;
   deliveryPartnerProfile?: {
-    vehicleType: string;
+    vehicleType?: string;
     vehicleNumber?: string;
     licenseNumber?: string;
-    isAvailable: boolean;
+    isAvailable?: boolean;
     rating?: number;
     completedOrdersCount?: number;
   };
 }
 
+type Filter = 'all' | 'online' | 'offline';
+type Vehicle = 'bicycle' | 'motorcycle' | 'car';
+
+const VEHICLES: { value: Vehicle; label: string }[] = [
+  { value: 'bicycle', label: 'Bicycle' },
+  { value: 'motorcycle', label: 'Motorbike' },
+  { value: 'car', label: 'Car' },
+];
+const vehicleLabel = (v?: string) => VEHICLES.find((x) => x.value === v)?.label || (v ? v[0].toUpperCase() + v.slice(1) : 'Vehicle not set');
+const VehicleIcon = ({ type }: { type?: string }) =>
+  type === 'car' ? <Car size={14} color={Colors.textSubtle} /> : type === 'bicycle' || type === 'motorcycle' ? <Bike size={14} color={Colors.textSubtle} /> : <Truck size={14} color={Colors.textSubtle} />;
+
+/** UK mobile → +447…; returns null when it isn't a valid UK mobile number. */
+function normaliseUkMobile(raw: string): string | null {
+  let digits = raw.replace(/[^\d+]/g, '');
+  if (digits.startsWith('+44')) digits = digits.slice(3);
+  else if (digits.startsWith('0044')) digits = digits.slice(4);
+  else if (digits.startsWith('44') && digits.length === 12) digits = digits.slice(2);
+  if (digits.startsWith('0')) digits = digits.slice(1);
+  return /^7\d{9}$/.test(digits) ? `+44${digits}` : null;
+}
+
+const emptyNew = { fullName: '', username: '', password: '', phone: '', vehicle: 'bicycle' as Vehicle, plate: '', licence: '' };
+
 export default function FleetScreen() {
-  const router = useRouter();
+  const { showToast } = useToast();
   const [drivers, setDrivers] = useState<Driver[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [searchTerm, setSearchTerm] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState<Filter>('all');
+  const [busyId, setBusyId] = useState<string | null>(null);
 
-  // Modal States
-  const [modalVisible, setModalVisible] = useState(false);
-  const [modalMode, setModalMode] = useState<'link' | 'register'>('link');
-  const [submitting, setSubmitting] = useState(false);
-
-  // Link Form State
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [mode, setMode] = useState<'existing' | 'new'>('existing');
   const [linkUsername, setLinkUsername] = useState('');
+  const [form, setForm] = useState(emptyNew);
+  const [showPassword, setShowPassword] = useState(false);
+  const [errors, setErrors] = useState<Record<string, string | undefined>>({});
+  const [saving, setSaving] = useState(false);
 
-  // Register Form State
-  const [registerForm, setRegisterForm] = useState({
-    fullName: '',
-    username: '',
-    password: '',
-    phoneNumber: '',
-    vehicleType: 'bicycle',
-    vehicleNumber: '',
-    licenseNumber: '',
-  });
-
-  const loadDrivers = async () => {
-    setLoading(true);
+  const load = useCallback(async () => {
     try {
       const res = await restaurantOwnerService.getFleet();
-      if (res.success && res.data) {
-        setDrivers(res.data);
+      if (res.success) {
+        setDrivers(res.data || []);
+        setLoadError(null);
+      } else {
+        setLoadError(res.message || 'Please check your connection and try again.');
       }
-    } catch (e) {
-      console.error('Failed loading fleet drivers:', e);
+    } catch (e: any) {
+      setLoadError(e?.message || 'Please check your connection and try again.');
     } finally {
       setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [load])
+  );
+
+  const isOnline = (d: Driver) => d.isActive !== false && !!d.deliveryPartnerProfile?.isAvailable;
+  const counts = useMemo(
+    () => ({ all: drivers.length, online: drivers.filter(isOnline).length, offline: drivers.filter((d) => !isOnline(d)).length }),
+    [drivers]
+  );
+
+  const visible = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return drivers
+      .filter((d) => (filter === 'online' ? isOnline(d) : filter === 'offline' ? !isOnline(d) : true))
+      .filter((d) => !q || `${d.fullName || ''} ${d.username || ''} ${d.phoneNumber || ''}`.toLowerCase().includes(q))
+      .sort((a, b) => Number(isOnline(b)) - Number(isOnline(a)) || (a.fullName || '').localeCompare(b.fullName || ''));
+  }, [drivers, query, filter]);
+
+  /* ── Add driver ────────────────────────────────────────────────────── */
+
+  const openAdd = () => {
+    setMode('existing');
+    setLinkUsername('');
+    setForm(emptyNew);
+    setErrors({});
+    setShowPassword(false);
+    setSheetOpen(true);
+  };
+
+  const setField = (key: keyof typeof emptyNew, value: string) => {
+    setForm((f) => ({ ...f, [key]: value }));
+    setErrors((e) => ({ ...e, [key]: undefined }));
+  };
+
+  const linkExisting = async () => {
+    const username = linkUsername.trim().toLowerCase();
+    if (!username) return setErrors({ linkUsername: 'Enter the driver’s Krifoo username.' });
+    if (drivers.some((d) => d.username?.toLowerCase() === username)) return setErrors({ linkUsername: 'This driver is already in your team.' });
+    setSaving(true);
+    try {
+      const res = await restaurantOwnerService.linkDriver(username);
+      if (!res.success) throw new Error(res.message || 'No driver found with that username.');
+      showToast({ title: 'Driver added', message: `@${username} is now in your team.`, type: 'success' });
+      setSheetOpen(false);
+      load();
+    } catch (e: any) {
+      setErrors({ linkUsername: e?.message || 'Couldn’t add this driver.' });
+    } finally {
+      setSaving(false);
     }
   };
 
-  useEffect(() => {
-    loadDrivers();
-  }, []);
+  const registerNew = async () => {
+    const e: Record<string, string> = {};
+    if (!form.fullName.trim()) e.fullName = 'Enter the driver’s name.';
+    const username = form.username.trim().toLowerCase();
+    if (!/^[a-z0-9._]{3,30}$/.test(username)) e.username = '3–30 characters: letters, numbers, . or _';
+    if (form.password.length < 8) e.password = 'At least 8 characters.';
+    const phone = normaliseUkMobile(form.phone);
+    if (!phone) e.phone = 'Enter a UK mobile number, e.g. 07123 456789.';
+    if (form.vehicle !== 'bicycle' && !form.plate.trim()) e.plate = 'Required for motorbikes and cars.';
+    setErrors(e);
+    if (Object.keys(e).length) return;
 
-  const openAddModal = () => {
-    setLinkUsername('');
-    setRegisterForm({
-      fullName: '',
-      username: '',
-      password: '',
-      phoneNumber: '',
-      vehicleType: 'bicycle',
-      vehicleNumber: '',
-      licenseNumber: '',
-    });
-    setModalMode('link');
-    setModalVisible(true);
+    setSaving(true);
+    try {
+      const res = await restaurantOwnerService.createDriver({
+        fullName: form.fullName.trim(),
+        username,
+        password: form.password,
+        phoneNumber: phone,
+        deliveryPartnerProfile: {
+          vehicleType: form.vehicle,
+          vehicleNumber: form.plate.trim().toUpperCase() || undefined,
+          licenseNumber: form.licence.trim().toUpperCase() || undefined,
+        },
+      });
+      if (!res.success) throw new Error(res.message || 'Couldn’t create the driver.');
+      showToast({ title: 'Driver created', message: `${form.fullName.trim()} can now sign in to the driver app as @${username}.`, type: 'success' });
+      setSheetOpen(false);
+      load();
+    } catch (err: any) {
+      showToast({ title: 'Couldn’t create driver', message: err?.message || 'Please try again.', type: 'error' });
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const handleUnlink = async (driver: Driver) => {
-    Alert.alert(
-      'Remove Driver',
-      `Are you sure you want to remove ${driver.fullName} from your restaurant's fleet?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Remove',
-          style: 'destructive',
-          onPress: async () => {
-            const res = await restaurantOwnerService.unlinkDriver(driver._id);
-            if (res.success) {
-              Alert.alert('Success', 'Driver unlinked.');
-              loadDrivers();
-            } else {
-              Alert.alert('Error', res.message || 'Failed to remove driver.');
-            }
-          },
+  const remove = (d: Driver) => {
+    Alert.alert(`Remove ${d.fullName}?`, 'They will no longer receive your delivery orders. Their Krifoo account is not deleted.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Remove',
+        style: 'destructive',
+        onPress: async () => {
+          setBusyId(d._id);
+          try {
+            const res = await restaurantOwnerService.unlinkDriver(d._id);
+            if (!res.success) throw new Error(res.message);
+            setDrivers((prev) => prev.filter((x) => x._id !== d._id));
+            showToast({ title: 'Driver removed', message: `${d.fullName} was removed from your team.`, type: 'info' });
+          } catch (e: any) {
+            showToast({ title: 'Couldn’t remove driver', message: e?.message || 'Please try again.', type: 'error' });
+          } finally {
+            setBusyId(null);
+          }
         },
-      ]
+      },
+    ]);
+  };
+
+  /* ── Render ────────────────────────────────────────────────────────── */
+
+  const renderDriver = ({ item: d }: { item: Driver }) => {
+    const p = d.deliveryPartnerProfile || {};
+    const online = isOnline(d);
+    return (
+      <Card>
+        <View style={listStyles.row}>
+          <View style={styles.avatarWrap}>
+            <View style={styles.avatar}>
+              <Text style={styles.avatarText}>{initials(d.fullName)}</Text>
+            </View>
+            <View style={[styles.dot, { backgroundColor: online ? Colors.success : Colors.textSubtle }]} />
+          </View>
+          <View style={listStyles.flex}>
+            <Text style={listStyles.title} numberOfLines={1}>
+              {d.fullName || 'Unnamed driver'}
+            </Text>
+            <Text style={listStyles.sub}>@{d.username}</Text>
+          </View>
+          <Badge label={d.isActive === false ? 'Account disabled' : online ? 'Online' : 'Offline'} tone={d.isActive === false ? 'danger' : online ? 'success' : 'neutral'} />
+        </View>
+
+        <View style={styles.metaRow}>
+          <View style={styles.meta}>
+            <VehicleIcon type={p.vehicleType} />
+            <Text style={listStyles.meta}>
+              {vehicleLabel(p.vehicleType)}
+              {p.vehicleNumber ? ` · ${p.vehicleNumber}` : ''}
+            </Text>
+          </View>
+          <Text style={listStyles.meta}>
+            {p.completedOrdersCount || 0} deliver{(p.completedOrdersCount || 0) === 1 ? 'y' : 'ies'}
+          </Text>
+          {typeof p.rating === 'number' && (p.completedOrdersCount || 0) > 0 ? (
+            <View style={styles.meta}>
+              <Star size={14} color="#F59E0B" fill="#F59E0B" />
+              <Text style={listStyles.meta}>{p.rating.toFixed(1)}</Text>
+            </View>
+          ) : null}
+        </View>
+
+        <View style={styles.footer}>
+          {d.phoneNumber ? (
+            <TouchableOpacity style={styles.phone} onPress={() => Linking.openURL(`tel:${d.phoneNumber.replace(/\s/g, '')}`)} accessibilityRole="button" accessibilityLabel={`Call ${d.fullName}`}>
+              <Phone size={14} color={Colors.primary} />
+              <Text style={styles.phoneText}>{d.phoneNumber}</Text>
+            </TouchableOpacity>
+          ) : (
+            <View style={listStyles.flex} />
+          )}
+          <IconAction icon={UserMinus} label={`Remove ${d.fullName}`} tone="danger" onPress={() => remove(d)} busy={busyId === d._id} />
+        </View>
+      </Card>
     );
   };
 
-  const handleLinkDriver = async () => {
-    if (!linkUsername.trim()) return Alert.alert('Error', 'Please enter driver username.');
-
-    setSubmitting(true);
-    try {
-      const res = await restaurantOwnerService.linkDriver(linkUsername.trim());
-      if (res.success) {
-        Alert.alert('Success', 'Driver linked successfully.');
-        setModalVisible(false);
-        loadDrivers();
-      } else {
-        Alert.alert('Error', res.message || 'Failed to link driver.');
-      }
-    } catch (e: any) {
-      Alert.alert('Error', e.message || 'An unexpected error occurred.');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const handleRegisterDriver = async () => {
-    const f = registerForm;
-    if (!f.fullName.trim()) return Alert.alert('Error', 'Full name is required.');
-    if (!f.username.trim()) return Alert.alert('Error', 'Username is required.');
-    if (!f.password.trim() || f.password.length < 8) {
-      return Alert.alert('Error', 'Password must be at least 8 characters.');
-    }
-    if (!f.phoneNumber.trim()) return Alert.alert('Error', 'Phone number is required.');
-
-    setSubmitting(true);
-    try {
-      const formattedPhone = f.phoneNumber.startsWith('+44')
-        ? f.phoneNumber
-        : '+44' + f.phoneNumber.replace(/\D/g, '');
-
-      const payload = {
-        fullName: f.fullName.trim(),
-        username: f.username.trim().toLowerCase(),
-        password: f.password,
-        phoneNumber: formattedPhone,
-        deliveryPartnerProfile: {
-          vehicleType: f.vehicleType,
-          vehicleNumber: f.vehicleNumber.trim() || undefined,
-          licenseNumber: f.licenseNumber.trim() || undefined,
-        },
-      };
-
-      const res = await restaurantOwnerService.createDriver(payload);
-      if (res.success) {
-        Alert.alert('Success', 'Driver registered and linked successfully.');
-        setModalVisible(false);
-        loadDrivers();
-      } else {
-        Alert.alert('Error', res.message || 'Failed to register driver.');
-      }
-    } catch (e: any) {
-      Alert.alert('Error', e.message || 'An unexpected error occurred.');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const filteredDrivers = drivers.filter(
-    (d) =>
-      d.fullName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      d.username.toLowerCase().includes(searchTerm.toLowerCase())
-  );
-
   return (
-    <View style={styles.container}>
-      <Header title="Fleet Management" showBackButton={true} />
+    <View style={styles.screen}>
+      <ScreenHeader title="Drivers" subtitle={`${counts.online} online · ${counts.all} in your team`} />
 
-      {/* Search Header */}
-      <View style={styles.topFilterBox}>
-        <View style={styles.searchBox}>
-          <Search size={16} color={Colors.textSubtle} style={{ marginRight: 8 }} />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Search drivers by name or username..."
-            value={searchTerm}
-            onChangeText={setSearchTerm}
+      <View style={listStyles.toolbar}>
+        <View style={[listStyles.frame, styles.toolbarInner]}>
+          <SearchBar value={query} onChangeText={setQuery} placeholder="Search name, username or phone" />
+          <FilterChips<Filter>
+            options={[
+              { value: 'all', label: 'All', count: counts.all },
+              { value: 'online', label: 'Online', count: counts.online },
+              { value: 'offline', label: 'Offline', count: counts.offline },
+            ]}
+            value={filter}
+            onChange={setFilter}
           />
         </View>
       </View>
 
       {loading ? (
-        <View style={styles.centerBox}>
-          <ActivityIndicator size="large" color={Colors.primary} />
-          <Text style={styles.loadingText}>Loading fleet...</Text>
-        </View>
-      ) : filteredDrivers.length === 0 ? (
-        <View style={styles.centerBox}>
-          <Truck size={48} color={Colors.cardBorder} />
-          <Text style={styles.emptyTitle}>No Drivers Connected</Text>
-          <Text style={styles.emptySub}>
-            Link existing drivers or register new ones to handle local deliveries.
-          </Text>
-          <TouchableOpacity style={styles.createBtn} onPress={openAddModal}>
-            <Text style={styles.createBtnText}>Add Driver</Text>
-          </TouchableOpacity>
-        </View>
+        <EmptyState icon={Truck} title="Loading drivers…" />
+      ) : loadError && drivers.length === 0 ? (
+        <LoadError message={loadError} onRetry={() => { setLoading(true); load(); }} />
       ) : (
         <FlatList
-          data={filteredDrivers}
-          keyExtractor={(item) => item._id}
-          contentContainerStyle={styles.listContent}
-          renderItem={({ item }) => {
-            const hasProfile = !!item.deliveryPartnerProfile;
-            const isAvailable = item.deliveryPartnerProfile?.isAvailable ?? false;
-            const rating = item.deliveryPartnerProfile?.rating ?? 5;
-            const completedCount = item.deliveryPartnerProfile?.completedOrdersCount ?? 0;
-
-            return (
-              <View style={styles.driverCard}>
-                <View style={styles.driverHeader}>
-                  <View style={styles.driverAvatar}>
-                    <User size={20} color={Colors.primary} />
-                  </View>
-                  <View style={{ flex: 1, marginLeft: 12 }}>
-                    <Text style={styles.driverName}>{item.fullName}</Text>
-                    <Text style={styles.driverUsername}>@{item.username}</Text>
-                  </View>
-
-                  <View style={[styles.statusBadge, isAvailable ? styles.badgeGreen : styles.badgeGray]}>
-                    <Text style={[styles.statusText, isAvailable ? styles.textGreen : styles.textGray]}>
-                      {isAvailable ? 'Online' : 'Offline'}
-                    </Text>
-                  </View>
-                </View>
-
-                {hasProfile ? (
-                  <View style={styles.profileBox}>
-                    <View style={styles.metaRow}>
-                      <View style={styles.metaItem}>
-                        <Truck size={12} color={Colors.textSubtle} style={{ marginRight: 4 }} />
-                        <Text style={styles.metaLabel}>Vehicle: </Text>
-                        <Text style={styles.metaValue}>
-                          {item.deliveryPartnerProfile!.vehicleType.toUpperCase()}
-                        </Text>
-                      </View>
-                      <View style={styles.metaItem}>
-                        <Star size={12} color="#F59E0B" style={{ marginRight: 4 }} />
-                        <Text style={styles.metaValue}>{rating.toFixed(1)}</Text>
-                      </View>
-                    </View>
-
-                    {item.deliveryPartnerProfile!.vehicleNumber ? (
-                      <Text style={styles.profileText}>
-                        Reg Plate: <Text style={styles.bold}>{item.deliveryPartnerProfile!.vehicleNumber}</Text>
-                      </Text>
-                    ) : null}
-
-                    <Text style={styles.profileText}>
-                      Trips Completed: <Text style={styles.bold}>{completedCount}</Text>
-                    </Text>
-                  </View>
-                ) : null}
-
-                <View style={styles.divider} />
-
-                <View style={styles.driverFooter}>
-                  <View style={styles.contactItem}>
-                    <Phone size={12} color={Colors.textSubtle} style={{ marginRight: 6 }} />
-                    <Text style={styles.phoneText}>{item.phoneNumber}</Text>
-                  </View>
-
-                  <TouchableOpacity style={styles.btnUnlink} onPress={() => handleUnlink(item)}>
-                    <Trash2 size={13} color={Colors.danger} style={{ marginRight: 4 }} />
-                    <Text style={styles.btnUnlinkText}>Unlink</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            );
-          }}
+          data={visible}
+          keyExtractor={(d) => d._id}
+          renderItem={renderDriver}
+          contentContainerStyle={[styles.list, listStyles.frame]}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} tintColor={Colors.primary} colors={[Colors.primary]} />}
+          ListEmptyComponent={
+            drivers.length === 0 ? (
+              <EmptyState
+                icon={Truck}
+                title="No drivers yet"
+                message="Add your own riders to deliver your orders. They sign in to the Krifoo driver app with the username you give them."
+                actionLabel="Add a driver"
+                onAction={openAdd}
+              />
+            ) : (
+              <EmptyState icon={Truck} title="No drivers match" message="Try a different search or filter." />
+            )
+          }
         />
       )}
 
-      {/* Floating Add FAB */}
-      {drivers.length > 0 && (
-        <TouchableOpacity style={styles.fab} onPress={openAddModal} activeOpacity={0.85}>
-          <Plus size={24} color="#FFFFFF" />
-        </TouchableOpacity>
-      )}
+      {drivers.length > 0 && <Fab label="Add driver" icon={Plus} onPress={openAdd} />}
 
-      {/* Add / Link Driver Modal */}
-      <Modal visible={modalVisible} animationType="slide" transparent={true}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Connect Driver</Text>
-              <TouchableOpacity onPress={() => setModalVisible(false)} style={styles.closeBtn}>
-                <X size={20} color={Colors.textMuted} />
-              </TouchableOpacity>
-            </View>
+      <BottomSheet
+        visible={sheetOpen}
+        title="Add a driver"
+        subtitle="Drivers deliver your orders using the Krifoo driver app"
+        onClose={() => setSheetOpen(false)}
+        footer={
+          <>
+            <PrimaryButton label="Cancel" tone="secondary" onPress={() => setSheetOpen(false)} style={styles.flex} />
+            <PrimaryButton
+              label={mode === 'existing' ? 'Add to my team' : 'Create driver'}
+              icon={mode === 'existing' ? Link2 : UserPlus}
+              onPress={mode === 'existing' ? linkExisting : registerNew}
+              loading={saving}
+              style={styles.flex}
+            />
+          </>
+        }
+      >
+        <Segmented
+          options={[
+            { value: 'existing', label: 'Has a Krifoo account' },
+            { value: 'new', label: 'New driver' },
+          ]}
+          value={mode}
+          onChange={(v) => {
+            setMode(v as 'existing' | 'new');
+            setErrors({});
+          }}
+        />
 
-            {/* Toggle Modes */}
-            <View style={styles.modeTabs}>
-              <TouchableOpacity
-                style={[styles.modeTab, modalMode === 'link' && styles.modeTabActive]}
-                onPress={() => setModalMode('link')}
-              >
-                <Text style={[styles.modeLabel, modalMode === 'link' && styles.modeLabelActive]}>
-                  Link Existing
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.modeTab, modalMode === 'register' && styles.modeTabActive]}
-                onPress={() => setModalMode('register')}
-              >
-                <Text style={[styles.modeLabel, modalMode === 'register' && styles.modeLabelActive]}>
-                  Register New
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
-              {modalMode === 'link' ? (
-                <View style={styles.linkForm}>
-                  <Text style={styles.sectionDesc}>
-                    Link an existing delivery rider already registered on the Krifoo network.
-                  </Text>
-
-                  <View style={styles.inputGroup}>
-                    <Text style={styles.label}>Driver Username / Email</Text>
-                    <View style={styles.inputWrapper}>
-                      <User size={16} color={Colors.textSubtle} style={{ marginRight: 10 }} />
-                      <TextInput
-                        style={styles.inputStyle}
-                        placeholder="rider_username"
-                        autoCapitalize="none"
-                        value={linkUsername}
-                        onChangeText={setLinkUsername}
-                      />
-                    </View>
-                  </View>
-
-                  <TouchableOpacity
-                    style={[styles.saveBtn, submitting && { opacity: 0.7 }]}
-                    disabled={submitting}
-                    onPress={handleLinkDriver}
-                  >
-                    {submitting ? (
-                      <ActivityIndicator color="#FFFFFF" />
-                    ) : (
-                      <>
-                        <Text style={styles.saveBtnText}>Link Delivery Partner</Text>
-                        <Check size={16} color="#FFFFFF" style={{ marginLeft: 6 }} />
-                      </>
-                    )}
+        {mode === 'existing' ? (
+          <>
+            <Notice tone="info">Ask the driver for the username they use to sign in to the Krifoo driver app.</Notice>
+            <Field
+              label="Driver username"
+              value={linkUsername}
+              onChangeText={(v) => {
+                setLinkUsername(v);
+                setErrors({});
+              }}
+              placeholder="e.g. david.rider"
+              autoCapitalize="none"
+              autoCorrect={false}
+              prefix="@"
+              error={errors.linkUsername}
+              onSubmitEditing={linkExisting}
+              returnKeyType="done"
+            />
+          </>
+        ) : (
+          <>
+            <Field label="Full name" required value={form.fullName} onChangeText={(v) => setField('fullName', v)} placeholder="e.g. David Smith" autoCapitalize="words" error={errors.fullName} />
+            <Field
+              label="Mobile number"
+              required
+              value={form.phone}
+              onChangeText={(v) => setField('phone', v)}
+              placeholder="07123 456789"
+              keyboardType="phone-pad"
+              error={errors.phone}
+            />
+            <FieldRow>
+              <Field
+                label="Username"
+                required
+                value={form.username}
+                onChangeText={(v) => setField('username', v.toLowerCase().replace(/\s/g, ''))}
+                placeholder="david.rider"
+                autoCapitalize="none"
+                autoCorrect={false}
+                error={errors.username}
+              />
+              <Field
+                label="Password"
+                required
+                value={form.password}
+                onChangeText={(v) => setField('password', v)}
+                placeholder="8+ characters"
+                secureTextEntry={!showPassword}
+                autoCapitalize="none"
+                autoCorrect={false}
+                error={errors.password}
+                trailing={
+                  <TouchableOpacity onPress={() => setShowPassword((s) => !s)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}>
+                    {showPassword ? <EyeOff size={18} color={Colors.textSubtle} /> : <Eye size={18} color={Colors.textSubtle} />}
                   </TouchableOpacity>
-                </View>
-              ) : (
-                <View style={styles.registerForm}>
-                  <Text style={styles.sectionDesc}>
-                    Create and configure credentials for a dedicated restaurant driver.
-                  </Text>
-
-                  <View style={styles.inputGroup}>
-                    <Text style={styles.label}>Rider Full Name</Text>
-                    <TextInput
-                      style={styles.input}
-                      placeholder="David Smith"
-                      value={registerForm.fullName}
-                      onChangeText={(val) => setRegisterForm((prev) => ({ ...prev, fullName: val }))}
-                    />
-                  </View>
-
-                  <View style={styles.inputGroup}>
-                    <Text style={styles.label}>Username / Login ID</Text>
-                    <TextInput
-                      style={styles.input}
-                      placeholder="smith_rider"
-                      autoCapitalize="none"
-                      value={registerForm.username}
-                      onChangeText={(val) => setRegisterForm((prev) => ({ ...prev, username: val }))}
-                    />
-                  </View>
-
-                  <View style={styles.inputGroup}>
-                    <Text style={styles.label}>Password</Text>
-                    <TextInput
-                      style={styles.input}
-                      placeholder="Min 8 characters"
-                      secureTextEntry
-                      value={registerForm.password}
-                      onChangeText={(val) => setRegisterForm((prev) => ({ ...prev, password: val }))}
-                    />
-                  </View>
-
-                  <View style={styles.inputGroup}>
-                    <Text style={styles.label}>Phone Number</Text>
-                    <TextInput
-                      style={styles.input}
-                      placeholder="0712345678"
-                      keyboardType="phone-pad"
-                      value={registerForm.phoneNumber}
-                      onChangeText={(val) => setRegisterForm((prev) => ({ ...prev, phoneNumber: val }))}
-                    />
-                  </View>
-
-                  <View style={styles.inputGroup}>
-                    <Text style={styles.label}>Vehicle Type</Text>
-                    <View style={styles.selectorRow}>
-                      {['bicycle', 'motorcycle', 'car'].map((type) => (
-                        <TouchableOpacity
-                          key={type}
-                          style={[styles.selectorItem, registerForm.vehicleType === type && styles.selectorItemActive]}
-                          onPress={() => setRegisterForm((prev) => ({ ...prev, vehicleType: type }))}
-                        >
-                          <Text style={[styles.selectorLabel, registerForm.vehicleType === type && styles.selectorLabelActive]}>
-                            {type.toUpperCase()}
-                          </Text>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
-                  </View>
-
-                  <View style={styles.rowInputs}>
-                    <View style={[styles.inputGroup, { flex: 1, marginRight: 8 }]}>
-                      <Text style={styles.label}>Reg Plate (Optional)</Text>
-                      <TextInput
-                        style={styles.input}
-                        placeholder="AB12 CDE"
-                        autoCapitalize="characters"
-                        value={registerForm.vehicleNumber}
-                        onChangeText={(val) => setRegisterForm((prev) => ({ ...prev, vehicleNumber: val }))}
-                      />
-                    </View>
-                    <View style={[styles.inputGroup, { flex: 1 }]}>
-                      <Text style={styles.label}>License No (Optional)</Text>
-                      <TextInput
-                        style={styles.input}
-                        placeholder="SMITH987654"
-                        autoCapitalize="characters"
-                        value={registerForm.licenseNumber}
-                        onChangeText={(val) => setRegisterForm((prev) => ({ ...prev, licenseNumber: val }))}
-                      />
-                    </View>
-                  </View>
-
-                  <TouchableOpacity
-                    style={[styles.saveBtn, submitting && { opacity: 0.7 }]}
-                    disabled={submitting}
-                    onPress={handleRegisterDriver}
-                  >
-                    {submitting ? (
-                      <ActivityIndicator color="#FFFFFF" />
-                    ) : (
-                      <>
-                        <Text style={styles.saveBtnText}>Register Driver</Text>
-                        <Check size={16} color="#FFFFFF" style={{ marginLeft: 6 }} />
-                      </>
-                    )}
-                  </TouchableOpacity>
-                </View>
-              )}
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
+                }
+              />
+            </FieldRow>
+            <Text style={styles.label}>Vehicle</Text>
+            <Segmented options={VEHICLES} value={form.vehicle} onChange={(v) => setField('vehicle', v)} />
+            <FieldRow>
+              <Field
+                label={form.vehicle === 'bicycle' ? 'Number plate (optional)' : 'Number plate'}
+                required={form.vehicle !== 'bicycle'}
+                value={form.plate}
+                onChangeText={(v) => setField('plate', v)}
+                placeholder="AB12 CDE"
+                autoCapitalize="characters"
+                error={errors.plate}
+              />
+              <Field label="Licence no. (optional)" value={form.licence} onChangeText={(v) => setField('licence', v)} placeholder="SMITH987654" autoCapitalize="characters" />
+            </FieldRow>
+            <Notice tone="info">Share the username and password with the driver so they can sign in to the Krifoo driver app.</Notice>
+          </>
+        )}
+      </BottomSheet>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: Colors.background,
-  },
-  topFilterBox: {
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.cardBorder,
-    paddingVertical: 12,
-  },
-  searchBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: Colors.cardSurface,
-    borderColor: Colors.cardBorder,
-    borderWidth: 1.5,
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    height: 44,
-    marginHorizontal: 16,
-  },
-  searchInput: {
-    flex: 1,
-    fontSize: 13,
-    color: Colors.text,
-  },
-  centerBox: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 40,
-  },
-  loadingText: {
-    color: Colors.textMuted,
-    fontSize: 13,
-    marginTop: 10,
-  },
-  emptyTitle: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: Colors.text,
-    marginTop: 14,
-  },
-  emptySub: {
-    fontSize: 13,
-    color: Colors.textSubtle,
-    textAlign: 'center',
-    marginTop: 4,
-    maxWidth: 240,
-    lineHeight: 18,
-    marginBottom: 20,
-  },
-  createBtn: {
-    backgroundColor: Colors.primary,
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 8,
-  },
-  createBtnText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-    fontSize: 13,
-  },
-  listContent: {
-    padding: 16,
-    paddingBottom: 80,
-  },
-  driverCard: {
-    backgroundColor: Colors.card,
-    borderRadius: 14,
-    borderWidth: 1.5,
-    borderColor: Colors.cardBorder,
-    padding: 14,
-    marginBottom: 12,
-  },
-  driverHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  driverAvatar: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: Colors.primaryLight,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  driverName: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: Colors.text,
-  },
-  driverUsername: {
-    fontSize: 11,
-    color: Colors.textMuted,
-    marginTop: 1,
-    fontWeight: '700',
-  },
-  statusBadge: {
-    borderRadius: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  badgeGreen: {
-    backgroundColor: '#ECFDF5',
-  },
-  badgeGray: {
-    backgroundColor: Colors.cardSurface,
-  },
-  statusText: {
-    fontSize: 9,
-    fontWeight: '800',
-  },
-  textGreen: {
-    color: '#065F46',
-  },
-  textGray: {
-    color: Colors.textMuted,
-  },
-  profileBox: {
-    backgroundColor: Colors.cardSurface,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: Colors.cardBorder,
-    padding: 10,
-    marginTop: 10,
-    gap: 4,
-  },
-  metaRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  metaItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  metaLabel: {
-    fontSize: 10,
-    color: Colors.textMuted,
-    fontWeight: '600',
-  },
-  metaValue: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: Colors.text,
-  },
-  profileText: {
-    fontSize: 11,
-    color: Colors.textMuted,
-    fontWeight: '600',
-  },
-  bold: {
-    color: Colors.text,
-    fontWeight: '800',
-  },
-  divider: {
-    height: 1,
-    backgroundColor: Colors.cardBorder,
-    marginVertical: 12,
-  },
-  driverFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  contactItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  phoneText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: Colors.text,
-  },
-  btnUnlink: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 4,
-  },
-  btnUnlinkText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: Colors.danger,
-  },
-  fab: {
-    position: 'absolute',
-    bottom: 20,
-    right: 20,
-    backgroundColor: Colors.primary,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: Colors.primary,
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.35,
-    shadowRadius: 10,
-    elevation: 8,
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(17, 24, 28, 0.45)',
-    justifyContent: 'flex-end',
-  },
-  modalContent: {
-    backgroundColor: Colors.background,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    maxHeight: '90%',
-    paddingBottom: Platform.OS === 'ios' ? 40 : 24,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.cardBorder,
-  },
-  modalTitle: {
-    color: Colors.text,
-    fontSize: 18,
-    fontWeight: '800',
-    letterSpacing: -0.5,
-  },
-  closeBtn: {
-    padding: 6,
-  },
-  modeTabs: {
-    flexDirection: 'row',
-    backgroundColor: Colors.backgroundSecondary,
-    padding: 4,
-    marginHorizontal: 16,
-    marginTop: 14,
-    borderRadius: 10,
-  },
-  modeTab: {
-    flex: 1,
-    paddingVertical: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 8,
-  },
-  modeTabActive: {
-    backgroundColor: '#FFFFFF',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  modeLabel: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: Colors.textSubtle,
-  },
-  modeLabelActive: {
-    color: Colors.text,
-  },
-  modalBody: {
-    padding: 16,
-  },
-  linkForm: {},
-  registerForm: {},
-  sectionDesc: {
-    fontSize: 12,
-    color: Colors.textMuted,
-    lineHeight: 18,
-    marginBottom: 16,
-  },
-  inputGroup: {
-    marginBottom: 16,
-  },
-  label: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: Colors.text,
-    marginBottom: 8,
-  },
-  inputWrapper: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: Colors.cardSurface,
-    borderColor: Colors.cardBorder,
-    borderWidth: 1.5,
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    height: 48,
-  },
-  inputStyle: {
-    flex: 1,
-    fontSize: 14,
-    color: Colors.text,
-  },
-  input: {
-    backgroundColor: Colors.cardSurface,
-    borderColor: Colors.cardBorder,
-    borderWidth: 1.5,
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    height: 48,
-    fontSize: 14,
-    color: Colors.text,
-  },
-  selectorRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  selectorItem: {
-    flex: 1,
-    backgroundColor: Colors.cardSurface,
-    borderWidth: 1.5,
-    borderColor: Colors.cardBorder,
-    borderRadius: 10,
-    paddingVertical: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  selectorItemActive: {
-    borderColor: Colors.primary,
-    backgroundColor: Colors.primaryLight,
-  },
-  selectorLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: Colors.textMuted,
-  },
-  selectorLabelActive: {
-    color: Colors.primary,
-  },
-  rowInputs: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  saveBtn: {
-    backgroundColor: Colors.primary,
-    height: 48,
-    borderRadius: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 8,
-    marginBottom: 30,
-  },
-  saveBtnText: {
-    color: '#FFFFFF',
-    fontWeight: '800',
-    fontSize: 15,
-  },
+  screen: { flex: 1, backgroundColor: Colors.backgroundSecondary },
+  flex: { flex: 1 },
+  toolbarInner: { paddingHorizontal: 16 },
+  list: { padding: 16, paddingBottom: FAB_SPACE },
+  avatarWrap: { width: 44, height: 44 },
+  avatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: Colors.primaryLight, alignItems: 'center', justifyContent: 'center' },
+  avatarText: { fontSize: 15, fontWeight: '900', color: Colors.primaryDark },
+  dot: { position: 'absolute', right: 0, bottom: 0, width: 13, height: 13, borderRadius: 7, borderWidth: 2, borderColor: Colors.background },
+  metaRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 14, marginTop: 12 },
+  meta: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  footer: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 14, paddingTop: 12, borderTopWidth: 1, borderTopColor: Colors.cardBorder },
+  phone: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 6 },
+  phoneText: { fontSize: 14, fontWeight: '700', color: Colors.primary },
+  label: { fontSize: 13, fontWeight: '700', color: Colors.text, marginBottom: 7 },
 });

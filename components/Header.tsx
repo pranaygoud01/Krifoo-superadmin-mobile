@@ -7,21 +7,103 @@ import {
   Alert,
   DeviceEventEmitter,
   useWindowDimensions,
+  Animated,
+  Easing,
   type ImageSourcePropType,
 } from 'react-native';
-import { Image } from 'expo-image';
 import { resolveImageUrl, resolveMediaImageSource } from '../services/image.helper';
-import { LocalImages } from '@/constants/local-assets';
-import { useRouter, useSegments } from 'expo-router';
-import { ArrowLeft, Bell, Settings, User, Store } from 'lucide-react-native';
+import { useFocusEffect, useRouter, useSegments } from 'expo-router';
+import { ArrowLeft, Bell, Settings, User, MapPin } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Colors } from '../constants/colors';
 import { orderService } from '../services/order.service';
 import { restaurantService } from '../services/restaurant.service';
-import { restaurantOwnerService } from '../services/restaurant-owner.service';
+import { restaurantOwnerService, STORE_STATUS_CHANGED_EVENT } from '../services/restaurant-owner.service';
 import { useAuth } from '../context/AuthContext';
 import { useFontSize } from '../context/FontSizeContext';
 import { computeUnreadCount, NOTIFICATIONS_BADGE_EVENT } from '../services/notification-tracker.service';
+
+/** Compact Online / Offline pill shown beside the store name on the Home header. */
+const StoreStatusPill: React.FC<{ isActive: boolean; isTablet: boolean; onPress: () => void }> = ({
+  isActive,
+  isTablet,
+  onPress,
+}) => {
+  // Soft "live" pulse ring around the dot while the store is online
+  const pulse = React.useRef(new Animated.Value(0)).current;
+
+  React.useEffect(() => {
+    if (!isActive) {
+      pulse.stopAnimation();
+      pulse.setValue(0);
+      return;
+    }
+    const loop = Animated.loop(
+      Animated.timing(pulse, {
+        toValue: 1,
+        duration: 1600,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: true,
+      })
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [isActive, pulse]);
+
+  const dotSize = isTablet ? 8 : 7;
+
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      activeOpacity={0.7}
+      hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+      accessibilityRole="button"
+      accessibilityLabel={isActive ? 'Store is online' : 'Store is offline'}
+      accessibilityHint="Opens store settings to change your store status"
+      style={[
+        styles.statusPill,
+        isTablet && styles.statusPillTablet,
+        isActive ? styles.statusPillOnline : styles.statusPillOffline,
+      ]}
+    >
+      <View style={{ width: dotSize, height: dotSize, alignItems: 'center', justifyContent: 'center' }}>
+        {isActive && (
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              styles.statusPulse,
+              {
+                width: dotSize,
+                height: dotSize,
+                borderRadius: dotSize / 2,
+                opacity: pulse.interpolate({ inputRange: [0, 1], outputRange: [0.55, 0] }),
+                transform: [{ scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 2.6] }) }],
+              },
+            ]}
+          />
+        )}
+        <View
+          style={{
+            width: dotSize,
+            height: dotSize,
+            borderRadius: dotSize / 2,
+            backgroundColor: isActive ? Colors.success : Colors.textSubtle,
+          }}
+        />
+      </View>
+      <Text
+        style={[
+          styles.statusPillText,
+          isTablet && styles.statusPillTextTablet,
+          { color: isActive ? Colors.statusApproved.text : Colors.textMuted },
+        ]}
+        numberOfLines={1}
+      >
+        {isActive ? 'Online' : 'Offline'}
+      </Text>
+    </TouchableOpacity>
+  );
+};
 
 interface HeaderProps {
   title: string;
@@ -49,84 +131,74 @@ export const Header: React.FC<HeaderProps> = ({
   const { width: windowWidth } = useWindowDimensions();
   const isTablet = windowWidth >= 768;
 
-  // Resolve restaurant logo from user object or props
-  const extractUserLogo = React.useCallback((): ImageSourcePropType | null => {
-    if (isSuperAdmin) return null;
-    let raw: any = null;
-    if (propRestaurantLogo) raw = propRestaurantLogo;
-    else if (user?.logoUrl) raw = user.logoUrl;
-    else if (user?.restaurantLogo) raw = user.restaurantLogo;
-    else if (user?.imageUrl) raw = user.imageUrl;
-    else if (user?.logo) raw = user.logo;
-    else if (typeof user?.restaurantId === 'object' && user?.restaurantId) {
-      const rest = user.restaurantId;
-      raw = rest.logoUrl || rest.imageUrl || rest.logo || rest.externalWebsiteSettings?.logoUrl;
-    } else if (user?.externalWebsiteSettings?.logoUrl) raw = user.externalWebsiteSettings.logoUrl;
-    else if (user?.restaurant?.logoUrl) raw = user.restaurant.logoUrl;
-    else if (user?.restaurant?.imageUrl) raw = user.restaurant.imageUrl;
+  // Restaurant location (city / area) shown under the store name — read from the user object,
+  // otherwise fetched once from the store profile.
+  const formatLocation = (addr: any): string | undefined => {
+    if (!addr) return undefined;
+    if (typeof addr === 'string') return addr.trim() || undefined;
+    const parts = [addr.area, addr.city].filter((p: any) => typeof p === 'string' && p.trim());
+    // "area" holds the postcode for UK stores — show "City · POSTCODE" when both exist.
+    if (addr.city && addr.area) return `${addr.city} · ${String(addr.area).toUpperCase()}`;
+    return parts[0] || addr.formattedAddress || undefined;
+  };
 
-    return resolveMediaImageSource(raw);
-  }, [isSuperAdmin, propRestaurantLogo, user]);
+  const locationFromUser = React.useMemo((): string | undefined => {
+    if (isSuperAdmin || !user) return undefined;
+    const rest = typeof user.restaurantId === 'object' ? user.restaurantId : user.restaurant;
+    return formatLocation(rest?.address) || formatLocation(user.address);
+  }, [isSuperAdmin, user]);
 
-  const [storeLogoSource, setStoreLogoSource] = React.useState<ImageSourcePropType | null>(extractUserLogo());
-  const [imageError, setImageError] = React.useState<boolean>(false);
-  const [localImageError, setLocalImageError] = React.useState<boolean>(false);
+  const [storeLocation, setStoreLocation] = React.useState<string | undefined>(locationFromUser);
 
-  // Fetch store logo if not present on user object
+  // Store online / offline status (restaurant `isActive`) — restaurant owners on the Home header only.
+  const showStoreStatus = !isSuperAdmin && !!user && title === 'Krifoo Admin';
+  const statusFromUser = React.useMemo((): boolean | undefined => {
+    if (!showStoreStatus) return undefined;
+    const rest = typeof user?.restaurantId === 'object' ? user.restaurantId : user?.restaurant;
+    return typeof rest?.isActive === 'boolean' ? rest.isActive : undefined;
+  }, [showStoreStatus, user]);
+  const [storeActive, setStoreActive] = React.useState<boolean | undefined>(statusFromUser);
+
   React.useEffect(() => {
-    if (isSuperAdmin) {
-      setStoreLogoSource(null);
-      setImageError(false);
-      return;
-    }
+    if (locationFromUser) setStoreLocation(locationFromUser);
+  }, [locationFromUser]);
 
-    const immediateLogo = extractUserLogo();
-    if (immediateLogo) {
-      setStoreLogoSource(immediateLogo);
-      setImageError(false);
-      return;
-    }
+  // Load the store profile each time the Home screen comes into view, so the status
+  // (and location, if not on the user object) is always current.
+  useFocusEffect(
+    React.useCallback(() => {
+      if (!showStoreStatus) return;
+      let isMounted = true;
+      restaurantOwnerService
+        .getRestaurantProfile()
+        .then((res) => {
+          if (!isMounted || !res.success || !res.data) return;
+          if (typeof res.data.isActive === 'boolean') setStoreActive(res.data.isActive);
+          if (!locationFromUser) setStoreLocation(formatLocation(res.data.address));
+        })
+        .catch(() => {
+          // Status & location are optional — keep whatever we already show
+        });
+      return () => {
+        isMounted = false;
+      };
+    }, [showStoreStatus, locationFromUser])
+  );
 
-    let isMounted = true;
-    restaurantOwnerService
-      .getRestaurantProfile()
-      .then((res) => {
-        if (!isMounted) return;
-        if (res.success && res.data) {
-          const r = res.data;
-          const remoteLogo = resolveMediaImageSource(
-            r.logoUrl ||
-            r.externalWebsiteSettings?.logoUrl ||
-            r.imageUrl ||
-            r.logo ||
-            r.image
-          );
-          if (remoteLogo) {
-            setStoreLogoSource(remoteLogo);
-            setImageError(false);
-          }
-        }
-      })
-      .catch(() => {
-        // Silently fall back to default app logo
-      });
-
-    return () => {
-      isMounted = false;
-    };
-  }, [isSuperAdmin, extractUserLogo]);
+  // Instant update when the status is switched elsewhere (e.g. Store settings)
+  React.useEffect(() => {
+    if (!showStoreStatus) return;
+    const sub = DeviceEventEmitter.addListener(STORE_STATUS_CHANGED_EVENT, (isActive: boolean) => {
+      if (typeof isActive === 'boolean') setStoreActive(isActive);
+    });
+    return () => sub.remove();
+  }, [showStoreStatus]);
 
   const getRestaurantName = () => {
     if (user?.restaurantName) return user.restaurantName;
     if (typeof user?.restaurantId === 'object' && user?.restaurantId?.restaurantName) {
       return user.restaurantId.restaurantName;
     }
-    return undefined;
-  };
-
-  const getOwnerName = () => {
-    if (user?.ownerFullName) return user.ownerFullName;
-    if (user?.fullName) return user.fullName;
     return undefined;
   };
 
@@ -223,37 +295,34 @@ export const Header: React.FC<HeaderProps> = ({
           <View style={styles.titleContainer}>
             {title === 'Krifoo Admin' ? (
               <View style={[styles.profileSection, isTablet && styles.profileSectionTablet]}>
-                {!isSuperAdmin && storeLogoSource && !imageError ? (
-                  <Image
-                    source={storeLogoSource}
-                    style={[styles.headerLogo, styles.headerRestaurantLogo, isTablet && styles.headerLogoTablet]}
-                    contentFit="cover"
-                    transition={200}
-                    onError={() => setImageError(true)}
-                  />
-                ) : !localImageError ? (
-                  <Image
-                    source={LocalImages.logo}
-                    style={[styles.headerLogo, isTablet && styles.headerLogoTablet]}
-                    contentFit="contain"
-                    onError={() => setLocalImageError(true)}
-                  />
-                ) : (
-                  <View style={[styles.headerLogo, styles.headerRestaurantLogo, isTablet && styles.headerLogoTablet, { backgroundColor: '#FF5C39', alignItems: 'center', justifyContent: 'center' }]}>
-                    <Store size={isTablet ? 24 : 18} color="#FFFFFF" />
-                  </View>
-                )}
                 <View style={styles.greetingTextContainer}>
-                  <Text style={[styles.greetingText, isTablet && styles.greetingTextTablet]}>
-                    {isSuperAdmin
-                      ? `Hello, ${user?.fullName?.split(' ')[0] || 'Admin'} 👋`
-                      : (getRestaurantName() || 'Restaurant Partner')}
-                  </Text>
-                  <Text style={[styles.greetingRole, isTablet && styles.greetingRoleTablet]}>
-                    {isSuperAdmin
-                      ? 'Admin'
-                      : (getOwnerName() || 'Restaurant Partner')}
-                  </Text>
+                  <View style={styles.nameRow}>
+                    <Text
+                      style={[styles.greetingText, styles.nameText, isTablet && styles.greetingTextTablet]}
+                      numberOfLines={1}
+                    >
+                      {isSuperAdmin
+                        ? `Hello, Krifoo Admin`
+                        : (getRestaurantName() || 'Restaurant Partner')}
+                    </Text>
+                    {showStoreStatus && storeActive !== undefined && (
+                      <StoreStatusPill
+                        isActive={storeActive}
+                        isTablet={isTablet}
+                        onPress={() => router.push('/restaurant-settings')}
+                      />
+                    )}
+                  </View>
+                  {isSuperAdmin ? (
+                    <Text style={[styles.greetingRole, isTablet && styles.greetingRoleTablet]}>Manage Stores</Text>
+                  ) : storeLocation ? (
+                    <View style={styles.locationRow} accessibilityLabel={`Location: ${storeLocation}`}>
+                      <MapPin size={isTablet ? 14 : 12} color={Colors.textMuted} />
+                      <Text style={[styles.greetingRole, isTablet && styles.greetingRoleTablet]} numberOfLines={1}>
+                        {storeLocation}
+                      </Text>
+                    </View>
+                  ) : null}
                 </View>
               </View>
             ) : (
@@ -266,32 +335,7 @@ export const Header: React.FC<HeaderProps> = ({
 
         <View style={styles.rightContainer}>
           {/* Global Font Size Controller (A- / A+) */}
-          <View style={styles.fontScaleContainer}>
-            <TouchableOpacity
-              style={[styles.fontBtn, scaleIndex === 0 && styles.fontBtnDisabled]}
-              onPress={decreaseFontSize}
-              disabled={scaleIndex === 0}
-              activeOpacity={0.7}
-              hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
-            >
-              <Text allowFontScaling={false} style={[styles.fontBtnText, scaleIndex === 0 && styles.fontBtnTextDisabled]}>A-</Text>
-            </TouchableOpacity>
-
-            <View style={styles.fontScaleBadge}>
-              <Text allowFontScaling={false} style={styles.fontScaleBadgeText}>{scaleLabel}</Text>
-            </View>
-
-            <TouchableOpacity
-              style={[styles.fontBtn, scaleIndex === 3 && styles.fontBtnDisabled]}
-              onPress={increaseFontSize}
-              disabled={scaleIndex === 3}
-              activeOpacity={0.7}
-              hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
-            >
-              <Text allowFontScaling={false} style={[styles.fontBtnText, scaleIndex === 3 && styles.fontBtnTextDisabled]}>A+</Text>
-            </TouchableOpacity>
-          </View>
-
+          
           {(rightElement || rightAction) ? (
             (rightElement || rightAction)
           ) : (
@@ -308,7 +352,7 @@ export const Header: React.FC<HeaderProps> = ({
                     {unreadCount > 0 && (
                       <View style={styles.badgeContainer}>
                         <Text style={styles.badgeText}>
-                          {unreadCount > 99 ? '99+' : unreadCount}
+                          {unreadCount > 9 ? '9+' : unreadCount}
                         </Text>
                       </View>
                     )}
@@ -405,6 +449,58 @@ const styles = StyleSheet.create({
   },
   greetingTextContainer: {
     justifyContent: 'center',
+    flexShrink: 1,
+    minWidth: 0,
+  },
+  nameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    minWidth: 0,
+  },
+  nameText: {
+    flexShrink: 1, // long store names truncate; the status pill always stays visible
+  },
+  statusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+    borderWidth: 1,
+    flexShrink: 0,
+  },
+  statusPillTablet: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    gap: 6,
+  },
+  statusPillOnline: {
+    backgroundColor: Colors.statusApproved.bg,
+    borderColor: '#A7F3D0',
+  },
+  statusPillOffline: {
+    backgroundColor: Colors.cardSurface,
+    borderColor: Colors.cardBorder,
+  },
+  statusPulse: {
+    position: 'absolute',
+    backgroundColor: Colors.success,
+  },
+  statusPillText: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.2,
+  },
+  statusPillTextTablet: {
+    fontSize: 12,
+  },
+  locationRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 2,
   },
   greetingText: {
     color: Colors.text,
@@ -418,9 +514,9 @@ const styles = StyleSheet.create({
   },
   greetingRole: {
     color: Colors.textMuted,
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '600',
-    marginTop: 2,
+    flexShrink: 1,
   },
   greetingRoleTablet: {
     fontSize: 12.5,
@@ -493,8 +589,8 @@ const styles = StyleSheet.create({
   },
   badgeContainer: {
     position: 'absolute',
-    top: -3,
-    right: -3,
+    top: -10,
+    right: -10,
     backgroundColor: '#EF4444',
     borderRadius: 9,
     minWidth: 18,

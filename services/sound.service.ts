@@ -59,7 +59,8 @@ export async function saveSoundSettings(settings: Partial<SoundSettings>): Promi
     return updated;
   } catch (e) {
     console.warn('[SoundService] Failed to save sound settings:', e);
-    return DEFAULT_SOUND_SETTINGS;
+    // Let the caller know nothing was saved (previously this silently returned the defaults).
+    throw e;
   }
 }
 
@@ -119,12 +120,14 @@ export async function stopOrderBuzzSound(): Promise<void> {
  * Thread-safe with race condition protection & automatic guaranteed termination.
  * @param overrideDurationMs Optional duration override in milliseconds
  * @param eventType Optional event filter ('order' | 'booking' | 'cancellation')
+ * @param previewSettings Optional unsaved values (e.g. from the settings screen's "Test" button)
  */
 export async function playOrderBuzzSound(
   overrideDurationMs?: number,
-  eventType?: 'order' | 'booking' | 'cancellation'
+  eventType?: 'order' | 'booking' | 'cancellation',
+  previewSettings?: Partial<SoundSettings>
 ): Promise<boolean> {
-  const settings = await getSoundSettings();
+  const settings = { ...(await getSoundSettings()), ...(previewSettings || {}) };
 
   // Check master switch
   if (!settings.enabled) {

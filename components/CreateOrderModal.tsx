@@ -21,7 +21,6 @@ import {
   Trash2,
   UtensilsCrossed,
   ShoppingBag,
-  Bike,
   Search,
   Check,
   Printer,
@@ -40,6 +39,7 @@ import { useAuth } from '../context/AuthContext';
 import { getCachedStoreProfile, setCachedStoreProfile, getItemOptionsList } from '../services/receipt-customization.service';
 import { restaurantOwnerService } from '../services/restaurant-owner.service';
 import { restaurantService } from '../services/restaurant.service';
+
 
 /**
  * Normalizes any phone string to a valid 10-digit UK format (no leading 0, no +44).
@@ -93,7 +93,8 @@ interface CreateOrderModalProps {
   visible: boolean;
   onClose: () => void;
   onOrderCreated: () => void;
-  initialChannel?: 'dine_in' | 'takeaway' | 'delivery';
+  /** In-store order types only — delivery orders are not created from the POS. */
+  initialChannel?: 'dine_in' | 'takeaway';
   restaurantId?: string;
   restaurantName?: string;
   restaurantPhone?: string;
@@ -116,11 +117,10 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
   const isWideTablet = windowWidth >= 1024;
 
   const [mobileTab, setMobileTab] = useState<'menu' | 'cart'>('menu');
-  const [channel, setChannel] = useState<'dine_in' | 'takeaway' | 'delivery'>(initialChannel);
+  const [channel, setChannel] = useState<'dine_in' | 'takeaway'>(initialChannel);
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [tableNumber, setTableNumber] = useState('');
-  const [deliveryAddress, setDeliveryAddress] = useState('');
   const [notes, setNotes] = useState('');
   const [paymentType, setPaymentType] = useState<'cash' | 'card'>('cash');
   const [autoPrint, setAutoPrint] = useState(true);
@@ -185,7 +185,6 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
       setCustomerName('');
       setCustomerPhone('');
       setTableNumber('');
-      setDeliveryAddress('');
       setNotes('');
       setSearchQuery('');
       setCustomizingItem(null);
@@ -235,11 +234,9 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
     });
   }, [menuItems, searchQuery, selectedCategory]);
 
-  const getItemBasePrice = (item: MenuItem, channelType: 'dine_in' | 'takeaway' | 'delivery'): number => {
+  const getItemBasePrice = (item: MenuItem, channelType: 'dine_in' | 'takeaway'): number => {
     let p = Number(item.price ?? item.basePrice ?? 0);
-    if (channelType === 'delivery' && item.deliveryPrice != null && !isNaN(Number(item.deliveryPrice))) {
-      p = Number(item.deliveryPrice);
-    } else if (channelType === 'takeaway' && item.collectionPrice != null && !isNaN(Number(item.collectionPrice))) {
+    if (channelType === 'takeaway' && item.collectionPrice != null && !isNaN(Number(item.collectionPrice))) {
       p = Number(item.collectionPrice);
     } else if (channelType === 'dine_in' && item.eatInPrice != null && !isNaN(Number(item.eatInPrice))) {
       p = Number(item.eatInPrice);
@@ -337,9 +334,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
     if (!customizingItem) return 0;
     let base = getItemBasePrice(customizingItem, channel);
     if (customSelectedWeightVariant) {
-      if (channel === 'delivery' && customSelectedWeightVariant.deliveryPrice != null && !isNaN(Number(customSelectedWeightVariant.deliveryPrice))) {
-        base = Number(customSelectedWeightVariant.deliveryPrice);
-      } else if (channel === 'takeaway' && customSelectedWeightVariant.collectionPrice != null && !isNaN(Number(customSelectedWeightVariant.collectionPrice))) {
+      if (channel === 'takeaway' && customSelectedWeightVariant.collectionPrice != null && !isNaN(Number(customSelectedWeightVariant.collectionPrice))) {
         base = Number(customSelectedWeightVariant.collectionPrice);
       } else if (channel === 'dine_in' && customSelectedWeightVariant.eatInPrice != null && !isNaN(Number(customSelectedWeightVariant.eatInPrice))) {
         base = Number(customSelectedWeightVariant.eatInPrice);
@@ -572,17 +567,8 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
         (typeof user?.restaurantId === 'object' ? user?.restaurantId?.phoneNumber : undefined);
 
       const resolvedStorePhone = normalizeUKPhone(candidateStorePhone);
-      if (channel === 'delivery' && !resolvedStorePhone) {
-        setErrorMsg('Phone number is required for delivery orders.');
-        return;
-      }
       // Use restaurant/store phone number as default (falls back to '7000000001' if restaurant phone not yet configured)
       finalPhone = resolvedStorePhone || '7000000001';
-    }
-
-    if (channel === 'delivery' && !deliveryAddress.trim()) {
-      setErrorMsg('Delivery address is required for delivery orders.');
-      return;
     }
 
     setSubmitting(true);
@@ -617,13 +603,6 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
           instructions: e.instructions || '',
         })),
       };
-
-      if (channel === 'delivery') {
-        orderPayload.deliveryAddress = {
-          addressLine1: deliveryAddress.trim(),
-          coordinates: [-0.1278, 51.5074], // London fallback coordinates
-        };
-      }
 
       const res = await orderService.createManualOrder(orderPayload);
       if (res.success) {
@@ -672,7 +651,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                 </View>
               </View>
               <Text style={styles.modalSub} numberOfLines={1}>
-                {restaurantName ? `${restaurantName} • Punch & Dispatch Order` : 'Punch In-Store, Takeaway or Delivery Order'}
+                {restaurantName ? `${restaurantName} • Punch & Dispatch Order` : 'Punch In-Store or Takeaway Order'}
               </Text>
             </View>
 
@@ -772,19 +751,6 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                     </Text>
                   </TouchableOpacity>
 
-                  <TouchableOpacity
-                    style={[styles.channelChip, channel === 'delivery' && styles.channelChipDeliveryActive]}
-                    onPress={() => setChannel('delivery')}
-                    activeOpacity={0.8}
-                  >
-                    <Bike size={14} color={channel === 'delivery' ? '#2563EB' : '#64748B'} />
-                    <Text
-                      style={[styles.channelChipText, channel === 'delivery' && styles.channelChipTextDeliveryActive]}
-                      numberOfLines={1}
-                    >
-                      Delivery
-                    </Text>
-                  </TouchableOpacity>
                 </View>
 
               {/* Menu Search & Categories */}
@@ -939,11 +905,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                 {/* Channel Specific Fields */}
                 <View style={styles.formSection}>
                   <Text style={styles.formSectionTitle}>
-                    {channel === 'dine_in'
-                      ? 'Dine-In Details'
-                      : channel === 'takeaway'
-                      ? 'Takeaway Details'
-                      : 'Delivery Address'}
+                    {channel === 'dine_in' ? 'Dine-In Details' : 'Takeaway Details'}
                   </Text>
 
                   {channel === 'dine_in' && (
@@ -985,44 +947,6 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                         value={customerPhone}
                         onChangeText={(t) => {
                           setCustomerPhone(t);
-                          if (errorMsg) setErrorMsg(null);
-                        }}
-                      />
-                    </View>
-                  )}
-
-                  {channel === 'delivery' && (
-                    <View style={{ gap: 8 }}>
-                      <View style={styles.fieldRow}>
-                        <TextInput
-                          style={[styles.inputField, { flex: 1 }]}
-                          placeholder="Recipient Name"
-                          placeholderTextColor="#94A3B8"
-                          value={customerName}
-                          onChangeText={(t) => {
-                            setCustomerName(t);
-                            if (errorMsg) setErrorMsg(null);
-                          }}
-                        />
-                        <TextInput
-                          style={[styles.inputField, { flex: 1 }]}
-                          placeholder="Phone No."
-                          placeholderTextColor="#94A3B8"
-                          keyboardType="phone-pad"
-                          value={customerPhone}
-                          onChangeText={(t) => {
-                            setCustomerPhone(t);
-                            if (errorMsg) setErrorMsg(null);
-                          }}
-                        />
-                      </View>
-                      <TextInput
-                        style={styles.inputField}
-                        placeholder="Delivery Address & Postal Code"
-                        placeholderTextColor="#94A3B8"
-                        value={deliveryAddress}
-                        onChangeText={(t) => {
-                          setDeliveryAddress(t);
                           if (errorMsg) setErrorMsg(null);
                         }}
                       />
@@ -1131,7 +1055,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                     >
                       <Banknote size={15} color={paymentType === 'cash' ? '#059669' : '#64748B'} />
                       <Text style={[styles.paymentBtnText, paymentType === 'cash' && styles.paymentBtnTextCashActive]}>
-                        Cash ({channel === 'delivery' ? 'COD' : 'Counter'})
+                        Cash (Counter)
                       </Text>
                     </TouchableOpacity>
 
@@ -1612,10 +1536,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFF7ED',
     borderColor: '#FED7AA',
   },
-  channelChipDeliveryActive: {
-    backgroundColor: '#EFF6FF',
-    borderColor: '#BFDBFE',
-  },
   channelChipText: {
     fontSize: 11,
     fontWeight: '700',
@@ -1626,9 +1546,6 @@ const styles = StyleSheet.create({
   },
   channelChipTextTakeawayActive: {
     color: '#EA580C',
-  },
-  channelChipTextDeliveryActive: {
-    color: '#2563EB',
   },
   searchRow: {
     flexDirection: 'row',

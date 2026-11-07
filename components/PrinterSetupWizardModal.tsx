@@ -55,13 +55,42 @@ import {
   formatPrinterConnectionError,
   isLikelyAudioDevice,
 } from '../services/thermal-print.service';
-import { PosPrinterConfig, PosBrand, PosConnectionType } from '../services/pos-config.service';
+import {
+  PosPrinterConfig,
+  PosBrand,
+  PosConnectionType,
+  NetworkProtocol,
+  savePosPrinterConfigStrict,
+  IPV4_REGEX as IPV4_RE,
+} from '../services/pos-config.service';
 import {
   getAllReceiptTemplates,
   getActiveReceiptTemplate,
-  saveReceiptTemplate,
+  setActiveReceiptTemplateId,
   ReceiptTemplate,
 } from '../services/receipt-customization.service';
+import { hasBluetoothPermissions, requestBluetoothPermissions } from '../services/printer/bluetooth-permissions';
+
+type WizardDevice = {
+  id: string;
+  name: string;
+  target?: string;
+  ipAddress?: string;
+  macAddress?: string;
+  source?: 'classic' | 'ble' | 'network';
+};
+
+/** Brand is informational only — guessed from the device name. */
+function guessBrand(name: string | undefined, type: PosConnectionType): PosBrand {
+  const n = (name || '').toLowerCase();
+  if (type === 'builtin') return 'sunmi';
+  if (type === 'system') return 'system';
+  if (/epson|tm-|tm_/.test(n)) return 'epson';
+  if (/\bstar\b|tsp|mc-print|mpop/.test(n)) return 'star';
+  if (/citizen|ct-s|ct-e/.test(n)) return 'citizen';
+  if (/bixolon|srp/.test(n)) return 'bixolon';
+  return type === 'network' ? 'generic_network' : 'munbyn_xprinter';
+}
 
 export interface PrinterSetupWizardModalProps {
   visible: boolean;
@@ -96,8 +125,15 @@ export function PrinterSetupWizardModal({
 
   // Discovered devices & scanning
   const [isScanning, setIsScanning] = useState(false);
-  const [devices, setDevices] = useState<Array<{ id: string; name: string; connectionType: 'bluetooth' | 'network'; target?: string; ipAddress?: string; macAddress?: string }>>([]);
-  const [selectedDevice, setSelectedDevice] = useState<{ id: string; name: string; target?: string; ipAddress?: string; macAddress?: string } | null>(null);
+  const [devices, setDevices] = useState<Array<WizardDevice & { connectionType: 'bluetooth' | 'network' }>>([]);
+  const [selectedDevice, setSelectedDevice] = useState<WizardDevice | null>(null);
+  const [hasSunmiPrinter, setHasSunmiPrinter] = useState(false);
+  const [networkProtocol, setNetworkProtocol] = useState<NetworkProtocol>(
+    currentConfig.networkProtocol || (currentConfig.port === 8008 || currentConfig.port === 80 ? 'epos' : 'raw')
+  );
+  const [networkDevices, setNetworkDevices] = useState<WizardDevice[]>([]);
+  const [isScanningNetwork, setIsScanningNetwork] = useState(false);
+  const finishAfterVerifyRef = useRef(false);
 
   // Nearby devices permission state (Android)
   const [hasNearbyPermission, setHasNearbyPermission] = useState<boolean | null>(null);
@@ -112,12 +148,12 @@ export function PrinterSetupWizardModal({
   const [manualBtInput, setManualBtInput] = useState(currentConfig.target || '');
   const [showManualBtToggle, setShowManualBtToggle] = useState(false);
 
-  // Step 3 Preferences (Default to 58mm paper roll size)
-  const [paperWidth, setPaperWidth] = useState<'80mm' | '58mm'>(currentConfig.paperWidth || '58mm');
+  // Step 3 Preferences (paper width belongs to the printer; same default as the rest of the app)
+  const [paperWidth, setPaperWidth] = useState<'80mm' | '58mm'>(currentConfig.paperWidth || '80mm');
   const [copies, setCopies] = useState<number>(currentConfig.copies || 1);
   const [autoCut, setAutoCut] = useState<boolean>(currentConfig.autoCut ?? true);
   const [autoPrint, setAutoPrint] = useState<boolean>(currentConfig.autoPrint ?? true);
-  const [openCashDrawer, setOpenCashDrawer] = useState<boolean>(currentConfig.openCashDrawer ?? true);
+  const [openCashDrawer, setOpenCashDrawer] = useState<boolean>(currentConfig.openCashDrawer ?? false);
 
   // Template dropdown state
   const [templates, setTemplates] = useState<ReceiptTemplate[]>([]);
@@ -137,6 +173,29 @@ export function PrinterSetupWizardModal({
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [scanError, setScanError] = useState<string | null>(null);
+  const [networkError, setNetworkError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const verifyToken = useRef(0);
+  const wasVisibleRef = useRef(false);
+
+  /** Runs a connection check; results from an older check (e.g. a previously tapped printer) are ignored. */
+  const runVerify = (cfg: PosPrinterConfig) => {
+    const token = ++verifyToken.current;
+    setIsVerifyingConnection(true);
+    verifyPrinterConnection(cfg)
+      .then((check) => {
+        if (token !== verifyToken.current) return;
+        setConnectionStatus({ checked: true, success: check.success, message: check.message, rawError: (check as any).rawError || check.message });
+      })
+      .catch((err: any) => {
+        if (token !== verifyToken.current) return;
+        setConnectionStatus({ checked: true, success: false, message: err?.message || 'Connection check failed', rawError: err?.message });
+      })
+      .finally(() => {
+        if (token === verifyToken.current) setIsVerifyingConnection(false);
+      });
+  };
   const scrollViewRef = useRef<ScrollView>(null);
   const [keyboardOffset, setKeyboardOffset] = useState(0);
 
@@ -280,14 +339,22 @@ export function PrinterSetupWizardModal({
   });
 
   useEffect(() => {
-    if (visible) {
+    if (visible && !wasVisibleRef.current) {
       setStep(1);
+      setScanError(null);
+      setNetworkError(null);
+      setSaveError(null);
+      setConnectionStatus(null);
       setSelectedType(currentConfig.connectionType || 'bluetooth');
-      setPaperWidth(currentConfig.paperWidth || '58mm');
+      setPaperWidth(currentConfig.paperWidth || '80mm');
       setCopies(currentConfig.copies || 1);
       setAutoCut(currentConfig.autoCut ?? true);
       setAutoPrint(currentConfig.autoPrint ?? true);
-      setOpenCashDrawer(currentConfig.openCashDrawer ?? true);
+      setOpenCashDrawer(currentConfig.openCashDrawer ?? false);
+      setNetworkProtocol(currentConfig.networkProtocol || (currentConfig.port === 8008 || currentConfig.port === 80 ? 'epos' : 'raw'));
+      setNetworkDevices([]);
+      finishAfterVerifyRef.current = false;
+      isSunmiAvailable().then(setHasSunmiPrinter).catch(() => setHasSunmiPrinter(false));
       setIpInput(currentConfig.ipAddress || '');
       setPortInput(String(currentConfig.port || 9100));
       setTestResult(null);
@@ -296,15 +363,10 @@ export function PrinterSetupWizardModal({
       setIsRequestingPermission(false);
       setIsBluetoothDisabled(false);
 
-      // Load available receipt templates & current active template
+      // Load templates. Paper width is NOT taken from the template — it is a printer setting.
       getAllReceiptTemplates(restaurantId).then((allTpls) => {
         setTemplates(allTpls);
-        getActiveReceiptTemplate(restaurantId).then((activeTpl) => {
-          setSelectedTemplate(activeTpl);
-          if (activeTpl?.layout?.paperWidth) {
-            setPaperWidth(activeTpl.layout.paperWidth);
-          }
-        });
+        getActiveReceiptTemplate(restaurantId).then((activeTpl) => setSelectedTemplate(activeTpl));
       });
 
       if (currentConfig.target || currentConfig.macAddress) {
@@ -317,74 +379,23 @@ export function PrinterSetupWizardModal({
           target: currentConfig.target,
           macAddress: currentConfig.macAddress,
           ipAddress: currentConfig.ipAddress,
+          source: currentConfig.bluetoothMode === 'ble' ? 'ble' : 'classic',
         });
       } else {
         setSelectedDevice(null);
       }
     }
+    wasVisibleRef.current = visible;
   }, [visible, currentConfig, restaurantId]);
 
-  // Check if Nearby Devices permissions are already granted
-  const checkNearbyPermissions = async (): Promise<boolean> => {
-    if (Platform.OS !== 'android') return true;
-    try {
-      if (Platform.Version >= 31) {
-        const scan = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN);
-        const connect = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT);
-        return scan && connect;
-      } else {
-        const fineLoc = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION);
-        return fineLoc;
-      }
-    } catch (e) {
-      console.warn('[Permissions] check error:', e);
-      return false;
-    }
-  };
-
-  // Request Nearby Devices permissions on Android
+  // Nearby devices permission (shared helper used by every Bluetooth screen)
+  const checkNearbyPermissions = hasBluetoothPermissions;
   const requestNearbyPermissions = async (): Promise<boolean> => {
-    if (Platform.OS !== 'android') return true;
     setIsRequestingPermission(true);
     try {
-      if (Platform.Version >= 31) {
-        const permissions: any[] = [
-          PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
-          PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
-        ];
-        if (Platform.Version >= 33) {
-          const nearbyWifi =
-            (PermissionsAndroid.PERMISSIONS as any).NEARBY_WIFI_DEVICES ||
-            'android.permission.NEARBY_WIFI_DEVICES';
-          permissions.push(nearbyWifi);
-        }
-        permissions.push(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION);
-
-        const statuses = await PermissionsAndroid.requestMultiple(permissions);
-
-        const scanGranted =
-          statuses[PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN] === PermissionsAndroid.RESULTS.GRANTED;
-        const connectGranted =
-          statuses[PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT] === PermissionsAndroid.RESULTS.GRANTED;
-
-        const isGranted = scanGranted || connectGranted;
-        setHasNearbyPermission(isGranted);
-        return isGranted;
-      } else {
-        const statuses = await PermissionsAndroid.requestMultiple([
-          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-          PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION,
-        ]);
-        const isGranted =
-          statuses[PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION] === PermissionsAndroid.RESULTS.GRANTED ||
-          statuses[PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION] === PermissionsAndroid.RESULTS.GRANTED;
-        setHasNearbyPermission(isGranted);
-        return isGranted;
-      }
-    } catch (e) {
-      console.warn('[Permissions] request error:', e);
-      setHasNearbyPermission(false);
-      return false;
+      const granted = (await requestBluetoothPermissions()) === 'granted';
+      setHasNearbyPermission(granted);
+      return granted;
     } finally {
       setIsRequestingPermission(false);
     }
@@ -397,7 +408,7 @@ export function PrinterSetupWizardModal({
     } else {
       Alert.alert(
         'Nearby Devices Permission Required',
-        'Android requires "Nearby devices" permission to detect and connect to Bluetooth thermal printers. Please allow it in App Settings.',
+        'Android requires “Nearby devices” permission to detect and connect to Bluetooth thermal printers. Please allow it in App Settings.',
         [
           { text: 'Cancel', style: 'cancel' },
           { text: 'Open Settings', onPress: () => Linking.openSettings() },
@@ -430,6 +441,7 @@ export function PrinterSetupWizardModal({
     setIsScanning(true);
     setDevices([]);
     setIsBluetoothDisabled(false);
+    setScanError(null);
     const startTime = Date.now();
     try {
       const results = await discoverEpsonPrinters();
@@ -444,6 +456,8 @@ export function PrinterSetupWizardModal({
       console.warn('[Wizard] Scan error:', err);
       if (err?.message?.toLowerCase().includes('bluetooth is disabled') || err?.code === 'BLUETOOTH_DISABLED') {
         setIsBluetoothDisabled(true);
+      } else {
+        setScanError(err?.message || 'Scanning failed. Make sure Bluetooth is on and try again.');
       }
     } finally {
       setIsScanning(false);
@@ -461,12 +475,8 @@ export function PrinterSetupWizardModal({
         await Linking.sendIntent('android.settings.BLUETOOTH_SETTINGS');
         return;
       } catch {}
-    } else {
-      try {
-        await Linking.openURL('App-Prefs:Bluetooth');
-        return;
-      } catch {}
     }
+    // iOS has no public deep link to Bluetooth settings (App-Prefs: is a private API) — open app settings
     await Linking.openSettings();
   };
 
@@ -475,7 +485,7 @@ export function PrinterSetupWizardModal({
       if (Platform.OS === 'android') {
         await Linking.sendIntent('android.settings.BLUETOOTH_SETTINGS');
       } else {
-        await Linking.openURL('App-Prefs:Bluetooth');
+        await Linking.openSettings();
       }
     } catch {
       await Linking.openSettings();
@@ -503,7 +513,7 @@ export function PrinterSetupWizardModal({
   };
 
   // Step 2: Select Discovered Device & Advance Immediately
-  const handleSelectDiscoveredDevice = (dev: { id: string; name: string; target?: string; ipAddress?: string; macAddress?: string }) => {
+  const handleSelectDiscoveredDevice = (dev: WizardDevice) => {
     // Instantly update selection, stop radio scanning, and navigate to Step 3 without blocking
     setSelectedDevice(dev);
     setIsScanning(false);
@@ -517,8 +527,9 @@ export function PrinterSetupWizardModal({
       const macVal = dev.macAddress || (targetVal.startsWith('BT:') ? '' : targetVal);
       const verifyConfig: PosPrinterConfig = {
         ...currentConfig,
-        brand: dev.name.toLowerCase().includes('star') ? 'star' : 'epson',
+        brand: guessBrand(dev.name, 'bluetooth'),
         connectionType: 'bluetooth',
+        bluetoothMode: dev.source === 'ble' ? 'ble' : 'classic',
         target: targetVal,
         macAddress: macVal,
         paperWidth,
@@ -528,26 +539,7 @@ export function PrinterSetupWizardModal({
         openCashDrawer,
       };
 
-      verifyPrinterConnection(verifyConfig)
-        .then((check) => {
-          setConnectionStatus({
-            checked: true,
-            success: check.success,
-            message: check.message,
-            rawError: (check as any).rawError || check.message,
-          });
-        })
-        .catch((err: any) => {
-          setConnectionStatus({
-            checked: true,
-            success: false,
-            message: err?.message || 'Bluetooth connection check failed',
-            rawError: err?.message,
-          });
-        })
-        .finally(() => {
-          setIsVerifyingConnection(false);
-        });
+      runVerify(verifyConfig);
     }
   };
 
@@ -555,7 +547,8 @@ export function PrinterSetupWizardModal({
   const handleSaveManualBt = () => {
     const target = manualBtInput.trim();
     if (!target) return;
-    const dev = {
+    const dev: WizardDevice = {
+      source: 'classic',
       id: `manual_${Date.now()}`,
       name: `Bluetooth Printer (${target})`,
       target,
@@ -569,8 +562,9 @@ export function PrinterSetupWizardModal({
     setIsVerifyingConnection(true);
     const verifyConfig: PosPrinterConfig = {
       ...currentConfig,
-      brand: 'epson',
+      brand: guessBrand(dev.name, 'bluetooth'),
       connectionType: 'bluetooth',
+      bluetoothMode: 'classic',
       target,
       macAddress: dev.macAddress || '',
       paperWidth,
@@ -580,37 +574,28 @@ export function PrinterSetupWizardModal({
       openCashDrawer,
     };
 
-    verifyPrinterConnection(verifyConfig)
-      .then((check) => {
-        setConnectionStatus({
-          checked: true,
-          success: check.success,
-          message: check.message,
-          rawError: (check as any).rawError || check.message,
-        });
-      })
-      .catch((err: any) => {
-        setConnectionStatus({
-          checked: true,
-          success: false,
-          message: err?.message || 'Bluetooth connection check failed',
-          rawError: err?.message,
-        });
-      })
-      .finally(() => {
-        setIsVerifyingConnection(false);
-      });
+    runVerify(verifyConfig);
   };
 
   // Step 2: Save Manual Network IP
   const handleSaveManualNetwork = () => {
     const ip = ipInput.trim();
-    if (!ip) return;
-    const port = parseInt(portInput, 10) || 9100;
-    const dev = {
+    if (!IPV4_RE.test(ip)) {
+      setNetworkError('Enter a valid IP address, e.g. 192.168.1.50 (print the printer’s self-test slip to find it).');
+      return;
+    }
+    const portText = portInput.trim();
+    const port = portText ? parseInt(portText, 10) : networkProtocol === 'epos' ? 8008 : 9100;
+    if (!/^\d{1,5}$/.test(String(port)) || port < 1 || port > 65535) {
+      setNetworkError('Port must be between 1 and 65535 — usually 9100, or 8008 for Epson.');
+      return;
+    }
+    setNetworkError(null);
+    const dev: WizardDevice = {
       id: `net_${ip}_${port}`,
       name: `Network Printer (${ip}:${port})`,
       ipAddress: ip,
+      source: 'network',
     };
     setSelectedDevice(dev);
     setConnectionStatus(null);
@@ -620,8 +605,9 @@ export function PrinterSetupWizardModal({
     setIsVerifyingConnection(true);
     const verifyConfig: PosPrinterConfig = {
       ...currentConfig,
-      brand: 'epson',
+      brand: guessBrand(dev.name, 'network'),
       connectionType: 'network',
+      networkProtocol,
       ipAddress: ip,
       port,
       paperWidth,
@@ -631,158 +617,77 @@ export function PrinterSetupWizardModal({
       openCashDrawer,
     };
 
-    verifyPrinterConnection(verifyConfig)
-      .then((check) => {
-        setConnectionStatus({
-          checked: true,
-          success: check.success,
-          message: check.message,
-          rawError: (check as any).rawError || check.message,
-        });
-      })
-      .catch((err: any) => {
-        setConnectionStatus({
-          checked: true,
-          success: false,
-          message: err?.message || 'Network connection check failed',
-          rawError: err?.message,
-        });
-      })
-      .finally(() => {
-        setIsVerifyingConnection(false);
-      });
+    runVerify(verifyConfig);
   };
 
   // Step 3: Select Receipt Template from Dropdown
   const handleSelectTemplate = (tpl: ReceiptTemplate) => {
     setSelectedTemplate(tpl);
     setIsTemplateDropdownOpen(false);
-    if (tpl.layout?.paperWidth) {
-      setPaperWidth(tpl.layout.paperWidth);
-    }
   };
 
   // Step 3: Switch Paper Width and Keep in Sync with Template
   const handleSelectPaperWidth = (width: '80mm' | '58mm') => {
     setPaperWidth(width);
-    if (selectedTemplate) {
-      setSelectedTemplate({
-        ...selectedTemplate,
-        layout: {
-          ...selectedTemplate.layout,
-          paperWidth: width,
-        },
-      });
-    }
   };
 
-  // Step 3: Re-verify Connection on Demand
-  const handleVerifyCurrentConnection = async () => {
-    setIsVerifyingConnection(true);
-    try {
-      const targetVal = selectedDevice?.target || manualBtInput.trim();
-      const macVal = selectedDevice?.macAddress || (targetVal.startsWith('BT:') ? '' : targetVal);
-      const ipVal = selectedDevice?.ipAddress || ipInput.trim();
-      const portVal = parseInt(portInput, 10) || 9100;
-      const verifyConfig: PosPrinterConfig = {
-        ...currentConfig,
-        brand: selectedDevice?.name?.toLowerCase().includes('star') ? 'star' : 'epson',
-        connectionType: selectedType,
-        target: selectedType === 'bluetooth' ? targetVal : '',
-        macAddress: selectedType === 'bluetooth' ? macVal : '',
-        ipAddress: selectedType === 'network' ? ipVal : '',
-        port: selectedType === 'network' ? portVal : (currentConfig.port ?? 9100),
-        paperWidth,
-        autoPrint,
-        copies,
-        autoCut,
-        openCashDrawer,
-      };
-      const check = await verifyPrinterConnection(verifyConfig);
-      setConnectionStatus({
-        checked: true,
-        success: check.success,
-        message: check.message,
-        rawError: (check as any).rawError || check.message,
-      });
-    } catch (err: any) {
-      setConnectionStatus({
-        checked: true,
-        success: false,
-        message: err?.message || 'Verification check failed',
-        rawError: err?.message,
-      });
-    } finally {
-      setIsVerifyingConnection(false);
-    }
-  };
-
-  // Step 3: Test Print
-  const handleRunTestPrint = async () => {
-    setIsTesting(true);
-    setTestResult(null);
-
+  /** Builds the printer config from the wizard's current choices (single source for verify / test / save). */
+  const buildWizardConfig = (): PosPrinterConfig => {
     const targetVal = selectedDevice?.target || (selectedType === 'bluetooth' ? manualBtInput.trim() : '');
-    const macVal = selectedDevice?.macAddress || (selectedType === 'bluetooth' ? (targetVal.startsWith('BT:') ? '' : targetVal) : '');
+    const macVal =
+      selectedDevice?.macAddress || (selectedType === 'bluetooth' ? (targetVal.startsWith('BT:') ? '' : targetVal) : '');
     const ipVal = selectedDevice?.ipAddress || (selectedType === 'network' ? ipInput.trim() : '');
-    const portVal = parseInt(portInput, 10) || 9100;
-    const brandVal: PosBrand = selectedDevice?.name?.toLowerCase().includes('star')
-      ? 'star'
-      : selectedType === 'builtin'
-        ? 'sunmi'
+    const defaultPort = networkProtocol === 'epos' ? 8008 : 9100;
+    const portVal = parseInt(portInput, 10) || defaultPort;
+    const deviceName =
+      selectedDevice?.name ||
+      (selectedType === 'builtin'
+        ? 'Sunmi built-in printer'
         : selectedType === 'system'
-          ? 'system'
-          : 'epson';
+          ? 'System print'
+          : selectedType === 'bluetooth'
+            ? 'Bluetooth printer'
+            : 'Network printer');
 
-    const testConfig: PosPrinterConfig = {
+    return {
       ...currentConfig,
       connectionType: selectedType,
-      target: targetVal,
-      macAddress: macVal,
-      ipAddress: ipVal,
-      port: portVal,
+      brand: guessBrand(selectedDevice?.name, selectedType),
+      deviceName,
+      printerName: deviceName,
+      target: selectedType === 'bluetooth' ? targetVal : '',
+      macAddress: selectedType === 'bluetooth' ? macVal : '',
+      bluetoothMode: selectedType === 'bluetooth' ? (selectedDevice?.source === 'ble' ? 'ble' : 'classic') : currentConfig.bluetoothMode,
+      ipAddress: selectedType === 'network' ? ipVal : '',
+      port: selectedType === 'network' ? portVal : currentConfig.port ?? 9100,
+      networkProtocol: selectedType === 'network' ? networkProtocol : currentConfig.networkProtocol,
       paperWidth,
       copies,
       autoCut,
       autoPrint,
       openCashDrawer,
-      brand: brandVal,
     };
+  };
 
-    // Synchronize template paper width with selected paper width
-    const tplWithPaperWidth = selectedTemplate
-      ? {
-          ...selectedTemplate,
-          layout: {
-            ...selectedTemplate.layout,
-            paperWidth,
-          },
-        }
-      : undefined;
+  // Step 3: Re-verify Connection on Demand
+  const handleVerifyCurrentConnection = () => {
+    runVerify(buildWizardConfig());
+  };
 
+  // Step 3: Test Print (never opens the cash drawer — handled by testEpsonPrinter)
+  const handleRunTestPrint = async () => {
+    setIsTesting(true);
+    setTestResult(null);
     try {
-      const res = await testEpsonPrinter(testConfig, restaurantId, tplWithPaperWidth);
+      const res = await testEpsonPrinter(buildWizardConfig(), restaurantId, selectedTemplate || undefined);
       if (res.success) {
-        setConnectionStatus({
-          checked: true,
-          success: true,
-          message: 'Printer connected & test print verified ✅',
-        });
-        setTestResult({
-          success: true,
-          message: res.message || `Test receipt printed successfully on ${paperWidth} roll!`,
-        });
+        setConnectionStatus({ checked: true, success: true, message: 'Printer connected and test receipt printed.' });
+        setTestResult({ success: true, message: res.message || `Test receipt printed on ${paperWidth} paper.` });
       } else {
-        setTestResult({
-          success: false,
-          message: (res as any).error || res.message || 'Could not reach printer. Check power & pairing.',
-        });
+        setTestResult({ success: false, message: res.message || 'Could not reach the printer. Check power and pairing.' });
       }
     } catch (e: any) {
-      setTestResult({
-        success: false,
-        message: e.message || 'Test print failed. Please verify printer status.',
-      });
+      setTestResult({ success: false, message: e?.message || 'Test print failed. Please check the printer.' });
     } finally {
       setIsTesting(false);
     }
@@ -790,131 +695,95 @@ export function PrinterSetupWizardModal({
 
   // Connection verification status
   const isConnectionVerified =
-    selectedType === 'builtin' ||
     selectedType === 'system' ||
-    (connectionStatus?.checked === true && connectionStatus.success === true);
+    (connectionStatus?.checked === true && connectionStatus.success === true) ||
+    (selectedType === 'builtin' && hasSunmiPrinter);
+
+  // When "Save" is tapped before the connection is verified, verify first and save automatically on success
+  useEffect(() => {
+    if (!finishAfterVerifyRef.current || isVerifyingConnection || !connectionStatus?.checked) return;
+    finishAfterVerifyRef.current = false;
+    if (connectionStatus.success) {
+      executeSave(buildWizardConfig(), true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connectionStatus, isVerifyingConnection]);
 
   // Step 3: Complete Wizard and Save with Verified Connection
   const handleFinishWizard = async () => {
     if (!isConnectionVerified) {
-      // If user tries to finish before connecting, trigger connection check
+      finishAfterVerifyRef.current = true;
       handleVerifyCurrentConnection();
       return;
     }
-
-    const targetVal = selectedDevice?.target || manualBtInput.trim();
-    const ipVal = selectedDevice?.ipAddress || ipInput.trim();
-    const portVal = parseInt(portInput, 10) || 9100;
-    const brandVal: PosBrand = selectedDevice?.name?.toLowerCase().includes('star')
-      ? 'star'
-      : selectedType === 'builtin'
-        ? 'sunmi'
-        : selectedType === 'system'
-          ? 'system'
-          : 'epson';
-
-    const resolvedDeviceName =
-      selectedDevice?.name ||
-      (selectedType === 'builtin'
-        ? 'Sunmi POS Built-in Thermal Printer'
-        : selectedType === 'system'
-          ? 'System Print Spooler'
-          : selectedType === 'bluetooth'
-            ? 'Bluetooth Thermal Printer'
-            : 'Network Thermal Printer');
-
-    const finalConfig: Partial<PosPrinterConfig> = {
-      connectionType: selectedType,
-      brand: brandVal,
-      deviceName: resolvedDeviceName,
-      printerName: resolvedDeviceName,
-      target: selectedType === 'bluetooth' ? targetVal : '',
-      macAddress: selectedType === 'bluetooth' ? (selectedDevice?.macAddress || (targetVal.startsWith('BT:') ? '' : targetVal)) : '',
-      ipAddress: selectedType === 'network' ? ipVal : '',
-      port: selectedType === 'network' ? portVal : undefined,
-      paperWidth,
-      copies,
-      autoCut,
-      autoPrint: true,
-      openCashDrawer,
-    };
-
-    await executeSave(finalConfig, true);
+    await executeSave(buildWizardConfig(), true);
   };
 
-  // Step 3: Save configuration offline without live printer connection
+  // Step 3: Save without a live connection. Auto-print is switched OFF (the button says so).
   const handleSaveOffline = async () => {
-    const targetVal = selectedDevice?.target || manualBtInput.trim();
-    const ipVal = selectedDevice?.ipAddress || ipInput.trim();
-    const portVal = parseInt(portInput, 10) || 9100;
-    const brandVal: PosBrand = selectedDevice?.name?.toLowerCase().includes('star')
-      ? 'star'
-      : selectedType === 'builtin'
-        ? 'sunmi'
-        : selectedType === 'system'
-          ? 'system'
-          : 'epson';
-
-    const resolvedDeviceName =
-      selectedDevice?.name ||
-      (selectedType === 'builtin'
-        ? 'Sunmi POS Built-in Thermal Printer'
-        : selectedType === 'system'
-          ? 'System Print Spooler'
-          : selectedType === 'bluetooth'
-            ? 'Bluetooth Thermal Printer'
-            : 'Network Thermal Printer');
-
-    const offlineConfig: Partial<PosPrinterConfig> = {
-      connectionType: selectedType,
-      brand: brandVal,
-      deviceName: resolvedDeviceName,
-      printerName: resolvedDeviceName,
-      target: selectedType === 'bluetooth' ? targetVal : '',
-      macAddress: selectedType === 'bluetooth' ? (selectedDevice?.macAddress || (targetVal.startsWith('BT:') ? '' : targetVal)) : '',
-      ipAddress: selectedType === 'network' ? ipVal : '',
-      port: selectedType === 'network' ? portVal : undefined,
-      paperWidth,
-      copies,
-      autoCut,
-      autoPrint: false, // Keep auto-print off while offline to prevent printing errors on orders
-      openCashDrawer,
-    };
-
-    await executeSave(offlineConfig, false);
+    await executeSave({ ...buildWizardConfig(), autoPrint: false }, false);
   };
 
   const executeSave = async (finalConfig: Partial<PosPrinterConfig>, isVerified: boolean = true) => {
     setIsSaving(true);
     try {
-      const saved = await savePosPrinterConfig(finalConfig, restaurantId);
+      setSaveError(null);
+      const saved = await savePosPrinterConfigStrict(finalConfig, restaurantId);
 
-      // Synchronize with active receipt template
-      try {
-        const tplToSave = selectedTemplate || (await getActiveReceiptTemplate(restaurantId));
-        if (tplToSave) {
-          await saveReceiptTemplate(
-            {
-              ...tplToSave,
-              layout: {
-                ...tplToSave.layout,
-                paperWidth,
-              },
-            },
-            restaurantId,
-            true
-          );
+      // Activate the template picked in the wizard. Its content is not modified
+      // (paper width lives in the printer config, not in the template).
+      if (selectedTemplate) {
+        try {
+          await setActiveReceiptTemplateId(selectedTemplate.id, restaurantId);
+        } catch (err) {
+          console.warn('[Wizard] Could not activate template:', err);
         }
-      } catch (err) {
-        console.warn('[Wizard] Template sync warning:', err);
       }
 
       onComplete(saved, isVerified);
       onClose();
-    } catch (err) {
+    } catch (err: any) {
       console.warn('[Wizard] Save failed:', err);
+      setSaveError(err?.message || 'Couldn’t save the printer on this device. Please try again.');
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  // Network discovery (Epson printers on the same Wi-Fi)
+  const handleScanNetwork = async () => {
+    setIsScanningNetwork(true);
+    setNetworkError(null);
+    try {
+      const results = await discoverEpsonPrinters({ includeBle: false, includeNetwork: true });
+      const lan = results
+        .filter((r) => r.connectionType === 'network' && (r.ipAddress || r.target))
+        .map((r) => ({ id: r.id, name: r.name, ipAddress: r.ipAddress || r.target, source: 'network' as const }));
+      setNetworkDevices(lan);
+      if (lan.length === 0) {
+        setNetworkError('No network printers found. Enter the IP address printed on the printer’s self-test slip.');
+      }
+    } catch (err: any) {
+      setNetworkError(err?.message || 'Network search failed. Enter the IP address manually.');
+    } finally {
+      setIsScanningNetwork(false);
+    }
+  };
+
+  const handleSelectNetworkDevice = (dev: WizardDevice) => {
+    if (dev.ipAddress) setIpInput(dev.ipAddress);
+    setNetworkProtocol('epos'); // Epson discovery finds ePOS-capable printers
+    setPortInput('8008');
+  };
+
+  /** Back: step 3 → 1 for Sunmi / System (they skip step 2), otherwise one step back. */
+  const handleBack = () => {
+    if (step === 3 && (selectedType === 'builtin' || selectedType === 'system')) {
+      setStep(1);
+    } else if (step > 1) {
+      setStep((s) => (s - 1) as 1 | 2);
+    } else {
+      onClose();
     }
   };
 
@@ -924,7 +793,7 @@ export function PrinterSetupWizardModal({
       animationType="slide"
       presentationStyle="fullScreen"
       statusBarTranslucent={true}
-      onRequestClose={onClose}
+      onRequestClose={handleBack}
     >
       <View
         style={[
@@ -943,13 +812,7 @@ export function PrinterSetupWizardModal({
         <View style={styles.navBar}>
           <View style={styles.navBarInner}>
             <TouchableOpacity
-              onPress={() => {
-                if (step > 1) {
-                  setStep((s) => ((s - 1) as 1 | 2));
-                } else {
-                  onClose();
-                }
-              }}
+              onPress={handleBack}
               style={styles.navBackBtn}
               activeOpacity={0.7}
             >
@@ -1030,7 +893,7 @@ export function PrinterSetupWizardModal({
                 </View>
                 <View style={{ flex: 1, marginRight: 8 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-                    <Text style={styles.cardMainTitle}>Wireless Bluetooth</Text>
+                    <Text style={styles.cardMainTitle}>Bluetooth</Text>
                     {Platform.OS !== 'ios' ? (
                       <View style={styles.recBadge}>
                         <Text style={styles.recBadgeText}>RECOMMENDED</Text>
@@ -1061,7 +924,7 @@ export function PrinterSetupWizardModal({
                 </View>
                 <View style={{ flex: 1, marginRight: 8 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-                    <Text style={styles.cardMainTitle}>Network IP (Wi-Fi / Ethernet)</Text>
+                    <Text style={styles.cardMainTitle}>Wi-Fi / Network</Text>
                     {Platform.OS === 'ios' && (
                       <View style={[styles.recBadge, { backgroundColor: '#ECFDF5' }]}>
                         <Text style={[styles.recBadgeText, { color: '#059669' }]}>RECOMMENDED FOR IPAD</Text>
@@ -1075,7 +938,8 @@ export function PrinterSetupWizardModal({
                 <ArrowRight size={20} color="#9CA3AF" />
               </TouchableOpacity>
 
-              {/* Option 3: Sunmi Built-in */}
+              {/* Option 3: Sunmi Built-in — only on devices that actually have one */}
+              {hasSunmiPrinter && (
               <TouchableOpacity
                 style={[styles.wizardCard, selectedType === 'builtin' && styles.wizardCardSelected]}
                 onPress={() => handleSelectTypeAndNext('builtin')}
@@ -1085,13 +949,14 @@ export function PrinterSetupWizardModal({
                   <Smartphone size={24} color="#C2410C" />
                 </View>
                 <View style={{ flex: 1, marginRight: 8 }}>
-                  <Text style={styles.cardMainTitle}>Sunmi POS Built-in Terminal</Text>
+                  <Text style={styles.cardMainTitle}>Sunmi built-in</Text>
                   <Text style={styles.cardSubTitle}>
                     Integrated thermal printhead on Sunmi V2, V3, and T2 Android POS devices.
                   </Text>
                 </View>
                 <ArrowRight size={20} color="#9CA3AF" />
               </TouchableOpacity>
+              )}
 
               {/* Option 4: System Spooler */}
               <TouchableOpacity
@@ -1103,7 +968,7 @@ export function PrinterSetupWizardModal({
                   <FileText size={24} color="#475569" />
                 </View>
                 <View style={{ flex: 1, marginRight: 8 }}>
-                  <Text style={styles.cardMainTitle}>System Spooler (AirPrint / PDF)</Text>
+                  <Text style={styles.cardMainTitle}>System print (AirPrint)</Text>
                   <Text style={styles.cardSubTitle}>
                     Standard tablet print sheet for AirPrint or Android cloud print queues.
                   </Text>
@@ -1206,6 +1071,8 @@ export function PrinterSetupWizardModal({
                         ? 'Bluetooth is turned off'
                         : hasNearbyPermission === false
                           ? 'Nearby devices permission required'
+                          : scanError
+                          ? 'Scan failed'
                           : devices.length > 0
                             ? `Found ${devices.length} nearby printer(s)`
                             : 'No printers found nearby'}
@@ -1238,6 +1105,13 @@ export function PrinterSetupWizardModal({
                   </Text>
                 </TouchableOpacity>
               </View>
+
+              {scanError && !isScanning && !isBluetoothDisabled ? (
+                <View style={styles.inlineError}>
+                  <AlertCircle size={14} color="#B91C1C" />
+                  <Text style={styles.inlineErrorText}>{scanError}</Text>
+                </View>
+              ) : null}
 
               {/* Bluetooth Disabled Card */}
               {isBluetoothDisabled && (
@@ -1283,7 +1157,7 @@ export function PrinterSetupWizardModal({
                     <View style={{ flex: 1 }}>
                       <Text style={styles.permissionTitle}>Nearby Devices Permission Required</Text>
                       <Text style={styles.permissionDesc}>
-                        Android requires "Nearby devices" permission to search, pair, and send orders to Bluetooth receipt printers.
+                        Android requires “Nearby devices” permission to search, pair, and send orders to Bluetooth receipt printers.
                       </Text>
                     </View>
                   </View>
@@ -1413,7 +1287,7 @@ export function PrinterSetupWizardModal({
                   <Printer size={36} color="#9CA3AF" style={{ marginBottom: 10 }} />
                   <Text style={styles.emptyHeader}>Printer not showing up?</Text>
                   <Text style={styles.emptyDesc}>
-                    Desktop Bluetooth printers must first be paired in your tablet's Bluetooth menu:
+                    Desktop Bluetooth printers must first be paired in your tablet’s Bluetooth menu:
                   </Text>
 
                   <View style={styles.stepsMiniBox}>
@@ -1466,7 +1340,7 @@ export function PrinterSetupWizardModal({
                     value={manualBtInput}
                     onChangeText={setManualBtInput}
                     placeholder="e.g. BT:EP-TM-M30III or 00:01:90:84:7B:A2"
-                    placeholderTextColor="#9CA3AF"
+                    placeholderTextColor="#9BA1A6"
                     autoCapitalize="none"
                     onFocus={() => {
                       setTimeout(() => {
@@ -1497,14 +1371,69 @@ export function PrinterSetupWizardModal({
                 </Text>
               </View>
 
+              {/* Search the Wi-Fi network (Epson printers) */}
+              <TouchableOpacity
+                style={styles.netSearchBtn}
+                onPress={handleScanNetwork}
+                disabled={isScanningNetwork}
+                activeOpacity={0.8}
+              >
+                {isScanningNetwork ? <ActivityIndicator size="small" color="#FF5C39" /> : <Wifi size={16} color="#FF5C39" />}
+                <Text style={styles.netSearchBtnText}>{isScanningNetwork ? 'Searching Wi-Fi…' : 'Search Wi-Fi for printers'}</Text>
+              </TouchableOpacity>
+              {networkDevices.map((dev) => {
+                const isPicked = ipInput.trim() === dev.ipAddress;
+                return (
+                  <TouchableOpacity
+                    key={dev.id}
+                    style={[styles.netDeviceRow, isPicked && styles.netDeviceRowActive]}
+                    onPress={() => handleSelectNetworkDevice(dev)}
+                    activeOpacity={0.8}
+                  >
+                    <Printer size={16} color={isPicked ? '#FF5C39' : '#475569'} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.netDeviceName}>{dev.name}</Text>
+                      <Text style={styles.netDeviceIp}>{dev.ipAddress}</Text>
+                    </View>
+                    {isPicked && <Check size={16} color="#FF5C39" />}
+                  </TouchableOpacity>
+                );
+              })}
+
               <View style={styles.manualInputCard}>
-                <Text style={styles.manualInputLabel}>Printer IP Address</Text>
+                <Text style={styles.manualInputLabel}>Printer type</Text>
+                <View style={styles.protocolRow}>
+                  {([
+                    { id: 'raw', title: 'Standard ESC/POS', hint: 'Port 9100 · most printers' },
+                    { id: 'epos', title: 'Epson ePOS', hint: 'Port 8008 · Epson TM series' },
+                  ] as const).map((opt) => {
+                    const active = networkProtocol === opt.id;
+                    return (
+                      <TouchableOpacity
+                        key={opt.id}
+                        style={[styles.protocolChip, active && styles.protocolChipActive]}
+                        onPress={() => {
+                          setNetworkProtocol(opt.id);
+                          setPortInput(opt.id === 'epos' ? '8008' : '9100');
+                        }}
+                        activeOpacity={0.8}
+                        accessibilityRole="radio"
+                        accessibilityState={{ selected: active }}
+                      >
+                        <Text style={[styles.protocolChipTitle, active && styles.protocolChipTitleActive]}>{opt.title}</Text>
+                        <Text style={styles.protocolChipHint}>{opt.hint}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+
+                <Text style={[styles.manualInputLabel, { marginTop: 12 }]}>Printer IP Address</Text>
                 <TextInput
                   style={styles.manualTextInput}
                   value={ipInput}
                   onChangeText={setIpInput}
                   placeholder="e.g. 192.168.1.100"
-                  placeholderTextColor="#9CA3AF"
+                  placeholderTextColor="#9BA1A6"
                   keyboardType="decimal-pad"
                   autoCapitalize="none"
                   onFocus={() => {
@@ -1519,8 +1448,8 @@ export function PrinterSetupWizardModal({
                   style={styles.manualTextInput}
                   value={portInput}
                   onChangeText={setPortInput}
-                  placeholder="9100 (Universal) or 8008 (Epson ePOS)"
-                  placeholderTextColor="#9CA3AF"
+                  placeholder={networkProtocol === 'epos' ? '8008' : '9100'}
+                  placeholderTextColor="#9BA1A6"
                   keyboardType="numeric"
                   onFocus={() => {
                     setTimeout(() => {
@@ -1528,6 +1457,13 @@ export function PrinterSetupWizardModal({
                     }, 120);
                   }}
                 />
+
+                {networkError ? (
+                  <View style={styles.inlineError}>
+                    <AlertCircle size={14} color="#B91C1C" />
+                    <Text style={styles.inlineErrorText}>{networkError}</Text>
+                  </View>
+                ) : null}
 
                 <TouchableOpacity
                   onPress={handleSaveManualNetwork}
@@ -1835,7 +1771,7 @@ export function PrinterSetupWizardModal({
                       onPress={() => handleSelectPaperWidth('58mm')}
                     >
                       <Text style={[styles.segmentCtrlText, paperWidth === '58mm' && styles.segmentCtrlTextActive]}>
-                        58mm (2")
+                        58mm (2″)
                       </Text>
                     </TouchableOpacity>
                     <TouchableOpacity
@@ -1843,7 +1779,7 @@ export function PrinterSetupWizardModal({
                       onPress={() => handleSelectPaperWidth('80mm')}
                     >
                       <Text style={[styles.segmentCtrlText, paperWidth === '80mm' && styles.segmentCtrlTextActive]}>
-                        80mm (3")
+                        80mm (3″)
                       </Text>
                     </TouchableOpacity>
                   </View>
@@ -1929,7 +1865,7 @@ export function PrinterSetupWizardModal({
                     <Printer size={18} color="#FFFFFF" />
                   )}
                   <Text style={styles.testActionBtnText}>
-                    {isTesting ? 'Printing sample receipt...' : 'Print Test Receipt Now'}
+                    {isTesting ? 'Printing sample receipt...' : 'Print test receipt'}
                   </Text>
                 </TouchableOpacity>
 
@@ -1952,6 +1888,13 @@ export function PrinterSetupWizardModal({
                 )}
               </View>
 
+              {saveError ? (
+                <View style={styles.inlineError}>
+                  <AlertCircle size={14} color="#B91C1C" />
+                  <Text style={styles.inlineErrorText}>{saveError}</Text>
+                </View>
+              ) : null}
+
               {/* Complete Setup Action Area */}
               <View style={styles.wizardFooterActions}>
                 {isConnectionVerified ? (
@@ -1967,7 +1910,7 @@ export function PrinterSetupWizardModal({
                       ) : (
                         <>
                           <Check size={18} color="#FFFFFF" />
-                          <Text style={styles.completeWizardBtnText}>Save & Start Printing</Text>
+                          <Text style={styles.completeWizardBtnText}>Save & start printing</Text>
                         </>
                       )}
                     </TouchableOpacity>
@@ -2008,12 +1951,12 @@ export function PrinterSetupWizardModal({
                         <ActivityIndicator size="small" color="#64748B" />
                       ) : (
                         <Text style={styles.saveOfflineBtnText}>
-                          Save Settings for Later (Printer Offline)
+                          Save without connecting (auto-print off)
                         </Text>
                       )}
                     </TouchableOpacity>
                     <Text style={styles.footerOfflineHint}>
-                      Printer will be saved. Automatic printing remains paused until the printer is connected.
+                      The printer is saved but automatic printing is turned OFF. Turn it back on in Printer Settings once the printer connects.
                     </Text>
                   </View>
                 )}
@@ -2029,6 +1972,58 @@ export function PrinterSetupWizardModal({
 }
 
 const styles = StyleSheet.create({
+  netSearchBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#FFD2C7',
+    backgroundColor: '#FFF6F3',
+    marginBottom: 10,
+  },
+  netSearchBtnText: { fontSize: 14, fontWeight: '700', color: '#FF5C39' },
+  netDeviceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#E6E8EB',
+    backgroundColor: '#FFFFFF',
+    marginBottom: 8,
+  },
+  netDeviceRowActive: { borderColor: '#FF5C39', backgroundColor: '#FFF6F3' },
+  netDeviceName: { fontSize: 14, fontWeight: '700', color: '#11181C' },
+  netDeviceIp: { fontSize: 12, color: '#687076', marginTop: 1 },
+  protocolRow: { flexDirection: 'row', gap: 8, marginTop: 4 },
+  protocolChip: {
+    flex: 1,
+    padding: 10,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: '#E6E8EB',
+    backgroundColor: '#FFFFFF',
+  },
+  protocolChipActive: { borderColor: '#FF5C39', backgroundColor: '#FFF6F3' },
+  protocolChipTitle: { fontSize: 13, fontWeight: '700', color: '#11181C' },
+  protocolChipTitleActive: { color: '#FF5C39' },
+  protocolChipHint: { fontSize: 11, color: '#687076', marginTop: 2 },
+  inlineError: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    padding: 12,
+    marginVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    backgroundColor: '#FEF2F2',
+  },
+  inlineErrorText: { flex: 1, fontSize: 13, lineHeight: 18, fontWeight: '600', color: '#B91C1C' },
   safeArea: {
     flex: 1,
     backgroundColor: '#FFFFFF',
@@ -2074,11 +2069,11 @@ const styles = StyleSheet.create({
   navTitle: {
     fontSize: 16,
     fontWeight: '800',
-    color: '#111827',
+    color: '#11181C',
   },
   navSubtitle: {
     fontSize: 12,
-    color: '#6B7280',
+    color: '#687076',
     marginTop: 1,
   },
   navCloseBtn: {
@@ -2123,11 +2118,11 @@ const styles = StyleSheet.create({
   stepTitle: {
     fontSize: 18,
     fontWeight: '800',
-    color: '#111827',
+    color: '#11181C',
   },
   stepDescription: {
     fontSize: 13,
-    color: '#6B7280',
+    color: '#687076',
     marginTop: 4,
     lineHeight: 18,
   },
@@ -2163,11 +2158,11 @@ const styles = StyleSheet.create({
   cardMainTitle: {
     fontSize: 14.5,
     fontWeight: '700',
-    color: '#111827',
+    color: '#11181C',
   },
   cardSubTitle: {
     fontSize: 11.5,
-    color: '#6B7280',
+    color: '#687076',
     marginTop: 2,
     lineHeight: 16,
   },
@@ -2204,7 +2199,7 @@ const styles = StyleSheet.create({
   scanStatusText: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#111827',
+    color: '#11181C',
   },
   rescanMiniBtn: {
     flexDirection: 'row',
@@ -2218,7 +2213,7 @@ const styles = StyleSheet.create({
   rescanMiniBtnText: {
     fontSize: 11.5,
     fontWeight: '700',
-    color: '#111827',
+    color: '#11181C',
   },
 
   /* Mini Radar in Status Row */
@@ -2322,12 +2317,12 @@ const styles = StyleSheet.create({
   scanningVisualizerTitle: {
     fontSize: 16,
     fontWeight: '800',
-    color: '#0F172A',
+    color: '#11181C',
     marginBottom: 6,
   },
   scanningVisualizerDesc: {
     fontSize: 12.5,
-    color: '#64748B',
+    color: '#687076',
     textAlign: 'center',
     lineHeight: 18,
     maxWidth: 290,
@@ -2357,7 +2352,7 @@ const styles = StyleSheet.create({
   scanningPillText: {
     fontSize: 11,
     fontWeight: '600',
-    color: '#475569',
+    color: '#687076',
   },
   foundDeviceRow: {
     flexDirection: 'row',
@@ -2381,15 +2376,15 @@ const styles = StyleSheet.create({
   foundDeviceName: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#111827',
+    color: '#11181C',
   },
   foundDeviceTarget: {
     fontSize: 11.5,
-    color: '#6B7280',
+    color: '#687076',
     marginTop: 2,
   },
   selectBtnPill: {
-    backgroundColor: '#000000',
+    backgroundColor: '#FF5C39',
     paddingHorizontal: 14,
     paddingVertical: 7,
     borderRadius: 6,
@@ -2413,11 +2408,11 @@ const styles = StyleSheet.create({
   emptyHeader: {
     fontSize: 15,
     fontWeight: '700',
-    color: '#111827',
+    color: '#11181C',
   },
   emptyDesc: {
     fontSize: 12,
-    color: '#6B7280',
+    color: '#687076',
     textAlign: 'center',
     marginTop: 4,
     marginBottom: 12,
@@ -2432,7 +2427,7 @@ const styles = StyleSheet.create({
   },
   stepsMiniItem: {
     fontSize: 11.5,
-    color: '#4B5563',
+    color: '#687076',
   },
   openSettingsBtn: {
     flexDirection: 'row',
@@ -2460,7 +2455,7 @@ const styles = StyleSheet.create({
   manualToggleText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#4B5563',
+    color: '#687076',
   },
   manualInputCard: {
     backgroundColor: '#FFFFFF',
@@ -2473,7 +2468,7 @@ const styles = StyleSheet.create({
   manualInputLabel: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#374151',
+    color: '#11181C',
     marginBottom: 6,
   },
   manualTextInput: {
@@ -2484,10 +2479,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
     fontSize: 13,
-    color: '#111827',
+    color: '#11181C',
   },
   saveManualBtn: {
-    backgroundColor: '#000000',
+    backgroundColor: '#FF5C39',
     borderRadius: 8,
     paddingVertical: 10,
     alignItems: 'center',
@@ -2613,7 +2608,7 @@ const styles = StyleSheet.create({
   },
   errorExplanationText: {
     fontSize: 13,
-    color: '#374151',
+    color: '#11181C',
     lineHeight: 18,
     fontWeight: '500',
   },
@@ -2626,7 +2621,7 @@ const styles = StyleSheet.create({
   errorChecklistHeader: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#6B7280',
+    color: '#687076',
     textTransform: 'uppercase',
     letterSpacing: 0.4,
     marginBottom: 6,
@@ -2646,7 +2641,7 @@ const styles = StyleSheet.create({
   errorChecklistText: {
     flex: 1,
     fontSize: 12,
-    color: '#4B5563',
+    color: '#687076',
     lineHeight: 17,
   },
   errorActionsRow: {
@@ -2670,7 +2665,7 @@ const styles = StyleSheet.create({
   changePrinterBtnText: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#374151',
+    color: '#11181C',
   },
   retryConnectionBtn: {
     flex: 1,
@@ -2712,12 +2707,12 @@ const styles = StyleSheet.create({
   sectionTitleHeader: {
     fontSize: 11,
     fontWeight: '800',
-    color: '#64748B',
+    color: '#687076',
     letterSpacing: 0.5,
   },
   sectionSubHeader: {
     fontSize: 12,
-    color: '#475569',
+    color: '#687076',
     marginTop: 2,
     marginBottom: 10,
   },
@@ -2761,11 +2756,11 @@ const styles = StyleSheet.create({
   dropdownSelectedTitle: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#0F172A',
+    color: '#11181C',
   },
   dropdownSelectedSub: {
     fontSize: 11.5,
-    color: '#64748B',
+    color: '#687076',
     marginTop: 2,
   },
   defaultBadge: {
@@ -2803,7 +2798,7 @@ const styles = StyleSheet.create({
   dropdownOptionTitle: {
     fontSize: 13.5,
     fontWeight: '600',
-    color: '#0F172A',
+    color: '#11181C',
   },
   dropdownOptionTitleSelected: {
     fontWeight: '700',
@@ -2818,11 +2813,11 @@ const styles = StyleSheet.create({
   optionWidthBadgeText: {
     fontSize: 10,
     fontWeight: '700',
-    color: '#475569',
+    color: '#687076',
   },
   dropdownOptionDesc: {
     fontSize: 11,
-    color: '#64748B',
+    color: '#687076',
     marginTop: 2,
     lineHeight: 15,
   },
@@ -2866,11 +2861,11 @@ const styles = StyleSheet.create({
   prefOptionTitle: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#111827',
+    color: '#11181C',
   },
   prefOptionSubtitle: {
     fontSize: 11,
-    color: '#6B7280',
+    color: '#687076',
     marginTop: 1,
   },
   segmentedCtrl: {
@@ -2890,7 +2885,7 @@ const styles = StyleSheet.create({
   segmentCtrlText: {
     fontSize: 11,
     fontWeight: '600',
-    color: '#6B7280',
+    color: '#687076',
   },
   segmentCtrlTextActive: {
     color: '#FFFFFF',
@@ -2908,7 +2903,7 @@ const styles = StyleSheet.create({
   toggleBtnText: {
     fontSize: 11.5,
     fontWeight: '800',
-    color: '#4B5563',
+    color: '#687076',
   },
   toggleBtnTextActive: {
     color: '#FFFFFF',
@@ -2968,7 +2963,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    backgroundColor: '#059669', // Emerald success green
+    backgroundColor: '#FF5C39', // Emerald success green
     borderRadius: 12,
     paddingVertical: 14,
     shadowColor: '#059669',
@@ -3021,14 +3016,14 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
   saveOfflineBtnText: {
-    color: '#475569',
+    color: '#687076',
     fontSize: 13.5,
     fontWeight: '700',
   },
   footerOfflineHint: {
     textAlign: 'center',
     fontSize: 11,
-    color: '#64748B',
+    color: '#687076',
     lineHeight: 16,
     marginTop: 8,
     paddingHorizontal: 8,

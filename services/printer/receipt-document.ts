@@ -1,6 +1,22 @@
 import { Order } from '../../types';
 import { PosPrinterConfig } from '../pos-config.service';
-import { ReceiptTemplate, getCachedStoreProfile, formatRestaurantAddress, isDummyCustomerPhone, getItemOptionsList } from '../receipt-customization.service';
+import {
+  ReceiptTemplate,
+  DEFAULT_RECEIPT_TEMPLATE,
+  getCachedStoreProfile,
+  formatRestaurantAddress,
+  isDummyCustomerPhone,
+  getItemOptionsList,
+} from '../receipt-customization.service';
+
+/**
+ * Text sizes:
+ *  - normal: 1×1
+ *  - tall:   1× wide, 2× high (keeps the column count — safe for tables)
+ *  - double: 2× wide, 2× high (half the characters per line)
+ *  - small:  condensed Font B
+ */
+export type ReceiptTextSize = 'normal' | 'double' | 'small' | 'tall';
 
 export type ReceiptCommand =
   | {
@@ -9,11 +25,11 @@ export type ReceiptCommand =
       bold?: boolean;
       italic?: boolean;
       align?: 'left' | 'center' | 'right';
-      size?: 'normal' | 'double' | 'small';
+      size?: ReceiptTextSize;
       font?: 'fontA' | 'fontB';
     }
   | { type: 'image'; data: string; align?: 'left' | 'center' | 'right' }
-  | { type: 'line'; char?: string }
+  | { type: 'line'; char?: string; font?: 'fontA' | 'fontB' }
   | { type: 'feed'; lines: number }
   | { type: 'cut'; mode?: 'full' | 'partial' }
   | { type: 'drawer'; pin?: 1 | 2 }
@@ -169,42 +185,63 @@ export function getOrderScheduleInfo(order: any): {
   return { isScheduled: false, scheduleTimeText: null, scheduledLabel: 'ASAP' };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Shared order helpers — used by EVERY renderer (ESC/POS, ePOS XML, HTML, Sunmi,
+// on-screen preview) so all printers show the same content.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Matches "table 5", "Table No. 12", "table #3" — but not words like "tablespoon" or "comfortable". */
+const TABLE_IN_NOTES_RE = /\btable\s*(?:no\.?|number|#)?\s*([0-9]+[a-z]?)\b/i;
+
+export function isDineInOrder(order: any): boolean {
+  if (!order) return false;
+  const rawType = String(order.orderType || order.deliveryType || '').toUpperCase();
+  if (/DINE|EAT[\s_-]?IN/.test(rawType)) return true;
+  if (order.tableNumber !== undefined && order.tableNumber !== null && String(order.tableNumber).trim() !== '') return true;
+  return typeof order.notes === 'string' && TABLE_IN_NOTES_RE.test(order.notes);
+}
+
+/** Table number as a string ('' when none). Safe for numeric backend values. */
+export function getTableNumber(order: any): string {
+  if (!order) return '';
+  if (order.tableNumber !== undefined && order.tableNumber !== null && String(order.tableNumber).trim() !== '') {
+    return String(order.tableNumber).trim();
+  }
+  if (typeof order.notes === 'string') {
+    const m = order.notes.match(TABLE_IN_NOTES_RE);
+    if (m) return m[1];
+  }
+  return '';
+}
+
+export function isTakeawayOrder(order: any): boolean {
+  if (!order) return false;
+  const rawType = String(order.orderType || order.deliveryType || '').toUpperCase();
+  const notes = typeof order.notes === 'string' ? order.notes.toLowerCase() : '';
+  const custName = String(order.customerDetails?.name || order.customerId?.fullName || '').toLowerCase();
+  return (
+    rawType.includes('TAKEAWAY') ||
+    /\btakeaway\b/.test(notes) ||
+    custName.includes('takeaway') ||
+    Boolean(order.appName && String(order.appName).toLowerCase().includes('takeaway'))
+  );
+}
+
 export function getOrderFulfillmentLabel(order: any): string {
   if (!order) return 'DELIVERY';
-
-  const rawFType = (
-    order.orderType ||
-    order.deliveryType ||
-    (order.deliveryAddress ? 'delivery' : 'pickup')
-  ).toString().toUpperCase();
-
-  const domain = String(order.sourceDomain || '').toLowerCase();
-  const notes = typeof order.notes === 'string' ? order.notes.toLowerCase() : '';
-  const custName = (order.customerDetails?.name || (order.customerId as any)?.fullName || '').toLowerCase();
-  const phone = (order.customerDetails?.phoneNumber || (order.customerId as any)?.phoneNumber || '').replace(/\D/g, '');
-
-  const isDineIn =
-    rawFType.includes('DINE') ||
-    rawFType.includes('EAT') ||
-    Boolean(order.tableNumber) ||
-    Boolean(order.notes?.toLowerCase().includes('table'));
-
-  if (isDineIn) {
-    const tableNum = order.tableNumber || (order.notes?.match(/table\s*([0-9a-zA-Z]+)/i)?.[1]) || '';
-    return tableNum ? `DINE-IN (TABLE ${tableNum})` : 'DINE-IN';
+  if (isDineInOrder(order)) {
+    const tableNum = getTableNumber(order);
+    return tableNum ? `DINE-IN (TABLE ${tableNum.toUpperCase()})` : 'DINE-IN';
   }
+  if (isTakeawayOrder(order)) return 'TAKEAWAY';
+  const rawType = String(order.orderType || order.deliveryType || (order.deliveryAddress ? 'delivery' : 'pickup')).toUpperCase();
+  if (rawType.includes('PICKUP') || rawType.includes('COLLECT')) return 'PICKUP';
+  if (rawType.includes('DELIV')) return 'DELIVERY';
+  return rawType.replace(/_/g, ' ') || 'DELIVERY';
+}
 
-  const isTakeaway =
-    rawFType.includes('TAKEAWAY') ||
-    notes.includes('takeaway') ||
-    custName.includes('takeaway') ||
-    Boolean((order as any).appName && String((order as any).appName).toLowerCase().includes('takeaway'));
-
-  if (isTakeaway) return 'TAKEAWAY';
-  if (rawFType.includes('PICKUP') || rawFType.includes('COLLECT')) return 'PICKUP';
-  if (rawFType.includes('DELIV')) return 'DELIVERY';
-
-  return rawFType || 'DELIVERY';
+export function isDeliveryOrder(order: any): boolean {
+  return getOrderFulfillmentLabel(order) === 'DELIVERY';
 }
 
 export function getSanitizedOrderNotes(notes?: string): string {
@@ -233,9 +270,10 @@ export function getSanitizedOrderNotes(notes?: string): string {
   return cleaned;
 }
 
-function formatMoney(amount?: number): string {
-  if (amount === undefined || amount === null || isNaN(amount)) return '£0.00';
-  return `£${Number(amount).toFixed(2)}`;
+export function formatMoney(amount?: number): string {
+  const n = Number(amount);
+  if (amount === undefined || amount === null || isNaN(n)) return '£0.00';
+  return n < 0 ? `-£${Math.abs(n).toFixed(2)}` : `£${n.toFixed(2)}`;
 }
 
 export function getItemPrice(item: any): number {
@@ -273,290 +311,247 @@ export function getItemPrice(item: any): number {
   return 0;
 }
 
-function getItemName(item: any): string {
+export function getItemName(item: any): string {
   if (!item) return 'Item';
-  return (
+  return String(
     item.name ||
-    item.itemName ||
-    item.title ||
-    item.dishName ||
-    item.productName ||
-    (typeof item.menuItemId === 'object' ? item.menuItemId?.name || item.menuItemId?.itemName : undefined) ||
-    (typeof item.itemId === 'object' ? item.itemId?.name || item.itemId?.itemName : undefined) ||
-    'Item'
+      item.itemName ||
+      item.title ||
+      item.dishName ||
+      item.productName ||
+      (typeof item.menuItemId === 'object' ? item.menuItemId?.name || item.menuItemId?.itemName : undefined) ||
+      (typeof item.itemId === 'object' ? item.itemId?.name || item.itemId?.itemName : undefined) ||
+      (typeof item.menuItem === 'object' ? item.menuItem?.name || item.menuItem?.itemName : undefined) ||
+      'Item'
   );
 }
 
-function getOrderItems(order: any): any[] {
-  if (Array.isArray(order.orderedItems) && order.orderedItems.length > 0) return order.orderedItems;
-  if (Array.isArray(order.items) && order.items.length > 0) return order.items;
+export function getItemQuantity(item: any): number {
+  return Number(item?.quantity || item?.qty || 1);
+}
+
+export function getItemInstructions(item: any): string {
+  return String(item?.instructions || item?.specialInstructions || item?.note || '').trim();
+}
+
+export function getOrderItems(order: any): any[] {
+  if (Array.isArray(order?.orderedItems) && order.orderedItems.length > 0) return order.orderedItems;
+  if (Array.isArray(order?.items) && order.items.length > 0) return order.items;
   return [];
+}
+
+/** "#123" — strips the internal "ORD-ID-" prefix and makes sure there is exactly one leading '#'. */
+export function getDisplayOrderNumber(order: any): string {
+  const raw = String(order?.orderNumber || (order?._id ? String(order._id).slice(-5).toUpperCase() : '00000'))
+    .replace(/^ORD-ID-/i, '')
+    .replace(/^#+/, '');
+  return `#${raw}`;
+}
+
+export function getRestaurantName(order: any): string {
+  return (
+    (typeof order?.restaurantId === 'object' ? order.restaurantId?.restaurantName : '') ||
+    order?.restaurantName ||
+    order?.restaurantTitle ||
+    (typeof order?.restaurant === 'object' ? order.restaurant?.restaurantName || order.restaurant?.name : '') ||
+    getCachedStoreProfile()?.restaurantName ||
+    'Restaurant'
+  );
+}
+
+export function getRestaurantPhone(order: any): string {
+  return (
+    (typeof order?.restaurantId === 'object' ? order.restaurantId?.phoneNumber : '') ||
+    order?.restaurantPhone ||
+    getCachedStoreProfile()?.phoneNumber ||
+    ''
+  );
+}
+
+export function getRestaurantAddressLine(order: any): string {
+  const raw =
+    (typeof order?.restaurantId === 'object' ? order.restaurantId?.formattedAddress || order.restaurantId?.address : '') ||
+    order?.restaurantAddress ||
+    (typeof order?.restaurant === 'object' ? order.restaurant?.formattedAddress || order.restaurant?.address : '') ||
+    getCachedStoreProfile()?.address;
+  return formatRestaurantAddress(raw);
+}
+
+export function getCustomerName(order: any): string {
+  return String(
+    order?.customerDetails?.name || order?.customerId?.fullName || order?.userId?.fullName || order?.customerName || 'Customer'
+  );
+}
+
+export function getCustomerPhone(order: any): string {
+  return String(
+    order?.customerDetails?.phoneNumber ||
+      order?.customerId?.phoneNumber ||
+      order?.userId?.phoneNumber ||
+      order?.deliveryAddress?.phoneNumber ||
+      ''
+  );
+}
+
+/** Delivery address lines — empty for dine-in, pickup and takeaway orders. */
+export function getDeliveryAddress(order: any): { address: string; postcode: string } {
+  if (!isDeliveryOrder(order)) return { address: '', postcode: '' };
+  const address = String(
+    order?.deliveryAddress?.formattedAddress ||
+      order?.deliveryAddress?.fullAddress ||
+      order?.deliveryAddress?.addressLine1 ||
+      (typeof order?.deliveryAddress === 'string' ? order.deliveryAddress : '') ||
+      ''
+  ).trim();
+  const pcRaw = order?.deliveryAddress?.postalCode || order?.deliveryAddress?.postcode || '';
+  const postcode = String(pcRaw).toUpperCase().trim();
+  // Don't print the postcode twice when it is already part of the address line
+  const showPostcode = postcode && !address.toUpperCase().replace(/\s/g, '').includes(postcode.replace(/\s/g, ''));
+  return { address, postcode: showPostcode ? postcode : '' };
+}
+
+export interface PaymentInfo {
+  isCash: boolean;
+  isPaid: boolean;
+  method: string;
+  /** Printable one-line summary, e.g. "PAID - CARD" or "CASH DUE - COLLECT ON DELIVERY" */
+  label: string;
+}
+
+const PAID_STATUSES = ['paid', 'completed', 'complete', 'succeeded', 'success', 'captured'];
+
+export function getPaymentInfo(order: any): PaymentInfo {
+  const pType = String(order?.paymentType || order?.paymentMethod || '').toLowerCase();
+  const status = String(order?.paymentStatus || '').toLowerCase();
+  const isCash = pType.includes('cash') || pType === 'cod';
+  // No status: online payments are taken up-front, cash is collected later
+  const isPaid = status ? PAID_STATUSES.includes(status) : !isCash && Boolean(pType);
+
+  let method = 'CARD';
+  if (isCash) method = 'CASH';
+  else if (/online|stripe|wallet|apple|google|paypal/.test(pType)) method = 'ONLINE';
+  else if (/card|visa|master|amex|debit|credit/.test(pType)) method = 'CARD';
+  else if (pType) method = pType.toUpperCase();
+
+  let label: string;
+  if (isPaid) {
+    label = `PAID - ${method}`;
+  } else if (isCash) {
+    label = isDeliveryOrder(order) ? 'CASH DUE - COLLECT ON DELIVERY' : 'CASH DUE - PAY AT COUNTER';
+  } else {
+    label = `PAYMENT DUE - ${method}`;
+  }
+  return { isCash, isPaid, method, label };
+}
+
+export interface ReceiptTotals {
+  subtotal: number;
+  deliveryFee: number;
+  onlinePaymentFee: number;
+  handlingCharge: number;
+  platformFee: number;
+  tax: number;
+  tip: number;
+  discount: number;
+  total: number;
+  /** Informational VAT line ("Incl. VAT (20%)") — already contained in the total, never added to it. */
+  includedVat?: { label: string; amount: number };
+}
+
+export function computeReceiptTotals(order: any, content?: Partial<ReceiptTemplate['content']>): ReceiptTotals {
+  const p = order?.pricing || {};
+  const num = (...vals: any[]) => {
+    for (const v of vals) {
+      if (v !== undefined && v !== null && !isNaN(Number(v))) return Number(v);
+    }
+    return 0;
+  };
+  const itemsSum = getOrderItems(order).reduce((sum, it) => sum + getItemPrice(it), 0);
+
+  const deliveryFee = num(p.deliveryFee, order?.deliveryFee);
+  const onlinePaymentFee = num(p.onlinePaymentFee, order?.onlinePaymentFee, p.cardFee, p.paymentFee);
+  const handlingCharge = num(p.handlingCharge, order?.handlingCharge);
+  const platformFee = num(p.platformFee, order?.platformFee, p.serviceFee, order?.serviceFee);
+  const tax = num(p.tax, p.vat, order?.tax, order?.vat);
+  const tip = num(p.tip, order?.tip);
+  const discount = Math.abs(num(p.discount, p.discountAmount, order?.discountAmount));
+  // Subtotal falls back to the sum of the items — NOT the order total (which includes fees)
+  const subtotal = num(p.subtotal, order?.subtotal, itemsSum > 0 ? itemsSum : undefined);
+  const total = num(
+    p.total,
+    p.totalAmount,
+    order?.totalAmount,
+    order?.totalPrice,
+    subtotal + deliveryFee + onlinePaymentFee + handlingCharge + platformFee + tax + tip - discount
+  );
+
+  const totals: ReceiptTotals = { subtotal, deliveryFee, onlinePaymentFee, handlingCharge, platformFee, tax, tip, discount, total };
+
+  const rate = content?.taxPercentage ?? 20;
+  if (content?.showItemTaxBreakdown && tax <= 0 && rate > 0 && total > 0) {
+    // UK VAT is price-inclusive: VAT = gross × r / (100 + r)
+    totals.includedVat = { label: `Incl. VAT (${rate}%)`, amount: Number(((total * rate) / (100 + rate)).toFixed(2)) };
+  }
+  return totals;
 }
 
 /**
  * Word-wraps text so each line does not exceed maxWidth characters.
+ * Words longer than a line are hard-split so nothing ever overflows.
  */
-function wrapText(text: string, maxWidth: number): string[] {
+export function wrapText(text: string, maxWidth: number): string[] {
   if (!text) return [];
-  if (text.length <= maxWidth) return [text];
-
-  const words = text.split(' ');
-  const lines: string[] = [];
-  let current = '';
-
-  for (const word of words) {
-    if (!current) {
-      current = word;
-    } else if ((current + ' ' + word).length <= maxWidth) {
-      current += ' ' + word;
-    } else {
-      lines.push(current);
-      current = word;
+  const width = Math.max(1, maxWidth);
+  const out: string[] = [];
+  for (const rawLine of String(text).split('\n')) {
+    if (rawLine.length <= width) {
+      out.push(rawLine);
+      continue;
     }
+    let current = '';
+    for (const word of rawLine.split(' ')) {
+      let w = word;
+      while (w.length > width) {
+        if (current) {
+          out.push(current);
+          current = '';
+        }
+        out.push(w.slice(0, width));
+        w = w.slice(width);
+      }
+      if (!current) current = w;
+      else if ((current + ' ' + w).length <= width) current += ' ' + w;
+      else {
+        out.push(current);
+        current = w;
+      }
+    }
+    if (current) out.push(current);
   }
-  if (current) {
-    lines.push(current);
-  }
-  return lines;
+  return out;
+}
+
+/** Characters per line for a paper width / font combination. */
+export function getLineWidth(paperWidth: '58mm' | '80mm' | undefined, font: 'fontA' | 'fontB' = 'fontA'): number {
+  const is58 = paperWidth !== '80mm';
+  if (font === 'fontB') return is58 ? 42 : 64;
+  return is58 ? 32 : 48;
+}
+
+function formatReceiptDate(date: Date, format: ReceiptTemplate['content']['dateTimeFormat']): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const time = `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  if (format === 'time_only') return time;
+  if (format === 'short') return `${pad(date.getDate())}/${pad(date.getMonth() + 1)} ${time}`;
+  return `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()} ${time}`;
 }
 
 /**
- * Builds a protocol-neutral receipt document representation from an order
+ * Protocol-neutral receipt document using the built-in Standard template.
+ * (Kept for backward compatibility — there is now ONE receipt builder.)
  */
 export function buildReceiptDocument(order: Partial<Order> & any, config?: Partial<PosPrinterConfig>): ReceiptCommand[] {
-  const commands: ReceiptCommand[] = [];
-  const is58mm = config?.paperWidth !== '80mm';
-  const cols = is58mm ? 32 : 48;
-
-  const orderNum = order.orderNumber || (order._id ? `#${order._id.slice(-5).toUpperCase()}` : '#00000');
-
-  // Restaurant details
-  const restaurantName =
-    (typeof order.restaurantId === 'object' ? order.restaurantId?.restaurantName : '') ||
-    order.restaurantName ||
-    order.restaurantTitle ||
-    (typeof order.restaurant === 'object' ? order.restaurant?.restaurantName || order.restaurant?.name : '') ||
-    getCachedStoreProfile()?.restaurantName ||
-    'Restaurant';
-
-  const restaurantPhone =
-    typeof order.restaurantId === 'object'
-      ? order.restaurantId?.phoneNumber || ''
-      : '';
-
-  // Customer details
-  const customerName =
-    order.customerDetails?.name ||
-    order.customerId?.fullName ||
-    order.userId?.fullName ||
-    order.customerName ||
-    'Customer';
-
-  const customerPhone =
-    order.customerDetails?.phoneNumber ||
-    order.customerId?.phoneNumber ||
-    order.userId?.phoneNumber ||
-    order.deliveryAddress?.phoneNumber ||
-    '';
-
-  // Fulfillment type
-  const rawFType = (
-    order.orderType ||
-    order.deliveryType ||
-    (order.deliveryAddress ? 'delivery' : 'pickup')
-  ).toString().toUpperCase();
-
-  const domain = String(order.sourceDomain || '').toLowerCase();
-  const notes = typeof order.notes === 'string' ? order.notes.toLowerCase() : '';
-  const custName = (order.customerDetails?.name || (order.customerId as any)?.fullName || '').toLowerCase();
-  const phone = (order.customerDetails?.phoneNumber || (order.customerId as any)?.phoneNumber || '').replace(/\D/g, '');
-  const isTakeaway =
-    rawFType.includes('TAKEAWAY') ||
-    notes.includes('takeaway') ||
-    custName.includes('takeaway') ||
-    Boolean((order as any).appName && String((order as any).appName).toLowerCase().includes('takeaway'));
-
-  const isDineIn =
-    rawFType.includes('DINE') ||
-    rawFType.includes('EAT') ||
-    Boolean(order.tableNumber) ||
-    Boolean(order.notes?.toLowerCase().includes('table'));
-
-  const tableInfo = order.tableNumber ? `TABLE ${order.tableNumber}` : '';
-
-  // 1. Header & Restaurant Name
-  commands.push({ type: 'text', value: restaurantName.toUpperCase(), bold: true, align: 'center', size: 'normal' });
-  commands.push({ type: 'text', value: 'Freshly Prepared For You', align: 'center', size: 'normal' });
-  if (restaurantPhone) {
-    commands.push({ type: 'text', value: `Tel: ${restaurantPhone}`, align: 'center' });
-  }
-  commands.push({ type: 'line' });
-
-  // 2. Order Number & Status
-  commands.push({ type: 'text', value: `ORDER ${String(orderNum).replace(/^ORD-ID-/, '')}`, bold: true, align: 'center', size: 'double' });
-
-  const placedDate = order.createdAt ? new Date(order.createdAt).toLocaleString('en-GB') : new Date().toLocaleString('en-GB');
-  commands.push({ type: 'text', value: `Placed: ${placedDate}`, align: 'center' });
-
-  // 3. Fulfillment Badge & Scheduled Notice
-  let badgeText = isDineIn ? `[ DINE IN (TAKEAWAY) ${tableInfo} ]` : isTakeaway ? `[ TAKEAWAY ORDER ]` : `[ ${rawFType} ORDER ]`;
-  commands.push({ type: 'text', value: badgeText, bold: true, align: 'center', size: 'normal' });
-
-  const scheduleInfo = getOrderScheduleInfo(order);
-  const fulfillmentLabel = getOrderFulfillmentLabel(order);
-  if (scheduleInfo.isScheduled && scheduleInfo.scheduleTimeText) {
-    commands.push({ type: 'line', char: '=' });
-    commands.push({ type: 'text', value: `*** SCHEDULED ${fulfillmentLabel} ***`, bold: true, align: 'center', size: 'normal' });
-    commands.push({ type: 'text', value: `ORDER TYPE: ${fulfillmentLabel}`, bold: true, align: 'center', size: 'normal' });
-    commands.push({ type: 'text', value: `TARGET: ${scheduleInfo.scheduleTimeText.toUpperCase()}`, bold: true, align: 'center', size: 'normal' });
-    commands.push({ type: 'line', char: '=' });
-  } else {
-    commands.push({ type: 'line' });
-  }
-
-  // 4. Customer & Delivery Address Details
-  const custLines = wrapText(`Customer: ${customerName}`, cols);
-  for (const line of custLines) {
-    commands.push({ type: 'text', value: line, bold: true, align: 'left' });
-  }
-  if (customerPhone && !isDummyCustomerPhone(customerPhone, restaurantPhone)) {
-    commands.push({ type: 'text', value: `Phone:    ${customerPhone}`, align: 'left' });
-  }
-
-  const rawAddress =
-    order.deliveryAddress?.formattedAddress ||
-    order.deliveryAddress?.addressLine1 ||
-    (typeof order.deliveryAddress === 'string' ? order.deliveryAddress : null);
-
-  if (rawAddress && !isDineIn) {
-    const addrLines = wrapText(`Address:  ${rawAddress}`, cols);
-    for (const line of addrLines) {
-      commands.push({ type: 'text', value: line, bold: true, align: 'left' });
-    }
-    if (order.deliveryAddress?.postalCode || order.deliveryAddress?.postcode) {
-      const pc = (order.deliveryAddress?.postalCode || order.deliveryAddress?.postcode).toUpperCase();
-      commands.push({ type: 'text', value: `Postcode: ${pc}`, bold: true, align: 'left' });
-    }
-  }
-
-  commands.push({ type: 'line' });
-
-  // 5. Items Header & Rows
-  const items = getOrderItems(order);
-  const leftColWidth = cols === 32 ? 4 : 5;
-  const rightColWidth = cols === 32 ? 8 : 9;
-  const midColWidth = cols - leftColWidth - rightColWidth;
-
-  const headerRow = 'QTY'.padEnd(leftColWidth) + 'ITEM'.padEnd(midColWidth) + 'PRICE'.padStart(rightColWidth);
-  commands.push({ type: 'text', value: headerRow, bold: true, align: 'left' });
-  commands.push({ type: 'line' });
-
-  for (const item of items) {
-    const qtyStr = `${item.quantity || item.qty || 1}x`.padEnd(leftColWidth);
-    const itemName = getItemName(item);
-    const itemTotalStr = formatMoney(getItemPrice(item)).padStart(rightColWidth);
-
-    // Truncate or wrap item name if longer than mid column width
-    if (itemName.length <= midColWidth) {
-      const line = qtyStr + itemName.padEnd(midColWidth) + itemTotalStr;
-      commands.push({ type: 'text', value: line, bold: true, align: 'left' });
-    } else {
-      const firstLine = qtyStr + itemName.substring(0, midColWidth) + itemTotalStr;
-      commands.push({ type: 'text', value: firstLine, bold: true, align: 'left' });
-      const remainingName = itemName.substring(midColWidth).trim();
-      if (remainingName) {
-        commands.push({ type: 'text', value: ' '.repeat(leftColWidth) + remainingName, bold: true, align: 'left' });
-      }
-    }
-
-    // Customization, Variants & Add-ons
-    const options = getItemOptionsList(item);
-    options.forEach((opt) => {
-      commands.push({ type: 'text', value: `   + ${opt}`, align: 'left' });
-    });
-    const itemInstructions = item.instructions || item.specialInstructions || item.note;
-    if (itemInstructions) {
-      commands.push({ type: 'text', value: `   * Note: ${itemInstructions}`, align: 'left' });
-    }
-  }
-
-  commands.push({ type: 'line' });
-
-  // 6. Pricing Totals
-  const subtotal = Number(order.pricing?.subtotal ?? (order as any).subtotal ?? order.totalAmount ?? 0);
-  const deliveryFee = Number(order.pricing?.deliveryFee ?? (order as any).deliveryFee ?? 0);
-  const onlinePaymentFee = Number(order.pricing?.onlinePaymentFee ?? (order as any).onlinePaymentFee ?? (order.pricing as any)?.cardFee ?? (order.pricing as any)?.paymentFee ?? 0);
-  const handlingCharge = Number(order.pricing?.handlingCharge ?? (order as any).handlingCharge ?? 0);
-  const platformFee = Number(order.pricing?.platformFee ?? (order as any).platformFee ?? (order.pricing as any)?.serviceFee ?? (order as any).serviceFee ?? 0);
-  const tax = Number(order.pricing?.tax ?? order.pricing?.vat ?? (order as any).tax ?? (order as any).vat ?? 0);
-  const tip = Number(order.pricing?.tip ?? (order as any).tip ?? 0);
-  const discount = Number(order.pricing?.discount ?? order.pricing?.discountAmount ?? (order as any).discountAmount ?? 0);
-  const total = Number(order.pricing?.total ?? order.pricing?.totalAmount ?? order.totalAmount ?? (subtotal + deliveryFee + onlinePaymentFee + handlingCharge + platformFee + tax + tip - discount));
-
-  const formatSummaryRow = (label: string, value: string, isDoubleSize: boolean = false) => {
-    const targetCols = isDoubleSize ? Math.floor(cols / 2) : cols;
-    const spaces = Math.max(1, targetCols - label.length - value.length);
-    return label + ' '.repeat(spaces) + value;
-  };
-
-  if (subtotal > 0) {
-    commands.push({ type: 'text', value: formatSummaryRow('Subtotal:', formatMoney(subtotal)), align: 'left' });
-  }
-  if (deliveryFee > 0) {
-    commands.push({ type: 'text', value: formatSummaryRow('Delivery Fee:', formatMoney(deliveryFee)), align: 'left' });
-  }
-  if (onlinePaymentFee > 0) {
-    commands.push({ type: 'text', value: formatSummaryRow('Handling Fee:', formatMoney(onlinePaymentFee)), align: 'left' });
-  }
-  if (handlingCharge > 0) {
-    commands.push({ type: 'text', value: formatSummaryRow('Handling Charge:', formatMoney(handlingCharge)), align: 'left' });
-  }
-  if (platformFee > 0) {
-    commands.push({ type: 'text', value: formatSummaryRow('Service / Platform Fee:', formatMoney(platformFee)), align: 'left' });
-  }
-  if (tax > 0) {
-    commands.push({ type: 'text', value: formatSummaryRow('Tax / VAT:', formatMoney(tax)), align: 'left' });
-  }
-  if (tip > 0) {
-    commands.push({ type: 'text', value: formatSummaryRow('Driver Tip:', formatMoney(tip)), align: 'left' });
-  }
-  if (discount > 0) {
-    commands.push({ type: 'text', value: formatSummaryRow('Discount:', `-${formatMoney(discount)}`), align: 'left' });
-  }
-
-  commands.push({ type: 'line' });
-  commands.push({ type: 'text', value: formatSummaryRow('TOTAL:', formatMoney(total), true), bold: true, align: 'left', size: 'double' });
-  commands.push({ type: 'line' });
-
-  // 7. Payment Information
-  const pType = (order.paymentType || '').toLowerCase();
-  const paymentText = pType === 'cash' ? 'PAYMENT: CASH (COLLECT ON DELIVERY)' : 'PAYMENT: ONLINE (PAID)';
-  commands.push({ type: 'text', value: paymentText, bold: true, align: 'center' });
-
-  // 8. Order Notes
-  const displayNotes = getSanitizedOrderNotes(order.notes);
-  if (displayNotes) {
-    commands.push({ type: 'line' });
-    const noteLines = wrapText(`NOTE: ${displayNotes}`, cols);
-    for (const line of noteLines) {
-      commands.push({ type: 'text', value: line, bold: true, align: 'left' });
-    }
-  }
-
-  // 9. Footer & Cut / Drawer
-  commands.push({ type: 'feed', lines: 1 });
-  commands.push({ type: 'text', value: 'Thank you for your order!', bold: true, align: 'center' });
-  commands.push({ type: 'feed', lines: 3 });
-
-  if (config?.autoCut !== false) {
-    commands.push({ type: 'cut', mode: 'partial' });
-  }
-
-  if (config?.openCashDrawer && (pType === 'cash' || order.status === 'placed')) {
-    commands.push({ type: 'drawer', pin: 1 });
-  }
-
-  return commands;
+  return buildCustomizedReceiptDocument(order, config, DEFAULT_RECEIPT_TEMPLATE);
 }
 
 /**
@@ -567,388 +562,236 @@ export function buildDrawerKickDocument(pin: 1 | 2 = 1): ReceiptCommand[] {
 }
 
 /**
- * Builds a customizable receipt document representation based on a restaurant owner's template settings
+ * Builds the receipt document from the restaurant's template.
+ * Paper width comes from the PRINTER config (the hardware); the template only decides content & style.
  */
 export function buildCustomizedReceiptDocument(
   order: Partial<Order> & any,
   config?: Partial<PosPrinterConfig>,
   template?: ReceiptTemplate
 ): ReceiptCommand[] {
-  // If no customization template provided, fallback to standard document
-  if (!template) {
-    return buildReceiptDocument(order, config);
-  }
-
+  const tpl = template || DEFAULT_RECEIPT_TEMPLATE;
   const commands: ReceiptCommand[] = [];
-  const layout = template.layout;
-  const content = template.content;
+  const layout = tpl.layout;
+  const content = tpl.content;
 
-  const is58mm = layout.paperWidth === '58mm' || config?.paperWidth === '58mm' || (!layout.paperWidth && config?.paperWidth !== '80mm');
-  const cols = is58mm ? 32 : 48;
-  const font = layout.fontFamily;
+  const paperWidth: '58mm' | '80mm' = config?.paperWidth || layout.paperWidth || '80mm';
+  // "Small" text uses the printer's condensed Font B, which fits more characters per line
+  const font: 'fontA' | 'fontB' = layout.fontFamily === 'fontB' || layout.fontSize === 'small' ? 'fontB' : 'fontA';
+  const cols = getLineWidth(paperWidth, font);
+  const isLarge = layout.fontSize === 'large';
+  const bodyEmphasis: 'tall' | 'normal' = isLarge ? 'tall' : 'normal';
   const headerAlign = layout.alignment.header;
-  const itemsAlign = layout.alignment.items;
-  const totalsAlign = layout.alignment.totals;
   const footerAlign = layout.alignment.footer;
+  const line = (char?: string): ReceiptCommand => ({ type: 'line', char, font });
+  const text = (value: string, opts: Omit<Extract<ReceiptCommand, { type: 'text' }>, 'type' | 'value'> = {}) =>
+    commands.push({ type: 'text', value, font, ...opts });
 
-  // 0. Line spacing control
+  // 0. Line spacing
   commands.push({ type: 'spacing', mode: layout.lineSpacing });
 
-  const orderNum = order.orderNumber || (order._id ? `#${order._id.slice(-5).toUpperCase()}` : '#00000');
+  const restaurantName = getRestaurantName(order);
+  const restaurantPhone = getRestaurantPhone(order);
+  const restaurantAddress = getRestaurantAddressLine(order);
+  const customerName = getCustomerName(order);
+  const customerPhone = getCustomerPhone(order);
+  const isDineIn = isDineInOrder(order);
+  const tableNum = getTableNumber(order);
+  const fulfillmentLabel = getOrderFulfillmentLabel(order);
+  const payment = getPaymentInfo(order);
 
-  // Restaurant details - fetched directly from order backend data (not editable)
-  const restaurantName =
-    (typeof order.restaurantId === 'object' ? order.restaurantId?.restaurantName : '') ||
-    order.restaurantName ||
-    order.restaurantTitle ||
-    (typeof order.restaurant === 'object' ? order.restaurant?.restaurantName || order.restaurant?.name : '') ||
-    getCachedStoreProfile()?.restaurantName ||
-    'Restaurant';
-
-  const restaurantPhone =
-    (typeof order.restaurantId === 'object' ? order.restaurantId?.phoneNumber : '') ||
-    order.restaurantPhone ||
-    '';
-
-  const rawRestAddr =
-    (typeof order.restaurantId === 'object'
-      ? order.restaurantId?.address || order.restaurantId?.formattedAddress
-      : '') ||
-    order.restaurantAddress ||
-    (typeof order.restaurant === 'object'
-      ? order.restaurant?.address || order.restaurant?.formattedAddress
-      : '') ||
-    getCachedStoreProfile()?.address;
-
-  const restaurantAddress = formatRestaurantAddress(rawRestAddr);
-
-  // Customer details
-  const customerName =
-    order.customerDetails?.name ||
-    order.customerId?.fullName ||
-    order.userId?.fullName ||
-    order.customerName ||
-    'Customer';
-
-  const customerPhone =
-    order.customerDetails?.phoneNumber ||
-    order.customerId?.phoneNumber ||
-    order.userId?.phoneNumber ||
-    order.deliveryAddress?.phoneNumber ||
-    '';
-
-  // Fulfillment type
-  const fulfillmentType = (
-    order.orderType ||
-    order.deliveryType ||
-    (order.deliveryAddress ? 'delivery' : 'pickup')
-  ).toString().toUpperCase();
-
-  const isDineIn =
-    fulfillmentType.includes('DINE') ||
-    fulfillmentType.includes('EAT') ||
-    Boolean(order.tableNumber) ||
-    Boolean(order.notes?.toLowerCase().includes('table'));
-
-  const tableNum = order.tableNumber || (isDineIn && order.notes?.match(/table\s*([0-9a-zA-Z]+)/i)?.[1]) || '';
-
-  // 1. Header Section (Logo removed)
+  // 1. Header
+  if (content.showLogo && content.logoUrl && content.logoUrl.startsWith('data:image/')) {
+    commands.push({ type: 'image', data: content.logoUrl, align: headerAlign });
+  }
 
   if (content.customHeaderTitle && content.customHeaderTitle.trim()) {
-    commands.push({
-      type: 'text',
-      value: content.customHeaderTitle.trim().toUpperCase(),
-      bold: true,
-      align: headerAlign,
-      size: 'normal',
-      font,
-    });
+    for (const l of wrapText(content.customHeaderTitle.trim().toUpperCase(), cols)) {
+      text(l, { bold: true, align: headerAlign });
+    }
   }
 
   if (content.showRestaurantName) {
-    commands.push({
-      type: 'text',
-      value: restaurantName.toUpperCase(),
-      bold: layout.boldElements.restaurantName,
-      align: headerAlign,
-      size: 'normal',
-      font,
-    });
+    const name = restaurantName.toUpperCase();
+    const fitsDouble = name.length <= Math.floor(cols / 2);
+    if (isLarge && fitsDouble) {
+      text(name, { bold: layout.boldElements.restaurantName, align: headerAlign, size: 'double' });
+    } else {
+      for (const l of wrapText(name, cols)) {
+        text(l, { bold: layout.boldElements.restaurantName, align: headerAlign, size: bodyEmphasis });
+      }
+    }
   }
 
   if (content.headerMessage && content.headerMessage.trim()) {
-    const msgLines = wrapText(content.headerMessage.trim(), cols);
-    for (const l of msgLines) {
-      commands.push({
-        type: 'text',
-        value: l,
-        italic: layout.italicElements.tagline,
-        align: headerAlign,
-        font,
-      });
+    for (const l of wrapText(content.headerMessage.trim(), cols)) {
+      text(l, { italic: layout.italicElements.tagline, align: headerAlign });
     }
   }
 
   if (content.showAddress && restaurantAddress) {
-    const addrLines = wrapText(restaurantAddress, cols);
-    for (const l of addrLines) {
-      commands.push({ type: 'text', value: l, align: headerAlign, font });
-    }
+    for (const l of wrapText(restaurantAddress, cols)) text(l, { align: headerAlign });
   }
 
   if (content.showPhone && restaurantPhone) {
-    commands.push({ type: 'text', value: `Tel: ${restaurantPhone}`, align: headerAlign, font });
+    text(`Tel: ${restaurantPhone}`, { align: headerAlign });
   }
 
-  if (content.showTaxId && content.taxIdValue) {
-    const label = content.taxIdLabel || 'Tax ID:';
-    commands.push({ type: 'text', value: `${label} ${content.taxIdValue}`.trim(), align: headerAlign, font });
+  if (content.showTaxId && content.taxIdValue && content.taxIdValue.trim()) {
+    const label = content.taxIdLabel || 'VAT Reg No:';
+    for (const l of wrapText(`${label} ${content.taxIdValue.trim()}`, cols)) text(l, { align: headerAlign });
   }
 
-  commands.push({ type: 'line' });
+  commands.push(line());
 
-  // 2. Order Metadata & Badges
+  // 2. Order metadata
   if (content.showOrderNumber) {
-    commands.push({
-      type: 'text',
-      value: `ORDER ${orderNum}`,
+    const orderLine = `ORDER ${getDisplayOrderNumber(order)}`;
+    text(orderLine, {
       bold: layout.boldElements.orderNumber,
       align: headerAlign,
-      size: 'double',
-      font,
+      size: orderLine.length <= Math.floor(cols / 2) ? 'double' : 'tall',
     });
   }
 
   if (content.showDateTime) {
-    const now = order.createdAt ? new Date(order.createdAt) : new Date();
-    let dateStr = '';
-    if (content.dateTimeFormat === 'time_only') {
-      dateStr = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-    } else if (content.dateTimeFormat === 'short') {
-      dateStr = `${now.getDate()}/${now.getMonth() + 1} ${now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`;
-    } else {
-      dateStr = now.toLocaleString('en-GB');
-    }
-    commands.push({ type: 'text', value: `Placed: ${dateStr}`, align: headerAlign, font });
+    const placed = order.createdAt ? new Date(order.createdAt) : new Date();
+    text(`Placed: ${formatReceiptDate(isNaN(placed.getTime()) ? new Date() : placed, content.dateTimeFormat)}`, { align: headerAlign });
   }
 
-  // Fulfillment badge
-  const customDomain = String(order.sourceDomain || '').toLowerCase();
-  const customNotes = typeof order.notes === 'string' ? order.notes.toLowerCase() : '';
-  const customCustName = (order.customerDetails?.name || (order.customerId as any)?.fullName || '').toLowerCase();
-  const customPhone = (order.customerDetails?.phoneNumber || (order.customerId as any)?.phoneNumber || '').replace(/\D/g, '');
-  const isCustomTakeaway =
-    fulfillmentType.includes('TAKEAWAY') ||
-    customNotes.includes('takeaway') ||
-    customCustName.includes('takeaway') ||
-    Boolean((order as any).appName && String((order as any).appName).toLowerCase().includes('takeaway'));
+  // Fulfilment badge (table number is printed on its own line when that element is enabled)
+  const badge = isDineIn && content.showTableNumber && tableNum ? 'DINE-IN' : fulfillmentLabel;
+  text(`[ ${badge} ]`, { bold: true, align: 'center' });
 
-  const badgeText = isDineIn
-    ? `[ DINE IN (TAKEAWAY) ${tableNum ? `TABLE ${tableNum}` : ''} ]`
-    : isCustomTakeaway
-    ? `[ TAKEAWAY ORDER ]`
-    : `[ ${fulfillmentType} ORDER ]`;
-  commands.push({ type: 'text', value: badgeText, bold: true, align: 'center', font });
-
-  const customScheduleInfo = getOrderScheduleInfo(order);
-  const customFulfillmentLabel = getOrderFulfillmentLabel(order);
-  const showSched = content.showScheduledTime !== false && customScheduleInfo.isScheduled && customScheduleInfo.scheduleTimeText;
-  if (showSched) {
-    commands.push({ type: 'line', char: '=' });
-    commands.push({ type: 'text', value: `*** SCHEDULED ${customFulfillmentLabel} ***`, bold: true, align: 'center', size: 'normal', font });
-    commands.push({ type: 'text', value: `ORDER TYPE: ${customFulfillmentLabel}`, bold: true, align: 'center', size: 'normal', font });
-    commands.push({ type: 'text', value: `TARGET: ${(customScheduleInfo.scheduleTimeText || '').toUpperCase()}`, bold: true, align: 'center', size: 'normal', font });
-    commands.push({ type: 'line', char: '=' });
+  const scheduleInfo = getOrderScheduleInfo(order);
+  if (content.showScheduledTime !== false && scheduleInfo.isScheduled && scheduleInfo.scheduleTimeText) {
+    commands.push(line('='));
+    text(`*** SCHEDULED ${fulfillmentLabel} ***`, { bold: true, align: 'center' });
+    for (const l of wrapText(`TARGET: ${scheduleInfo.scheduleTimeText.toUpperCase()}`, cols)) {
+      text(l, { bold: true, align: 'center' });
+    }
+    commands.push(line('='));
   } else {
-    commands.push({ type: 'line' });
+    commands.push(line());
   }
 
+  let printedMetaBlock = false;
   if (content.showTableNumber && tableNum) {
-    commands.push({ type: 'text', value: `TABLE: ${tableNum.toUpperCase()}`, bold: true, align: 'center', font });
+    text(`TABLE: ${tableNum.toUpperCase()}`, { bold: true, align: 'center', size: bodyEmphasis });
+    printedMetaBlock = true;
   }
 
-  if (content.showServerWaiterName && (order.waiterName || content.serverWaiterName)) {
-    const waiter = order.waiterName || content.serverWaiterName;
-    commands.push({ type: 'text', value: `Server: ${waiter}`, align: 'center', font });
+  const waiter = order.waiterName || content.serverWaiterName;
+  if (content.showServerWaiterName && waiter && String(waiter).trim()) {
+    text(`Server: ${String(waiter).trim()}`, { align: 'center' });
+    printedMetaBlock = true;
   }
+  if (printedMetaBlock) commands.push(line());
 
-  commands.push({ type: 'line' });
-
-  // 3. Customer & Delivery Address Details
+  // 3. Customer & delivery address
   if (content.showCustomerInfo) {
-    const custLines = wrapText(`Customer: ${customerName}`, cols);
-    for (const l of custLines) {
-      commands.push({
-        type: 'text',
-        value: l,
-        bold: layout.boldElements.customerDetails,
-        align: 'left',
-        font,
-      });
+    for (const l of wrapText(`Customer: ${customerName}`, cols)) {
+      text(l, { bold: layout.boldElements.customerDetails, align: 'left' });
     }
-
     if (customerPhone && !isDummyCustomerPhone(customerPhone, restaurantPhone)) {
-      commands.push({ type: 'text', value: `Phone:    ${customerPhone}`, align: 'left', font });
+      text(`Phone:    ${customerPhone}`, { align: 'left' });
     }
-
-    const rawAddress =
-      order.deliveryAddress?.formattedAddress ||
-      order.deliveryAddress?.addressLine1 ||
-      (typeof order.deliveryAddress === 'string' ? order.deliveryAddress : null);
-
-    const isPickupOrder = isCustomTakeaway || fulfillmentType.includes('PICKUP') || fulfillmentType.includes('COLLECT') || fulfillmentType.includes('TAKEAWAY');
-
-    if (rawAddress && !isDineIn && !isPickupOrder && !rawAddress.toLowerCase().includes('pickup')) {
-      const addrLines = wrapText(`Address:  ${rawAddress}`, cols);
-      for (const l of addrLines) {
-        commands.push({ type: 'text', value: l, bold: true, align: 'left', font });
-      }
-      if (order.deliveryAddress?.postalCode || order.deliveryAddress?.postcode) {
-        const pc = (order.deliveryAddress?.postalCode || order.deliveryAddress?.postcode).toUpperCase();
-        commands.push({ type: 'text', value: `Postcode: ${pc}`, bold: true, align: 'left', font });
-      }
+    const { address, postcode } = getDeliveryAddress(order);
+    if (address && !address.toLowerCase().includes('pickup')) {
+      for (const l of wrapText(`Address:  ${address}`, cols)) text(l, { bold: true, align: 'left' });
+      if (postcode) text(`Postcode: ${postcode}`, { bold: true, align: 'left' });
     }
-    commands.push({ type: 'line' });
+    commands.push(line());
   }
 
-  // 4. Items Table
-  const items = getOrderItems(order);
-  const leftColWidth = cols === 32 ? 4 : 5;
-  const rightColWidth = cols === 32 ? 8 : 9;
-  const midColWidth = cols - leftColWidth - rightColWidth;
+  // 4. Items table — fixed columns so prices always line up on the right
+  const qtyW = cols <= 32 ? 4 : 5;
+  const priceW = 9; // "£1234.56" + one space gap from the item name
+  const nameW = cols - qtyW - priceW;
+  text('QTY'.padEnd(qtyW) + 'ITEM'.padEnd(nameW) + 'PRICE'.padStart(priceW), { bold: true, align: 'left' });
+  commands.push(line());
 
-  const headerRow = 'QTY'.padEnd(leftColWidth) + 'ITEM'.padEnd(midColWidth) + 'PRICE'.padStart(rightColWidth);
-  commands.push({ type: 'text', value: headerRow, bold: true, align: itemsAlign, font });
-  commands.push({ type: 'line' });
-
-  for (const item of items) {
-    const qtyStr = `${item.quantity || item.qty || 1}x`.padEnd(leftColWidth);
-    const itemName = getItemName(item);
-    const itemTotalStr = formatMoney(getItemPrice(item)).padStart(rightColWidth);
-
-    if (itemName.length <= midColWidth) {
-      const line = qtyStr + itemName.padEnd(midColWidth) + itemTotalStr;
-      commands.push({ type: 'text', value: line, bold: layout.boldElements.itemNames, align: itemsAlign, font });
-    } else {
-      const firstLine = qtyStr + itemName.substring(0, midColWidth) + itemTotalStr;
-      commands.push({ type: 'text', value: firstLine, bold: layout.boldElements.itemNames, align: itemsAlign, font });
-      const remainingName = itemName.substring(midColWidth).trim();
-      if (remainingName) {
-        commands.push({ type: 'text', value: ' '.repeat(leftColWidth) + remainingName, bold: layout.boldElements.itemNames, align: itemsAlign, font });
-      }
-    }
-
-    // Modifiers, Variants & Add-ons
-    const options = getItemOptionsList(item);
-    options.forEach((opt) => {
-      commands.push({ type: 'text', value: `   + ${opt}`, align: 'left', font });
+  for (const item of getOrderItems(order)) {
+    const qtyStr = `${getItemQuantity(item)}x`.padEnd(qtyW);
+    const priceStr = formatMoney(getItemPrice(item)).padStart(priceW);
+    const nameLines = wrapText(getItemName(item), nameW);
+    nameLines.forEach((nl, i) => {
+      const row = i === 0 ? qtyStr + nl.padEnd(nameW) + priceStr : ' '.repeat(qtyW) + nl;
+      text(row, { bold: layout.boldElements.itemNames, align: 'left', size: bodyEmphasis });
     });
-    const itemInstructions = item.instructions || item.specialInstructions || item.note;
-    if (content.showItemNotes && itemInstructions) {
-      commands.push({ type: 'text', value: `   * Note: ${itemInstructions}`, align: 'left', font });
+
+    // Variants / add-ons always print (they change what the kitchen makes)
+    const indent = ' '.repeat(qtyW);
+    for (const opt of getItemOptionsList(item)) {
+      for (const l of wrapText(`+ ${opt}`, cols - qtyW)) text(indent + l, { align: 'left' });
+    }
+    const instructions = getItemInstructions(item);
+    if (content.showItemNotes && instructions) {
+      for (const l of wrapText(`* Note: ${instructions}`, cols - qtyW)) text(indent + l, { align: 'left' });
     }
   }
 
-  commands.push({ type: 'line' });
+  commands.push(line());
 
-  // 5. Pricing & Totals
-  const subtotal = Number(order.pricing?.subtotal ?? (order as any).subtotal ?? order.totalAmount ?? 0);
-  const deliveryFee = Number(order.pricing?.deliveryFee ?? (order as any).deliveryFee ?? 0);
-  const onlinePaymentFee = Number(order.pricing?.onlinePaymentFee ?? (order as any).onlinePaymentFee ?? (order.pricing as any)?.cardFee ?? (order.pricing as any)?.paymentFee ?? 0);
-  const handlingCharge = Number(order.pricing?.handlingCharge ?? (order as any).handlingCharge ?? 0);
-  const platformFee = Number(order.pricing?.platformFee ?? (order as any).platformFee ?? (order.pricing as any)?.serviceFee ?? (order as any).serviceFee ?? 0);
-  const tax = Number(order.pricing?.tax ?? order.pricing?.vat ?? (order as any).tax ?? (order as any).vat ?? 0);
-  const tip = Number(order.pricing?.tip ?? (order as any).tip ?? 0);
-  const discount = Number(order.pricing?.discount ?? order.pricing?.discountAmount ?? (order as any).discountAmount ?? 0);
-  const total = Number(order.pricing?.total ?? order.pricing?.totalAmount ?? order.totalAmount ?? (subtotal + deliveryFee + onlinePaymentFee + handlingCharge + platformFee + tax + tip - discount));
-
-  const formatSummaryRow = (label: string, value: string, isDoubleSize: boolean = false) => {
-    const targetCols = isDoubleSize ? Math.floor(cols / 2) : cols;
-    const spaces = Math.max(1, targetCols - label.length - value.length);
-    return label + ' '.repeat(spaces) + value;
+  // 5. Totals
+  const totals = computeReceiptTotals(order, content);
+  const summaryRow = (label: string, value: string, width: number = cols): string[] => {
+    if (label.length + value.length + 1 > width) {
+      return [label, value.padStart(width)];
+    }
+    return [label + ' '.repeat(width - label.length - value.length) + value];
+  };
+  const pushRow = (label: string, value: string) => {
+    for (const r of summaryRow(label, value)) text(r, { align: 'left' });
   };
 
-  if (subtotal > 0) {
-    commands.push({ type: 'text', value: formatSummaryRow('Subtotal:', formatMoney(subtotal)), align: totalsAlign, font });
+  if (totals.subtotal > 0) pushRow('Subtotal:', formatMoney(totals.subtotal));
+  if (totals.deliveryFee > 0) pushRow('Delivery Fee:', formatMoney(totals.deliveryFee));
+  if (totals.onlinePaymentFee > 0) pushRow('Card / Online Fee:', formatMoney(totals.onlinePaymentFee));
+  if (totals.handlingCharge > 0) pushRow('Handling Charge:', formatMoney(totals.handlingCharge));
+  if (totals.platformFee > 0) pushRow('Service Fee:', formatMoney(totals.platformFee));
+  if (totals.tax > 0) {
+    const rate = content.taxPercentage ?? 20;
+    pushRow(content.showItemTaxBreakdown && rate > 0 ? `Tax / VAT (${rate}%):` : 'Tax / VAT:', formatMoney(totals.tax));
   }
-  if (deliveryFee > 0) {
-    commands.push({ type: 'text', value: formatSummaryRow('Delivery Fee:', formatMoney(deliveryFee)), align: totalsAlign, font });
-  }
-  if (onlinePaymentFee > 0) {
-    commands.push({ type: 'text', value: formatSummaryRow('Handling Fee:', formatMoney(onlinePaymentFee)), align: totalsAlign, font });
-  }
-  if (handlingCharge > 0) {
-    commands.push({ type: 'text', value: formatSummaryRow('Handling Charge:', formatMoney(handlingCharge)), align: totalsAlign, font });
-  }
-  if (platformFee > 0) {
-    commands.push({ type: 'text', value: formatSummaryRow('Platform Fee:', formatMoney(platformFee)), align: totalsAlign, font });
-  }
-  if (tax > 0 || content.showItemTaxBreakdown) {
-    const taxRate = content.taxPercentage || 20;
-    const taxLabel = content.showItemTaxBreakdown ? `Tax / VAT (${taxRate}%):` : 'Tax / VAT:';
-    commands.push({ type: 'text', value: formatSummaryRow(taxLabel, formatMoney(tax || (subtotal * (taxRate / 100)))), align: totalsAlign, font });
-  }
-  if (tip > 0) {
-    commands.push({ type: 'text', value: formatSummaryRow('Driver Tip:', formatMoney(tip)), align: totalsAlign, font });
-  }
-  if (content.showDiscountLine && discount > 0) {
-    commands.push({ type: 'text', value: formatSummaryRow('Discount:', `-${formatMoney(discount)}`), align: totalsAlign, font });
-  }
+  if (totals.tip > 0) pushRow('Tip:', formatMoney(totals.tip));
+  if (content.showDiscountLine && totals.discount > 0) pushRow('Discount:', formatMoney(-totals.discount));
 
-  const isDoubleTotal = layout.fontSize !== 'small';
-  commands.push({ type: 'line' });
-  commands.push({
-    type: 'text',
-    value: formatSummaryRow('TOTAL:', formatMoney(total), isDoubleTotal),
-    bold: layout.boldElements.totalAmount,
-    align: totalsAlign,
-    size: isDoubleTotal ? 'double' : 'normal',
-    font,
-  });
-  commands.push({ type: 'line' });
+  commands.push(line());
+  const totalValue = formatMoney(totals.total);
+  const half = Math.floor(cols / 2);
+  const useDoubleTotal = layout.fontSize !== 'small' && 'TOTAL:'.length + totalValue.length + 1 <= half;
+  for (const r of summaryRow('TOTAL:', totalValue, useDoubleTotal ? half : cols)) {
+    text(r, { bold: layout.boldElements.totalAmount, align: 'left', size: useDoubleTotal ? 'double' : 'tall' });
+  }
+  if (totals.includedVat) pushRow(totals.includedVat.label, formatMoney(totals.includedVat.amount));
+  commands.push(line());
 
-  // 6. Payment Information
+  // 6. Payment
   if (content.showPaymentMethod) {
-    const pType = (order.paymentType || '').toLowerCase();
-    const paymentText = pType === 'cash' ? 'PAYMENT: CASH (COLLECT ON DELIVERY)' : 'PAYMENT: ONLINE (PAID)';
-    const payLines = wrapText(paymentText, cols);
-    for (const l of payLines) {
-      commands.push({ type: 'text', value: l, bold: true, align: 'center', font });
-    }
+    for (const l of wrapText(`PAYMENT: ${payment.label}`, cols)) text(l, { bold: true, align: 'center' });
   }
 
-  // 7. Order Notes / Special Instructions
-  const customDisplayNotes = getSanitizedOrderNotes(order.notes);
-  if (customDisplayNotes) {
-    commands.push({ type: 'line' });
-    const noteLines = wrapText(`NOTE: ${customDisplayNotes}`, cols);
-    for (const l of noteLines) {
-      commands.push({ type: 'text', value: l, bold: true, align: 'left', font });
-    }
+  // 7. Order notes
+  const displayNotes = getSanitizedOrderNotes(order.notes || order.specialInstructions);
+  if (displayNotes) {
+    commands.push(line());
+    for (const l of wrapText(`NOTE: ${displayNotes}`, cols)) text(l, { bold: true, align: 'left' });
   }
 
-  // 8. Footer Message & QR Code
-  commands.push({ type: 'feed', lines: 1 });
-
+  // 8. Footer & QR code
   if (content.footerMessage && content.footerMessage.trim()) {
-    const footLines = wrapText(content.footerMessage.trim(), cols);
-    for (const l of footLines) {
-      commands.push({
-        type: 'text',
-        value: l,
-        bold: true,
-        italic: layout.italicElements.footerMessage,
-        align: footerAlign,
-        font,
-      });
+    commands.push({ type: 'feed', lines: 1 });
+    for (const l of wrapText(content.footerMessage.trim(), cols)) {
+      text(l, { bold: true, italic: layout.italicElements.footerMessage, align: footerAlign });
     }
   }
 
   if (content.showQrCode && content.qrCodeData && content.qrCodeData.trim()) {
     commands.push({ type: 'feed', lines: 1 });
     commands.push({ type: 'qr', data: content.qrCodeData.trim(), label: content.qrCodeLabel });
-    if (content.qrCodeLabel) {
-      commands.push({ type: 'text', value: content.qrCodeLabel, align: 'center', font });
+    if (content.qrCodeLabel && content.qrCodeLabel.trim()) {
+      for (const l of wrapText(content.qrCodeLabel.trim(), cols)) text(l, { align: 'center' });
     }
   }
 
@@ -958,11 +801,10 @@ export function buildCustomizedReceiptDocument(
     commands.push({ type: 'cut', mode: 'partial' });
   }
 
-  const pType = (order.paymentType || '').toLowerCase();
-  if (config?.openCashDrawer && (pType === 'cash' || order.status === 'placed')) {
+  // Cash drawer only opens for cash orders (not for every new order)
+  if (config?.openCashDrawer && payment.isCash) {
     commands.push({ type: 'drawer', pin: 1 });
   }
 
   return commands;
 }
-

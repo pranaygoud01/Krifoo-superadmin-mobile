@@ -14,7 +14,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Header } from '../components/Header';
+import { ScreenHeader } from '../components/ScreenHeader';
 import { Colors } from '../constants/colors';
 import { deliveryChargeService } from '../services/delivery-charge.service';
 import { useToast } from '../context/ToastContext';
@@ -164,7 +164,7 @@ export default function DeliveryChargesScreen() {
 
   return (
     <View style={styles.container}>
-      <Header
+      <ScreenHeader
         title="Delivery Charges"
         showBackButton={true}
         rightAction={
@@ -447,7 +447,7 @@ const styles = StyleSheet.create({
     borderColor: '#DBEAFE',
   },
   tierPriceText: {
-    color: '#2563EB',
+    color: '#FF5C39',
     fontSize: 15,
     fontWeight: '800',
   },

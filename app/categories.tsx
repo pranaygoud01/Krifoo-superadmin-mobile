@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -6,65 +6,127 @@ import {
   FlatList,
   TouchableOpacity,
   TextInput,
-  ActivityIndicator,
   Modal,
   Switch,
-  Alert,
+  ScrollView,
+  RefreshControl,
   KeyboardAvoidingView,
+  ActivityIndicator,
   Platform,
-  useWindowDimensions,
 } from 'react-native';
 import { Image } from 'expo-image';
-import { resolveImageUrl, resolveMediaImageSource } from '../services/image.helper';
-import { Header } from '../components/Header';
+import * as ImagePicker from 'expo-image-picker';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { resolveMediaImageSource } from '../services/image.helper';
+import { ScreenHeader } from '../components/ScreenHeader';
+import { ConfirmModal } from '../components/ConfirmModal';
 import { Colors } from '../constants/colors';
 import { categoryService } from '../services/category.service';
 import { useToast } from '../context/ToastContext';
 import { Category } from '../types';
+import { Plus, Search, Pencil, Trash2, Layers, X, ImagePlus, SearchX } from 'lucide-react-native';
 import {
-  Plus,
-  Search,
-  Edit2,
-  Trash2,
-  Layers,
-  CheckCircle2,
-  XCircle,
-  X,
-  Save,
-  Image as ImageIcon,
-} from 'lucide-react-native';
+  ErrorView,
+  Field,
+  LoadingState,
+  PrimaryButton,
+  Segmented,
+  ToggleRow,
+  formStyles,
+  useFormLayout,
+} from '../components/settings/FormKit';
+
+/**
+ * Global menu categories (super admin).
+ * Backend: GET/POST /api/admin/categories, PUT/DELETE /api/admin/categories/:id.
+ * POST/PUT are multipart: categoryName, description, isActive ('true'|'false'), categoryType,
+ * and an optional image file in the `categoryImage` field (the backend uploads it to Cloudinary).
+ * Deleting a category also removes it from every menu item.
+ */
+
+type CategoryType = 'both' | 'food' | 'grocery' | 'meat_poultry';
+type StatusFilter = 'all' | 'active' | 'inactive';
+
+const TYPE_OPTIONS: { value: CategoryType; label: string }[] = [
+  { value: 'both', label: 'All stores' },
+  { value: 'food', label: 'Food' },
+  { value: 'grocery', label: 'Grocery' },
+  { value: 'meat_poultry', label: 'Meat' },
+];
+const TYPE_LABELS: Record<string, string> = {
+  both: 'All stores',
+  food: 'Food',
+  grocery: 'Grocery',
+  meat_poultry: 'Meat & Poultry',
+};
+
+type Draft = {
+  id: string | null;
+  categoryName: string;
+  description: string;
+  categoryType: CategoryType;
+  isActive: boolean;
+  existingImageUrl: string | null;
+  newImageUri: string | null;
+};
+
+const EMPTY_DRAFT: Draft = {
+  id: null,
+  categoryName: '',
+  description: '',
+  categoryType: 'both',
+  isActive: true,
+  existingImageUrl: null,
+  newImageUri: null,
+};
+
+/** Appends a picked image to FormData in the format each platform expects. */
+async function appendImage(form: FormData, uri: string) {
+  const ext = (uri.split('?')[0].split('.').pop() || 'jpg').toLowerCase();
+  const mime = `image/${ext === 'jpg' ? 'jpeg' : ext.length > 4 ? 'jpeg' : ext}`;
+  if (Platform.OS === 'web') {
+    const blob = await (await fetch(uri)).blob();
+    form.append('categoryImage', blob, `category.${ext.length > 4 ? 'jpg' : ext}`);
+  } else {
+    form.append('categoryImage', {
+      uri: Platform.OS === 'android' ? uri : uri.replace('file://', ''),
+      name: `category.${ext}`,
+      type: mime,
+    } as any);
+  }
+}
 
 export default function CategoriesScreen() {
-  const { width } = useWindowDimensions();
-  const isTablet = width >= 768;
   const { showToast } = useToast();
+  const { gutter, isTablet } = useFormLayout();
+  const insets = useSafeAreaInsets();
 
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'inactive'>('all');
+  const [query, setQuery] = useState('');
+  const [status, setStatus] = useState<StatusFilter>('all');
+  const [togglingId, setTogglingId] = useState<string | null>(null);
 
-  // Modal State
-  const [modalVisible, setModalVisible] = useState(false);
-  const [editingCategory, setEditingCategory] = useState<Category | null>(null);
-  const [categoryName, setCategoryName] = useState('');
-  const [description, setDescription] = useState('');
-  const [imageUrl, setImageUrl] = useState('');
-  const [isActive, setIsActive] = useState(true);
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
+  const [nameError, setNameError] = useState<string | undefined>();
   const [submitting, setSubmitting] = useState(false);
+  const [toDelete, setToDelete] = useState<Category | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
-  const fetchCategories = useCallback(async () => {
+  /* ── Data ─────────────────────────────────────────────────────────────── */
+
+  const fetchCategories = useCallback(async (mode: 'initial' | 'refresh' = 'initial') => {
+    if (mode === 'initial') setLoading(true);
+    setLoadError(null);
     try {
-      setLoading(true);
       const res = await categoryService.getCategories();
-      if (res.success && res.data) {
-        setCategories(res.data);
-      } else {
-        showToast({ title: 'Error', message: res.message || 'Failed to load categories', type: 'error' });
-      }
+      if (res.success && res.data) setCategories(res.data);
+      else setLoadError(res.message || 'Categories could not be loaded.');
     } catch (e: any) {
-      showToast({ title: 'Error', message: e.message || 'Could not fetch categories', type: 'error' });
+      setLoadError(e?.message || 'Could not reach the server.');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -75,596 +137,508 @@ export default function CategoriesScreen() {
     fetchCategories();
   }, [fetchCategories]);
 
-  const handleRefresh = () => {
-    setRefreshing(true);
-    fetchCategories();
+  const counts = useMemo(
+    () => ({
+      all: categories.length,
+      active: categories.filter((c) => c.isActive).length,
+      inactive: categories.filter((c) => !c.isActive).length,
+    }),
+    [categories]
+  );
+
+  const visible = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return categories.filter((c) => {
+      if (status === 'active' && !c.isActive) return false;
+      if (status === 'inactive' && c.isActive) return false;
+      if (!q) return true;
+      return (
+        c.categoryName?.toLowerCase().includes(q) ||
+        c.description?.toLowerCase().includes(q) ||
+        TYPE_LABELS[c.categoryType || 'both']?.toLowerCase().includes(q)
+      );
+    });
+  }, [categories, query, status]);
+
+  const upsertLocal = (cat: Category) =>
+    setCategories((prev) => {
+      const exists = prev.some((c) => c._id === cat._id);
+      const next = exists ? prev.map((c) => (c._id === cat._id ? cat : c)) : [...prev, cat];
+      return next.sort((a, b) => (a.categoryName || '').localeCompare(b.categoryName || ''));
+    });
+
+  /* ── Editor ───────────────────────────────────────────────────────────── */
+
+  const openAdd = () => {
+    setDraft(EMPTY_DRAFT);
+    setNameError(undefined);
+    setEditorOpen(true);
   };
 
-  const handleOpenAdd = () => {
-    setEditingCategory(null);
-    setCategoryName('');
-    setDescription('');
-    setImageUrl('');
-    setIsActive(true);
-    setModalVisible(true);
+  const openEdit = (c: Category) => {
+    setDraft({
+      id: c._id,
+      categoryName: c.categoryName || '',
+      description: c.description || '',
+      categoryType: ((c.categoryType as CategoryType) || 'both'),
+      isActive: c.isActive ?? true,
+      existingImageUrl: c.imageUrl || null,
+      newImageUri: null,
+    });
+    setNameError(undefined);
+    setEditorOpen(true);
   };
 
-  const handleOpenEdit = (item: Category) => {
-    setEditingCategory(item);
-    setCategoryName(item.categoryName || '');
-    setDescription(item.description || '');
-    setImageUrl(item.imageUrl || '');
-    setIsActive(item.isActive ?? true);
-    setModalVisible(true);
-  };
-
-  const handleSaveCategory = async () => {
-    if (!categoryName.trim()) {
-      showToast({ title: 'Validation', message: 'Category name is required.', type: 'error' });
+  const pickImage = async () => {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      showToast({ title: 'Permission needed', message: 'Allow photo access to choose a category image.', type: 'error' });
       return;
     }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8,
+    });
+    if (!result.canceled && result.assets?.length) {
+      setDraft((d) => ({ ...d, newImageUri: result.assets[0].uri }));
+    }
+  };
+
+  const validateName = (): string | undefined => {
+    const name = draft.categoryName.trim();
+    if (!name) return 'Enter a category name.';
+    if (name.length > 50) return 'Keep it under 50 characters.';
+    const clash = categories.some(
+      (c) => c._id !== draft.id && (c.categoryName || '').trim().toLowerCase() === name.toLowerCase()
+    );
+    if (clash) return 'A category with this name already exists.';
+    return undefined;
+  };
+
+  const saveDraft = async () => {
+    const err = validateName();
+    setNameError(err);
+    if (err) return;
 
     setSubmitting(true);
     try {
-      const formData = new FormData();
-      formData.append('categoryName', categoryName.trim());
-      formData.append('description', description.trim());
-      formData.append('isActive', String(isActive));
-      if (imageUrl.trim()) {
-        formData.append('imageUrl', imageUrl.trim());
-      }
+      const form = new FormData();
+      form.append('categoryName', draft.categoryName.trim());
+      form.append('description', draft.description.trim());
+      form.append('isActive', String(draft.isActive));
+      form.append('categoryType', draft.categoryType);
+      if (draft.newImageUri) await appendImage(form, draft.newImageUri);
 
-      let res;
-      if (editingCategory) {
-        res = await categoryService.updateCategory(editingCategory._id, formData);
-      } else {
-        res = await categoryService.createCategory(formData);
-      }
+      const res = draft.id
+        ? await categoryService.updateCategory(draft.id, form)
+        : await categoryService.createCategory(form);
 
       if (res.success) {
+        if (res.data) upsertLocal(res.data);
+        else fetchCategories('refresh');
+        setEditorOpen(false);
         showToast({
-          title: 'Success',
-          message: editingCategory ? 'Category updated successfully' : 'Category created successfully',
+          title: draft.id ? 'Category updated' : 'Category created',
+          message: `“${draft.categoryName.trim()}” has been saved.`,
           type: 'success',
         });
-        setModalVisible(false);
-        fetchCategories();
       } else {
-        showToast({ title: 'Error', message: res.message || 'Failed to save category', type: 'error' });
+        // 409 = duplicate name — show it on the field.
+        if (/already exists/i.test(res.message || '')) setNameError('A category with this name already exists.');
+        else showToast({ title: 'Save failed', message: res.message || 'Could not save the category.', type: 'error' });
       }
     } catch (e: any) {
-      showToast({ title: 'Error', message: e.message || 'Error occurred while saving', type: 'error' });
+      showToast({ title: 'Save failed', message: e?.message || 'Could not reach the server.', type: 'error' });
     } finally {
       setSubmitting(false);
     }
   };
 
-  const handleDeleteCategory = (item: Category) => {
-    Alert.alert(
-      'Delete Category',
-      `Are you sure you want to delete '${item.categoryName}'? This action cannot be undone.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              const res = await categoryService.deleteCategory(item._id);
-              if (res.success) {
-                showToast({ title: 'Deleted', message: 'Category removed successfully.', type: 'success' });
-                fetchCategories();
-              } else {
-                showToast({ title: 'Error', message: res.message || 'Failed to delete category', type: 'error' });
-              }
-            } catch (e: any) {
-              showToast({ title: 'Error', message: e.message || 'Error deleting category', type: 'error' });
-            }
-          },
-        },
-      ]
+  /* ── Quick actions ────────────────────────────────────────────────────── */
+
+  const toggleActive = async (c: Category, next: boolean) => {
+    setTogglingId(c._id);
+    upsertLocal({ ...c, isActive: next }); // optimistic
+    try {
+      const form = new FormData();
+      form.append('isActive', String(next));
+      const res = await categoryService.updateCategory(c._id, form);
+      if (res.success) {
+        if (res.data) upsertLocal(res.data);
+      } else {
+        upsertLocal(c);
+        showToast({ title: 'Update failed', message: res.message || 'Could not change the status.', type: 'error' });
+      }
+    } catch (e: any) {
+      upsertLocal(c);
+      showToast({ title: 'Update failed', message: e?.message || 'Could not reach the server.', type: 'error' });
+    } finally {
+      setTogglingId(null);
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (!toDelete) return;
+    const target = toDelete;
+    setDeleting(true);
+    try {
+      const res = await categoryService.deleteCategory(target._id);
+      if (res.success) {
+        setCategories((prev) => prev.filter((c) => c._id !== target._id));
+        showToast({ title: 'Category deleted', message: `“${target.categoryName}” was removed from all menus.`, type: 'success' });
+      } else {
+        showToast({ title: 'Delete failed', message: res.message || 'Could not delete the category.', type: 'error' });
+      }
+    } catch (e: any) {
+      showToast({ title: 'Delete failed', message: e?.message || 'Could not reach the server.', type: 'error' });
+    } finally {
+      setDeleting(false);
+      setToDelete(null);
+    }
+  };
+
+  /* ── Rendering ────────────────────────────────────────────────────────── */
+
+  const columns = isTablet ? 2 : 1;
+
+  const renderItem = ({ item }: { item: Category }) => {
+    const img = resolveMediaImageSource(item.imageUrl);
+    return (
+      <View style={[styles.cell, columns > 1 && { width: '50%', paddingHorizontal: 6 }]}>
+        <View style={[styles.card, !item.isActive && styles.cardInactive]}>
+          <TouchableOpacity style={styles.cardMain} onPress={() => openEdit(item)} activeOpacity={0.75} accessibilityRole="button" accessibilityLabel={`Edit ${item.categoryName}`}>
+            {img ? (
+              <Image source={img} style={styles.thumb} contentFit="cover" transition={150} cachePolicy="memory-disk" />
+            ) : (
+              <View style={[styles.thumb, styles.thumbEmpty]}>
+                <Layers size={20} color={Colors.primary} />
+              </View>
+            )}
+            <View style={styles.cardText}>
+              <Text style={styles.cardTitle} numberOfLines={1}>
+                {item.categoryName}
+              </Text>
+              <Text style={styles.cardMeta} numberOfLines={1}>
+                {TYPE_LABELS[item.categoryType || 'both'] || 'All stores'}
+                {item.description ? ` · ${item.description}` : ''}
+              </Text>
+            </View>
+          </TouchableOpacity>
+          <View style={styles.cardActions}>
+            {togglingId === item._id ? (
+              <ActivityIndicator color={Colors.primary} style={{ width: 51 }} />
+            ) : (
+              <Switch
+                value={!!item.isActive}
+                onValueChange={(v) => toggleActive(item, v)}
+                trackColor={{ false: Colors.cardBorder, true: Colors.success }}
+                thumbColor="#FFFFFF"
+                ios_backgroundColor={Colors.cardBorder}
+                accessibilityLabel={`${item.categoryName} active`}
+              />
+            )}
+            <TouchableOpacity style={styles.iconBtn} onPress={() => openEdit(item)} accessibilityLabel={`Edit ${item.categoryName}`}>
+              <Pencil size={16} color={Colors.textMuted} />
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.iconBtn} onPress={() => setToDelete(item)} accessibilityLabel={`Delete ${item.categoryName}`}>
+              <Trash2 size={16} color={Colors.danger} />
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
     );
   };
 
-  const filteredCategories = categories.filter((cat) => {
-    const matchesSearch =
-      cat.categoryName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      cat.description?.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesFilter =
-      filterStatus === 'all' ||
-      (filterStatus === 'active' && cat.isActive) ||
-      (filterStatus === 'inactive' && !cat.isActive);
-    return matchesSearch && matchesFilter;
-  });
+  const emptyState = () => {
+    const searching = query.trim().length > 0 || status !== 'all';
+    return (
+      <View style={styles.empty}>
+        <View style={styles.emptyIcon}>{searching ? <SearchX size={28} color={Colors.textSubtle} /> : <Layers size={28} color={Colors.primary} />}</View>
+        <Text style={styles.emptyTitle}>{searching ? 'No matching categories' : 'No categories yet'}</Text>
+        <Text style={styles.emptyText}>
+          {searching ? 'Try a different search or filter.' : 'Create categories so stores can organise their menus.'}
+        </Text>
+        {searching ? (
+          <PrimaryButton label="Clear filters" tone="secondary" onPress={() => { setQuery(''); setStatus('all'); }} style={{ marginTop: 16 }} />
+        ) : (
+          <PrimaryButton label="Add category" icon={Plus} onPress={openAdd} style={{ marginTop: 16 }} />
+        )}
+      </View>
+    );
+  };
+
+  const previewSource = draft.newImageUri ? { uri: draft.newImageUri } : resolveMediaImageSource(draft.existingImageUrl);
 
   return (
-    <View style={styles.container}>
-      <Header
-        title="Global Categories"
-        showBackButton={true}
-        rightAction={
-          <TouchableOpacity style={styles.addHeaderBtn} onPress={handleOpenAdd}>
-            <Plus size={18} color="#FFFFFF" />
-            <Text style={styles.addHeaderBtnText}>Add</Text>
+    <View style={formStyles.screen}>
+      <ScreenHeader
+        title="Menu categories"
+        subtitle={loading ? undefined : `${counts.all} categories · ${counts.active} active`}
+        rightElement={
+          <TouchableOpacity style={styles.addBtn} onPress={openAdd} accessibilityRole="button" accessibilityLabel="Add category">
+            <Plus size={16} color="#FFFFFF" strokeWidth={2.6} />
+            <Text style={styles.addBtnText}>Add</Text>
           </TouchableOpacity>
         }
       />
 
-      {/* Search & Filter Bar */}
-      <View style={styles.filterContainer}>
-        <View style={styles.searchBar}>
-          <Search size={16} color={Colors.textSubtle} />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Search categories..."
-            placeholderTextColor={Colors.textSubtle}
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-          />
-          {searchQuery ? (
-            <TouchableOpacity onPress={() => setSearchQuery('')}>
-              <X size={16} color={Colors.textSubtle} />
-            </TouchableOpacity>
-          ) : null}
-        </View>
-
-        <View style={styles.tabsRow}>
-          {(['all', 'active', 'inactive'] as const).map((tab) => (
-            <TouchableOpacity
-              key={tab}
-              style={[styles.filterTab, filterStatus === tab && styles.activeFilterTab]}
-              onPress={() => setFilterStatus(tab)}
-            >
-              <Text style={[styles.filterTabText, filterStatus === tab && styles.activeFilterTabText]}>
-                {tab.charAt(0).toUpperCase() + tab.slice(1)}
-              </Text>
-            </TouchableOpacity>
-          ))}
+      {/* Search + status filter */}
+      <View style={styles.toolbar}>
+        <View style={[styles.frame, { paddingHorizontal: gutter }]}>
+          <View style={styles.search}>
+            <Search size={18} color={Colors.textSubtle} />
+            <TextInput
+              style={[styles.searchInput, Platform.OS === 'web' && ({ outlineStyle: 'none' } as any)]}
+              placeholder="Search categories"
+              placeholderTextColor={Colors.textSubtle}
+              value={query}
+              onChangeText={setQuery}
+              autoCorrect={false}
+              accessibilityLabel="Search categories"
+            />
+            {query.length > 0 && (
+              <TouchableOpacity onPress={() => setQuery('')} style={styles.clearBtn} accessibilityLabel="Clear search">
+                <X size={14} color="#FFFFFF" strokeWidth={3} />
+              </TouchableOpacity>
+            )}
+          </View>
+          <View style={{ marginTop: 10 }}>
+            <Segmented<StatusFilter>
+              value={status}
+              onChange={setStatus}
+              options={[
+                { value: 'all', label: `All (${counts.all})` },
+                { value: 'active', label: `Active (${counts.active})` },
+                { value: 'inactive', label: `Inactive (${counts.inactive})` },
+              ]}
+            />
+          </View>
         </View>
       </View>
 
-      {/* Categories List */}
-      {loading && !refreshing ? (
-        <View style={styles.centerBox}>
-          <ActivityIndicator size="large" color={Colors.primary} />
-          <Text style={styles.loadingText}>Loading categories...</Text>
-        </View>
+      {loading ? (
+        <LoadingState label="Loading categories…" />
+      ) : loadError && categories.length === 0 ? (
+        <ErrorView message={loadError} onRetry={() => fetchCategories()} />
       ) : (
         <FlatList
-          data={filteredCategories}
-          keyExtractor={(item) => item._id}
-          refreshing={refreshing}
-          onRefresh={handleRefresh}
+          key={`cats-${columns}`}
+          data={visible}
+          numColumns={columns}
+          keyExtractor={(c) => c._id}
+          renderItem={renderItem}
+          extraData={togglingId}
+          ListEmptyComponent={emptyState}
           contentContainerStyle={[
-            styles.listContent,
-            { paddingHorizontal: isTablet ? 24 : 16, maxWidth: 900, alignSelf: 'center', width: '100%' },
+            styles.frame,
+            styles.list,
+            { paddingHorizontal: columns > 1 ? gutter - 6 : gutter },
+            !visible.length && { flexGrow: 1 },
           ]}
-          ListEmptyComponent={
-            <View style={styles.emptyBox}>
-              <Layers size={48} color={Colors.textSubtle} />
-              <Text style={styles.emptyTitle}>No categories found</Text>
-              <Text style={styles.emptySubtitle}>
-                {searchQuery ? 'Try matching another search query' : 'Create your first global food or grocery category.'}
-              </Text>
-            </View>
+          keyboardShouldPersistTaps="handled"
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => {
+                setRefreshing(true);
+                fetchCategories('refresh');
+              }}
+              tintColor={Colors.primary}
+              colors={[Colors.primary]}
+            />
           }
-          renderItem={({ item }) => (
-            <View style={styles.categoryCard}>
-              {resolveMediaImageSource(item.imageUrl) ? (
-                <Image
-                  source={resolveMediaImageSource(item.imageUrl)!}
-                  style={styles.categoryThumb}
-                  contentFit="cover"
-                  transition={200}
-                  cachePolicy="memory-disk"
-                />
-              ) : (
-                <View style={[styles.categoryThumb, styles.placeholderThumb]}>
-                  <ImageIcon size={22} color={Colors.textMuted} />
-                </View>
-              )}
-
-              <View style={styles.cardInfo}>
-                <View style={styles.cardHeaderRow}>
-                  <Text style={styles.categoryTitle}>{item.categoryName}</Text>
-                  <View style={[styles.statusPill, item.isActive ? styles.activePill : styles.inactivePill]}>
-                    <Text style={[styles.statusPillText, item.isActive ? styles.activePillText : styles.inactivePillText]}>
-                      {item.isActive ? 'ACTIVE' : 'INACTIVE'}
-                    </Text>
-                  </View>
-                </View>
-
-                {item.description ? (
-                  <Text style={styles.categoryDesc} numberOfLines={2}>
-                    {item.description}
-                  </Text>
-                ) : null}
-              </View>
-
-              <View style={styles.cardActions}>
-                <TouchableOpacity style={styles.actionIconButton} onPress={() => handleOpenEdit(item)}>
-                  <Edit2 size={16} color={Colors.primary} />
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.actionIconButton, styles.deleteIconButton]}
-                  onPress={() => handleDeleteCategory(item)}
-                >
-                  <Trash2 size={16} color={Colors.danger} />
-                </TouchableOpacity>
-              </View>
-            </View>
-          )}
         />
       )}
 
-      {/* Add / Edit Category Modal */}
-      <Modal visible={modalVisible} transparent={true} animationType="slide" onRequestClose={() => setModalVisible(false)}>
-        <KeyboardAvoidingView style={styles.modalBackdrop} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-          <View style={styles.modalBox}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>{editingCategory ? 'Edit Category' : 'Add New Category'}</Text>
-              <TouchableOpacity onPress={() => setModalVisible(false)}>
-                <X size={20} color={Colors.textSubtle} />
+      {/* Add / edit sheet */}
+      <Modal visible={editorOpen} transparent animationType={isTablet ? 'fade' : 'slide'} statusBarTranslucent onRequestClose={() => !submitting && setEditorOpen(false)}>
+        <KeyboardAvoidingView style={[styles.overlay, isTablet && styles.overlayTablet]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => !submitting && setEditorOpen(false)} accessibilityLabel="Close" />
+          <View style={[styles.sheet, isTablet && styles.sheetTablet, { paddingBottom: isTablet ? 16 : Math.max(insets.bottom, 16) }]}>
+            <View style={styles.sheetHead}>
+              <Text style={styles.sheetTitle}>{draft.id ? 'Edit category' : 'New category'}</Text>
+              <TouchableOpacity style={styles.closeBtn} onPress={() => setEditorOpen(false)} disabled={submitting} accessibilityLabel="Close">
+                <X size={16} color={Colors.textMuted} />
               </TouchableOpacity>
             </View>
 
-            <View style={styles.modalBody}>
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Category Name *</Text>
-                <TextInput
-                  style={styles.modalInput}
-                  placeholder="e.g. Starters, Main Course, Groceries"
-                  placeholderTextColor={Colors.textSubtle}
-                  value={categoryName}
-                  onChangeText={setCategoryName}
-                />
+            <ScrollView contentContainerStyle={styles.sheetBody} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+              {/* Image */}
+              <View style={styles.imageRow}>
+                <TouchableOpacity style={styles.imagePicker} onPress={pickImage} activeOpacity={0.8} accessibilityRole="button" accessibilityLabel="Choose image">
+                  {previewSource ? (
+                    <Image source={previewSource} style={styles.imagePreview} contentFit="cover" />
+                  ) : (
+                    <ImagePlus size={26} color={Colors.primary} />
+                  )}
+                </TouchableOpacity>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.imageTitle}>Category image</Text>
+                  <Text style={styles.imageHint}>Square photo works best. JPG or PNG.</Text>
+                  <TouchableOpacity onPress={pickImage} style={{ marginTop: 6 }}>
+                    <Text style={styles.link}>{previewSource ? 'Change image' : 'Choose image'}</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
 
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Image URL (Optional)</Text>
-                <TextInput
-                  style={styles.modalInput}
-                  placeholder="https://..."
-                  placeholderTextColor={Colors.textSubtle}
-                  value={imageUrl}
-                  onChangeText={setImageUrl}
-                />
-              </View>
+              <Field
+                label="Name"
+                required
+                placeholder="e.g. Starters, Fresh produce"
+                value={draft.categoryName}
+                onChangeText={(v) => {
+                  setDraft((d) => ({ ...d, categoryName: v }));
+                  if (nameError) setNameError(undefined);
+                }}
+                maxLength={50}
+                autoCapitalize="words"
+                error={nameError}
+              />
 
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Description (Optional)</Text>
-                <TextInput
-                  style={[styles.modalInput, styles.modalTextArea]}
-                  placeholder="Brief description about this category..."
-                  placeholderTextColor={Colors.textSubtle}
-                  multiline={true}
-                  numberOfLines={3}
-                  value={description}
-                  onChangeText={setDescription}
-                />
-              </View>
+              <Text style={styles.label}>Available to</Text>
+              <Segmented<CategoryType> value={draft.categoryType} onChange={(v) => setDraft((d) => ({ ...d, categoryType: v }))} options={TYPE_OPTIONS} />
 
-              <View style={styles.switchRow}>
-                <Text style={styles.switchLabel}>Category Status (Active)</Text>
-                <Switch
-                  value={isActive}
-                  onValueChange={setIsActive}
-                  trackColor={{ false: '#334155', true: '#10B981' }}
-                  thumbColor={isActive ? '#FFFFFF' : '#94A3B8'}
-                />
-              </View>
-            </View>
+              <Field
+                label="Description"
+                placeholder="Optional — shown to store owners when picking a category"
+                value={draft.description}
+                onChangeText={(v) => setDraft((d) => ({ ...d, description: v }))}
+                multiline
+                maxLength={200}
+                hint={`${draft.description.length}/200`}
+              />
 
-            <View style={styles.modalFooter}>
-              <TouchableOpacity
-                style={styles.cancelBtn}
-                onPress={() => setModalVisible(false)}
-                disabled={submitting}
-              >
-                <Text style={styles.cancelBtnText}>Cancel</Text>
-              </TouchableOpacity>
+              <ToggleRow
+                title="Active"
+                description={draft.isActive ? 'Stores can use this category.' : 'Hidden from stores until turned on.'}
+                value={draft.isActive}
+                onChange={(v) => setDraft((d) => ({ ...d, isActive: v }))}
+                last
+              />
+            </ScrollView>
 
-              <TouchableOpacity
-                style={[styles.submitBtn, submitting && { opacity: 0.7 }]}
-                onPress={handleSaveCategory}
-                disabled={submitting}
-              >
-                {submitting ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
-                ) : (
-                  <>
-                    <Save size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
-                    <Text style={styles.submitBtnText}>{editingCategory ? 'Update' : 'Save'}</Text>
-                  </>
-                )}
-              </TouchableOpacity>
+            <View style={styles.sheetFooter}>
+              <PrimaryButton label="Cancel" tone="secondary" onPress={() => setEditorOpen(false)} disabled={submitting} style={{ flex: 1 }} />
+              <PrimaryButton label={draft.id ? 'Save changes' : 'Create category'} onPress={saveDraft} loading={submitting} style={{ flex: 1 }} />
             </View>
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      <ConfirmModal
+        visible={!!toDelete}
+        title="Delete this category?"
+        message={`“${toDelete?.categoryName || ''}” will be deleted and removed from every menu item that uses it. This can’t be undone.`}
+        confirmText={deleting ? 'Deleting…' : 'Delete'}
+        cancelText="Cancel"
+        isDestructive
+        onConfirm={confirmDelete}
+        onClose={() => !deleting && setToDelete(null)}
+      />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: Colors.background,
-  },
-  addHeaderBtn: {
+  frame: { width: '100%', maxWidth: 1000, alignSelf: 'center' },
+  addBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.primary,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
     gap: 4,
-  },
-  addHeaderBtnText: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  filterContainer: {
-    padding: 16,
-    gap: 12,
-    backgroundColor: Colors.card,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.cardBorder,
-  },
-  searchBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: Colors.cardSurface,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: Colors.cardBorder,
-    paddingHorizontal: 12,
-    height: 42,
-    gap: 8,
-  },
-  searchInput: {
-    flex: 1,
-    color: Colors.text,
-    fontSize: 13,
-  },
-  tabsRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  filterTab: {
+    height: 40,
     paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: 20,
-    backgroundColor: Colors.cardSurface,
-    borderWidth: 1,
-    borderColor: Colors.cardBorder,
-  },
-  activeFilterTab: {
+    borderRadius: 12,
     backgroundColor: Colors.primary,
-    borderColor: Colors.primary,
   },
-  filterTabText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: Colors.textMuted,
-  },
-  activeFilterTabText: {
-    color: '#FFFFFF',
-  },
-  centerBox: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  loadingText: {
-    marginTop: 12,
-    color: Colors.textMuted,
-    fontSize: 14,
-  },
-  listContent: {
-    paddingVertical: 16,
-    gap: 12,
-  },
-  emptyBox: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 40,
-  },
-  emptyTitle: {
-    color: Colors.text,
-    fontSize: 16,
-    fontWeight: '700',
-    marginTop: 14,
-  },
-  emptySubtitle: {
-    color: Colors.textMuted,
-    fontSize: 13,
-    textAlign: 'center',
-    marginTop: 6,
-  },
-  categoryCard: {
-    backgroundColor: Colors.card,
-    borderRadius: 14,
-    padding: 12,
+  addBtnText: { fontSize: 14, fontWeight: '800', color: '#FFFFFF' },
+
+  toolbar: { backgroundColor: Colors.background, borderBottomWidth: 1, borderBottomColor: Colors.cardBorder, paddingTop: 12 },
+  search: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: Colors.cardBorder,
-  },
-  categoryThumb: {
-    width: 60,
-    height: 60,
-    borderRadius: 10,
-  },
-  placeholderThumb: {
+    gap: 10,
+    height: 44,
+    paddingHorizontal: 14,
+    borderRadius: 12,
     backgroundColor: Colors.cardSurface,
-    justifyContent: 'center',
-    alignItems: 'center',
     borderWidth: 1,
     borderColor: Colors.cardBorder,
   },
-  cardInfo: {
-    flex: 1,
-    marginLeft: 12,
-    marginRight: 8,
-  },
-  cardHeaderRow: {
+  searchInput: { flex: 1, minWidth: 0, height: '100%', fontSize: 15, color: Colors.text, paddingVertical: 0 },
+  clearBtn: { width: 20, height: 20, borderRadius: 10, backgroundColor: Colors.textSubtle, alignItems: 'center', justifyContent: 'center' },
+
+  list: { paddingTop: 14, paddingBottom: 40 },
+  cell: { marginBottom: 10 },
+  card: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    marginBottom: 4,
-  },
-  categoryTitle: {
-    color: Colors.text,
-    fontSize: 15,
-    fontWeight: '700',
-    flex: 1,
-  },
-  statusPill: {
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
-  },
-  activePill: {
-    backgroundColor: '#ECFDF5',
-  },
-  inactivePill: {
-    backgroundColor: '#FEF2F2',
-  },
-  statusPillText: {
-    fontSize: 10,
-    fontWeight: '800',
-  },
-  activePillText: {
-    color: '#10B981',
-  },
-  inactivePillText: {
-    color: '#EF4444',
-  },
-  categoryDesc: {
-    color: Colors.textMuted,
-    fontSize: 12,
-  },
-  cardActions: {
-    flexDirection: 'row',
-    gap: 6,
-  },
-  actionIconButton: {
-    width: 34,
-    height: 34,
-    borderRadius: 8,
-    backgroundColor: Colors.cardSurface,
-    borderWidth: 1,
-    borderColor: Colors.cardBorder,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  deleteIconButton: {
-    backgroundColor: '#FEF2F2',
-    borderColor: '#FEE2E2',
-  },
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 16,
-  },
-  modalBox: {
-    backgroundColor: Colors.card,
+    backgroundColor: Colors.background,
     borderRadius: 16,
-    width: '100%',
-    maxWidth: 500,
     borderWidth: 1,
     borderColor: Colors.cardBorder,
+    padding: 10,
+  },
+  cardInactive: { backgroundColor: Colors.cardSurface },
+  cardMain: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  thumb: { width: 52, height: 52, borderRadius: 12 },
+  thumbEmpty: { backgroundColor: Colors.primaryLight, alignItems: 'center', justifyContent: 'center' },
+  cardText: { flex: 1, minWidth: 0 },
+  cardTitle: { fontSize: 15, fontWeight: '800', color: Colors.text },
+  cardMeta: { fontSize: 13, color: Colors.textMuted, marginTop: 2 },
+  cardActions: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  iconBtn: { width: 40, height: 40, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+
+  empty: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 48, paddingHorizontal: 24 },
+  emptyIcon: {
+    width: 68,
+    height: 68,
+    borderRadius: 34,
+    backgroundColor: Colors.background,
+    borderWidth: 1,
+    borderColor: Colors.cardBorder,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 14,
+  },
+  emptyTitle: { fontSize: 18, fontWeight: '800', color: Colors.text },
+  emptyText: { fontSize: 14, color: Colors.textMuted, marginTop: 6, textAlign: 'center', maxWidth: 340 },
+
+  overlay: { flex: 1, backgroundColor: 'rgba(17, 24, 28, 0.45)', justifyContent: 'flex-end' },
+  overlayTablet: { justifyContent: 'center', alignItems: 'center', padding: 24 },
+  sheet: { backgroundColor: Colors.background, borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '92%' },
+  sheetTablet: { width: '100%', maxWidth: 520, borderRadius: 20, maxHeight: '88%' },
+  sheetHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 18,
+    paddingBottom: 6,
+  },
+  sheetTitle: { fontSize: 18, fontWeight: '800', color: Colors.text },
+  closeBtn: { width: 32, height: 32, borderRadius: 16, backgroundColor: Colors.cardSurface, alignItems: 'center', justifyContent: 'center' },
+  sheetBody: { paddingHorizontal: 20, paddingTop: 10, paddingBottom: 8 },
+  sheetFooter: { flexDirection: 'row', gap: 10, paddingHorizontal: 20, paddingTop: 12, borderTopWidth: 1, borderTopColor: Colors.cardBorder },
+
+  imageRow: { flexDirection: 'row', alignItems: 'center', gap: 14, marginBottom: 16 },
+  imagePicker: {
+    width: 76,
+    height: 76,
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    borderColor: Colors.primary,
+    backgroundColor: Colors.primaryLight,
+    alignItems: 'center',
+    justifyContent: 'center',
     overflow: 'hidden',
   },
-  modalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.cardBorder,
-  },
-  modalTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: Colors.text,
-  },
-  modalBody: {
-    padding: 16,
-    gap: 14,
-  },
-  inputGroup: {
-    gap: 6,
-  },
-  inputLabel: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: Colors.textMuted,
-  },
-  modalInput: {
-    backgroundColor: Colors.cardSurface,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: Colors.cardBorder,
-    paddingHorizontal: 12,
-    height: 42,
-    color: Colors.text,
-    fontSize: 13,
-  },
-  modalTextArea: {
-    height: 70,
-    textAlignVertical: 'top',
-    paddingVertical: 8,
-  },
-  switchRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingTop: 4,
-  },
-  switchLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: Colors.text,
-  },
-  modalFooter: {
-    flexDirection: 'row',
-    padding: 16,
-    gap: 10,
-    borderTopWidth: 1,
-    borderTopColor: Colors.cardBorder,
-  },
-  cancelBtn: {
-    flex: 1,
-    height: 42,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderRadius: 10,
-    backgroundColor: Colors.cardSurface,
-    borderWidth: 1,
-    borderColor: Colors.cardBorder,
-  },
-  cancelBtnText: {
-    color: Colors.textMuted,
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  submitBtn: {
-    flex: 2,
-    height: 42,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderRadius: 10,
-    backgroundColor: Colors.primary,
-  },
-  submitBtnText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '700',
-  },
+  imagePreview: { width: '100%', height: '100%' },
+  imageTitle: { fontSize: 14, fontWeight: '700', color: Colors.text },
+  imageHint: { fontSize: 12, color: Colors.textSubtle, marginTop: 2 },
+  link: { fontSize: 13, fontWeight: '800', color: Colors.primary },
+  label: { fontSize: 13, fontWeight: '700', color: Colors.text, marginBottom: 8 },
 });

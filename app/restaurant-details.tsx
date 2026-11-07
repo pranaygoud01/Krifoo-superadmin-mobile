@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -6,1190 +6,1493 @@ import {
   ScrollView,
   TouchableOpacity,
   TextInput,
+  TextInputProps,
   Linking,
   ActivityIndicator,
   Switch,
   Alert,
-  Modal,
+  Platform,
+  KeyboardAvoidingView,
+  useWindowDimensions,
 } from 'react-native';
 import { Image } from 'expo-image';
-import { resolveImageUrl, resolveMediaImageSource } from '../services/image.helper';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { resolveMediaImageSource } from '../services/image.helper';
+import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { Header } from '../components/Header';
-import { StatusBadge } from '../components/StatusBadge';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { Colors } from '../constants/colors';
 import { restaurantService } from '../services/restaurant.service';
 import { useToast } from '../context/ToastContext';
-import { Restaurant, VerificationStatus, ExternalDeliverySettings, ExternalWebsiteSettings, ExternalDistanceTier } from '../types';
+import { Restaurant, VerificationStatus, ExternalDistanceTier } from '../types';
+import { getAddressText, getVerificationStatus, withVerificationStatus, STATUS_STYLES } from '../components/RestaurantCard';
 import {
-  FileText,
-  CheckCircle,
-  XCircle,
+  Check,
+  X,
   Clock,
   MapPin,
   Mail,
   Phone,
   User,
-  Info,
   Globe,
   Truck,
   Percent,
-  Save,
   Plus,
   Trash2,
-  Edit2,
-  X,
+  Pencil,
+  ShieldCheck,
+  ShieldX,
+  Power,
+  ExternalLink,
+  CircleAlert,
+  Info,
+  CalendarDays,
+  Navigation,
+  RotateCcw,
+  Store,
 } from 'lucide-react-native';
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * Form model
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+type ChargeType = 'tiered' | 'fixed' | 'per_mile';
+
+type FormState = {
+  commissionRate: string;
+  defaultDeliveryTime: string;
+  handlingFee: string;
+  extDomain: string;
+  extBrandName: string;
+  extPrimaryColor: string;
+  extSecondaryColor: string;
+  extHeroBanner: string;
+  extLogoUrl: string;
+  extPublished: boolean;
+  extDeliveryEnabled: boolean;
+  extChargeType: ChargeType;
+  extFixedCharge: string;
+  extFreeThreshold: string;
+  extPerMile: string;
+  extBaseDist: string;
+  extBaseCharge: string;
+  extMaxRadius: string;
+  extDistanceTiers: ExternalDistanceTier[];
+};
+
+type FormKey = keyof FormState;
+type Errors = Partial<Record<FormKey, string>>;
+
+const formFromRestaurant = (r: Restaurant): FormState => {
+  const ws = r.externalWebsiteSettings;
+  const eds = r.externalDeliverySettings;
+  return {
+    commissionRate: String(r.commissionRate ?? 10),
+    defaultDeliveryTime: String(r.defaultDeliveryTime ?? 30),
+    handlingFee: String(r.handlingChargesPercentage ?? 0),
+    extDomain: ws?.domain || '',
+    extBrandName: ws?.brandName || '',
+    extPrimaryColor: ws?.primaryColor || '#E11D48',
+    extSecondaryColor: ws?.secondaryColor || '#4F46E5',
+    extHeroBanner: ws?.heroBannerUrl || '',
+    extLogoUrl: ws?.logoUrl || '',
+    extPublished: ws?.isPublished ?? true,
+    extDeliveryEnabled: eds?.enabled ?? false,
+    extChargeType: (eds?.deliveryChargeType as ChargeType) || 'tiered',
+    extFixedCharge: String(eds?.fixedCharge ?? 0),
+    extFreeThreshold: eds?.freeDeliveryOverOrderValue != null ? String(eds.freeDeliveryOverOrderValue) : '',
+    extPerMile: String(eds?.chargePerMile ?? 0),
+    extBaseDist: String(eds?.baseDeliveryDistance ?? 0),
+    extBaseCharge: String(eds?.baseDeliveryCharge ?? 0),
+    extMaxRadius: String(eds?.maxDeliveryRadius ?? 10),
+    extDistanceTiers: Array.isArray(eds?.distanceTiers)
+      ? [...eds!.distanceTiers].sort((a, b) => a.maxDistance - b.maxDistance)
+      : [],
+  };
+};
+
+const DECIMAL_RE = /^\d+(\.\d{1,2})?$/;
+const HEX_RE = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i;
+const URL_RE = /^https?:\/\/[^\s]+\.[^\s]+$/i;
+const DOMAIN_RE = /^(?!-)[a-z0-9-]+(\.[a-z0-9-]+)+$/i;
+
+const sanitizeDecimal = (v: string) => {
+  const cleaned = v.replace(/[^0-9.]/g, '');
+  const [whole, ...rest] = cleaned.split('.');
+  return rest.length ? `${whole}.${rest.join('').slice(0, 2)}` : whole;
+};
+
+const numberError = (v: string, min: number, max: number, opts?: { integer?: boolean; optional?: boolean }) => {
+  const t = v.trim();
+  if (!t) return opts?.optional ? undefined : 'Required.';
+  if (opts?.integer ? !/^\d+$/.test(t) : !DECIMAL_RE.test(t)) return opts?.integer ? 'Whole number only.' : 'Enter a valid number.';
+  const n = Number(t);
+  if (n < min || n > max) return `Must be ${min}–${max}.`;
+  return undefined;
+};
+
+function validateForm(f: FormState): Errors {
+  const e: Errors = {};
+  e.commissionRate = numberError(f.commissionRate, 0, 100);
+  e.handlingFee = numberError(f.handlingFee, 0, 100);
+  e.defaultDeliveryTime = numberError(f.defaultDeliveryTime, 1, 240, { integer: true });
+
+  const domain = f.extDomain.trim().replace(/^https?:\/\//i, '').replace(/\/$/, '');
+  if (domain && !DOMAIN_RE.test(domain)) e.extDomain = 'Enter a hostname like myrestaurant.co.uk.';
+  if (f.extBrandName.trim().length > 60) e.extBrandName = 'Keep it under 60 characters.';
+  if (!HEX_RE.test(f.extPrimaryColor.trim())) e.extPrimaryColor = 'Use a hex colour like #E11D48.';
+  if (!HEX_RE.test(f.extSecondaryColor.trim())) e.extSecondaryColor = 'Use a hex colour like #4F46E5.';
+  if (f.extHeroBanner.trim() && !URL_RE.test(f.extHeroBanner.trim())) e.extHeroBanner = 'Enter a full https:// link.';
+  if (f.extLogoUrl.trim() && !URL_RE.test(f.extLogoUrl.trim())) e.extLogoUrl = 'Enter a full https:// link.';
+
+  if (f.extDeliveryEnabled) {
+    e.extMaxRadius = numberError(f.extMaxRadius, 0.1, 100);
+    e.extFreeThreshold = numberError(f.extFreeThreshold, 0, 10000, { optional: true });
+    if (f.extChargeType === 'fixed') e.extFixedCharge = numberError(f.extFixedCharge, 0, 100);
+    if (f.extChargeType === 'per_mile') {
+      e.extBaseCharge = numberError(f.extBaseCharge, 0, 100);
+      e.extBaseDist = numberError(f.extBaseDist, 0, 100);
+      e.extPerMile = numberError(f.extPerMile, 0, 50);
+      if (!e.extBaseDist && !e.extMaxRadius && Number(f.extBaseDist) > Number(f.extMaxRadius)) {
+        e.extBaseDist = 'Can’t exceed the max radius.';
+      }
+    }
+    if (f.extChargeType === 'tiered' && f.extDistanceTiers.length === 0) {
+      e.extDistanceTiers = 'Add at least one distance tier.';
+    }
+  }
+
+  (Object.keys(e) as FormKey[]).forEach((k) => e[k] === undefined && delete e[k]);
+  return e;
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * Presentational helpers
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+type IconType = React.ComponentType<{ size?: number; color?: string; strokeWidth?: number }>;
+
+function Section({
+  icon: Icon,
+  title,
+  subtitle,
+  right,
+  children,
+}: {
+  icon: IconType;
+  title: string;
+  subtitle?: string;
+  right?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <View style={styles.section}>
+      <View style={styles.sectionHead}>
+        <View style={styles.sectionIcon}>
+          <Icon size={17} color={Colors.primary} />
+        </View>
+        <View style={styles.flex}>
+          <Text style={styles.sectionTitle}>{title}</Text>
+          {subtitle ? <Text style={styles.sectionSub}>{subtitle}</Text> : null}
+        </View>
+        {right}
+      </View>
+      {children}
+    </View>
+  );
+}
+
+type FieldProps = TextInputProps & {
+  label: string;
+  error?: string;
+  hint?: string;
+  prefix?: string;
+  suffix?: string;
+  leading?: React.ReactNode;
+};
+
+function Field({ label, error, hint, prefix, suffix, leading, style, ...rest }: FieldProps) {
+  const [focused, setFocused] = useState(false);
+  return (
+    <View style={[styles.field, style as any]}>
+      <Text style={styles.label}>{label}</Text>
+      <View style={[styles.inputWrap, focused && styles.inputFocused, !!error && styles.inputError]}>
+        {leading}
+        {prefix ? <Text style={styles.affix}>{prefix}</Text> : null}
+        <TextInput
+          style={[styles.input, Platform.OS === 'web' && ({ outlineStyle: 'none' } as any)]}
+          placeholderTextColor={Colors.textSubtle}
+          accessibilityLabel={label}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
+          {...rest}
+        />
+        {suffix ? <Text style={styles.affix}>{suffix}</Text> : null}
+      </View>
+      {error ? (
+        <View style={styles.msgRow}>
+          <CircleAlert size={12} color={Colors.danger} />
+          <Text style={styles.errorText}>{error}</Text>
+        </View>
+      ) : hint ? (
+        <Text style={styles.hint}>{hint}</Text>
+      ) : null}
+    </View>
+  );
+}
+
+function Row({ children, stack }: { children: React.ReactNode; stack?: boolean }) {
+  return (
+    <View style={stack ? undefined : styles.row}>
+      {React.Children.map(children, (c) => (c ? <View style={stack ? undefined : styles.rowItem}>{c}</View> : null))}
+    </View>
+  );
+}
+
+function ToggleRow({
+  title,
+  subtitle,
+  value,
+  onChange,
+  busy,
+}: {
+  title: string;
+  subtitle?: string;
+  value: boolean;
+  onChange: (v: boolean) => void;
+  busy?: boolean;
+}) {
+  return (
+    <View style={styles.toggleRow}>
+      <View style={styles.flex}>
+        <Text style={styles.toggleTitle}>{title}</Text>
+        {subtitle ? <Text style={styles.toggleSub}>{subtitle}</Text> : null}
+      </View>
+      {busy ? (
+        <ActivityIndicator color={Colors.primary} style={{ width: 51 }} />
+      ) : (
+        <Switch
+          value={value}
+          onValueChange={onChange}
+          trackColor={{ false: Colors.cardBorder, true: Colors.success }}
+          thumbColor="#FFFFFF"
+          ios_backgroundColor={Colors.cardBorder}
+          accessibilityLabel={title}
+        />
+      )}
+    </View>
+  );
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * Screen
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+const STATUS_ICON: Record<VerificationStatus, IconType> = { pending: Clock, approved: ShieldCheck, rejected: ShieldX };
 
 export default function RestaurantDetailsScreen() {
   const router = useRouter();
+  const navigation = useNavigation();
+  const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
   const params = useLocalSearchParams();
   const restaurantId = params.restaurantId as string;
   const { showToast } = useToast();
 
+  const isWide = width >= 1024; // two-column layout
+  const isTablet = width >= 768;
+  const stackPairs = width < 380;
+  const gutter = isTablet ? 24 : 16;
+
   const [restaurant, setRestaurant] = useState<Restaurant | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const [form, setForm] = useState<FormState | null>(null);
+  const [savedForm, setSavedForm] = useState<FormState | null>(null);
+  const [errors, setErrors] = useState<Errors>({});
+  const [saving, setSaving] = useState(false);
+
   const [remarks, setRemarks] = useState('');
-  const [updating, setUpdating] = useState(false);
-  const [savingSettings, setSavingSettings] = useState(false);
-  const [deactivateModalVisible, setDeactivateModalVisible] = useState(false);
+  const [statusToConfirm, setStatusToConfirm] = useState<VerificationStatus | null>(null);
+  const [updatingStatus, setUpdatingStatus] = useState(false);
+  const [deactivateVisible, setDeactivateVisible] = useState(false);
+  const [togglingActive, setTogglingActive] = useState(false);
 
-  // Editable Form States
-  const [commissionRate, setCommissionRate] = useState('10');
-  const [defaultDeliveryTime, setDefaultDeliveryTime] = useState('30');
-  const [handlingFee, setHandlingFee] = useState('0');
+  const [tierDraft, setTierDraft] = useState<{ index: number | null; maxDistance: string; charge: string } | null>(null);
+  const [tierError, setTierError] = useState<string | null>(null);
 
-  // External Website Form States
-  const [extDomain, setExtDomain] = useState('');
-  const [extBrandName, setExtBrandName] = useState('');
-  const [extPrimaryColor, setExtPrimaryColor] = useState('#E11D48');
-  const [extSecondaryColor, setExtSecondaryColor] = useState('#4F46E5');
-  const [extHeroBanner, setExtHeroBanner] = useState('');
-  const [extLogoUrl, setExtLogoUrl] = useState('');
-  const [extPublished, setExtPublished] = useState(true);
+  const isDirty = useMemo(() => !!form && !!savedForm && JSON.stringify(form) !== JSON.stringify(savedForm), [form, savedForm]);
 
-  // External Delivery Form States
-  const [extDeliveryEnabled, setExtDeliveryEnabled] = useState(false);
-  const [extChargeType, setExtChargeType] = useState<'tiered' | 'fixed' | 'per_mile'>('tiered');
-  const [extFixedCharge, setExtFixedCharge] = useState('0');
-  const [extFreeThreshold, setExtFreeThreshold] = useState('');
-  const [extPerMile, setExtPerMile] = useState('0');
-  const [extBaseDist, setExtBaseDist] = useState('0');
-  const [extBaseCharge, setExtBaseCharge] = useState('0');
-  const [extMaxRadius, setExtMaxRadius] = useState('10');
-  const [extDistanceTiers, setExtDistanceTiers] = useState<ExternalDistanceTier[]>([]);
+  /* ── Data ─────────────────────────────────────────────────────────────── */
 
-  // Distance Tier Modal States
-  const [tierModalVisible, setTierModalVisible] = useState(false);
-  const [tierMaxDist, setTierMaxDist] = useState('');
-  const [tierCharge, setTierCharge] = useState('');
-  const [editingTierIndex, setEditingTierIndex] = useState<number | null>(null);
-
-  const fetchRestaurantDetail = async () => {
-    if (!restaurantId) return;
+  const fetchRestaurantDetail = useCallback(async () => {
+    if (!restaurantId) {
+      setLoadError('No restaurant was selected.');
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setLoadError(null);
     try {
-      setLoading(true);
       const res = await restaurantService.getRestaurantById(restaurantId);
       if (res.success && res.data) {
         const r = res.data;
+        const f = formFromRestaurant(r);
         setRestaurant(r);
         setRemarks(r.verificationRemarks || '');
-        setCommissionRate(String(r.commissionRate ?? 10));
-        setDefaultDeliveryTime(String(r.defaultDeliveryTime ?? 30));
-        setHandlingFee(String(r.handlingChargesPercentage ?? 0));
-
-        // Populate External Website
-        const ws = r.externalWebsiteSettings;
-        setExtDomain(ws?.domain || '');
-        setExtBrandName(ws?.brandName || '');
-        setExtPrimaryColor(ws?.primaryColor || '#E11D48');
-        setExtSecondaryColor(ws?.secondaryColor || '#4F46E5');
-        setExtHeroBanner(ws?.heroBannerUrl || '');
-        setExtLogoUrl(ws?.logoUrl || '');
-        setExtPublished(ws?.isPublished ?? true);
-
-        // Populate External Delivery
-        const eds = r.externalDeliverySettings;
-        setExtDeliveryEnabled(eds?.enabled ?? false);
-        setExtChargeType(eds?.deliveryChargeType || 'tiered');
-        setExtFixedCharge(String(eds?.fixedCharge ?? 0));
-        setExtFreeThreshold(eds?.freeDeliveryOverOrderValue != null ? String(eds.freeDeliveryOverOrderValue) : '');
-        setExtPerMile(String(eds?.chargePerMile ?? 0));
-        setExtBaseDist(String(eds?.baseDeliveryDistance ?? 0));
-        setExtBaseCharge(String(eds?.baseDeliveryCharge ?? 0));
-        setExtMaxRadius(String(eds?.maxDeliveryRadius ?? 10));
-        setExtDistanceTiers(Array.isArray(eds?.distanceTiers) ? eds.distanceTiers : []);
+        setForm(f);
+        setSavedForm(f);
+        setErrors({});
       } else {
-        showToast({ title: 'Error', message: 'Restaurant details not found.', type: 'error' });
+        setLoadError(res.message || 'Restaurant details could not be found.');
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error('Failed fetching restaurant details:', e);
-      showToast({ title: 'Error', message: 'Could not load restaurant details.', type: 'error' });
+      setLoadError(e?.message || 'Could not load restaurant details.');
     } finally {
       setLoading(false);
     }
-  };
+  }, [restaurantId]);
 
   useEffect(() => {
     fetchRestaurantDetail();
-  }, [restaurantId]);
+  }, [fetchRestaurantDetail]);
 
-  const handleUpdateVerification = async (newStatus: VerificationStatus) => {
-    if (!restaurant) return;
-    setUpdating(true);
-    try {
-      const res = await restaurantService.verifyRestaurant(restaurant._id, newStatus, remarks);
-      if (res.success) {
-        showToast({
-          title: 'Status Updated',
-          message: `Restaurant verification set to: ${newStatus.toUpperCase()}`,
-          type: 'success',
-        });
-        await fetchRestaurantDetail();
-      } else {
-        showToast({ title: 'Error', message: res.message || 'Failed to update verification status.', type: 'error' });
+  // Warn before leaving with unsaved edits.
+  const dirtyRef = useRef(false);
+  dirtyRef.current = isDirty;
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('beforeRemove', (e: any) => {
+      if (!dirtyRef.current) return;
+      e.preventDefault();
+      const leave = () => navigation.dispatch(e.data.action);
+      if (Platform.OS === 'web') {
+        if (typeof window !== 'undefined' && window.confirm('Discard unsaved changes?')) leave();
+        return;
       }
-    } catch (e) {
-      showToast({ title: 'Error', message: 'Failed to update verification status.', type: 'error' });
-    } finally {
-      setUpdating(false);
-    }
+      Alert.alert('Discard changes?', 'You have unsaved changes to this restaurant.', [
+        { text: 'Keep editing', style: 'cancel' },
+        { text: 'Discard', style: 'destructive', onPress: leave },
+      ]);
+    });
+    return unsubscribe;
+  }, [navigation]);
+
+  /* ── Form helpers ─────────────────────────────────────────────────────── */
+
+  const set = <K extends FormKey>(key: K, value: FormState[K]) => {
+    setForm((prev) => (prev ? { ...prev, [key]: value } : prev));
+    if (errors[key]) setErrors((prev) => ({ ...prev, [key]: undefined }));
   };
 
-  const handleToggleActive = async (value: boolean) => {
-    if (!restaurant) return;
-    if (!value) {
-      setDeactivateModalVisible(true);
-    } else {
-      await performToggleActive(true);
-    }
+  const num = (key: FormKey) => ({
+    value: form ? (form[key] as string) : '',
+    onChangeText: (v: string) => set(key, sanitizeDecimal(v) as any),
+    keyboardType: 'decimal-pad' as const,
+    error: errors[key],
+  });
+
+  const text = (key: FormKey) => ({
+    value: form ? (form[key] as string) : '',
+    onChangeText: (v: string) => set(key, v as any),
+    error: errors[key],
+  });
+
+  const discardChanges = () => {
+    if (savedForm) setForm(savedForm);
+    setErrors({});
+    setTierDraft(null);
   };
 
-  const performToggleActive = async (nextActive: boolean) => {
-    if (!restaurant) return;
-    try {
-      const res = await restaurantService.toggleActiveStatus(restaurant._id, nextActive);
-      if (res.success) {
-        setRestaurant((prev) => (prev ? { ...prev, isActive: nextActive } : null));
-        showToast({
-          title: 'Active Status Changed',
-          message: `Restaurant is now ${nextActive ? 'active' : 'inactive'}.`,
-          type: 'success',
-        });
-      } else {
-        showToast({ title: 'Error', message: res.message || 'Failed to change active status.', type: 'error' });
-      }
-    } catch (e) {
-      showToast({ title: 'Error', message: 'Failed to change active status.', type: 'error' });
+  const handleSave = async () => {
+    if (!restaurant || !form) return;
+    const v = validateForm(form);
+    setErrors(v);
+    if (Object.keys(v).length) {
+      showToast({
+        title: 'Check highlighted fields',
+        message: `${Object.keys(v).length} ${Object.keys(v).length === 1 ? 'field needs' : 'fields need'} attention before saving.`,
+        type: 'error',
+      });
+      return;
     }
-  };
 
-  const handleSaveSettings = async () => {
-    if (!restaurant) return;
-    setSavingSettings(true);
+    setSaving(true);
     try {
       const payload: Partial<Restaurant> = {
-        commissionRate: parseFloat(commissionRate) || 0,
-        defaultDeliveryTime: parseInt(defaultDeliveryTime, 10) || 30,
-        handlingChargesPercentage: parseFloat(handlingFee) || 0,
+        commissionRate: parseFloat(form.commissionRate) || 0,
+        defaultDeliveryTime: parseInt(form.defaultDeliveryTime, 10) || 30,
+        handlingChargesPercentage: parseFloat(form.handlingFee) || 0,
         externalWebsiteSettings: {
-          domain: extDomain.trim() || undefined,
-          brandName: extBrandName.trim() || undefined,
-          primaryColor: extPrimaryColor.trim() || '#E11D48',
-          secondaryColor: extSecondaryColor.trim() || '#4F46E5',
-          heroBannerUrl: extHeroBanner.trim() || undefined,
-          logoUrl: extLogoUrl.trim() || undefined,
-          isPublished: extPublished,
+          domain: form.extDomain.trim().replace(/^https?:\/\//i, '').replace(/\/$/, '').toLowerCase() || undefined,
+          brandName: form.extBrandName.trim() || undefined,
+          primaryColor: form.extPrimaryColor.trim().toUpperCase(),
+          secondaryColor: form.extSecondaryColor.trim().toUpperCase(),
+          heroBannerUrl: form.extHeroBanner.trim() || undefined,
+          logoUrl: form.extLogoUrl.trim() || undefined,
+          isPublished: form.extPublished,
         },
         externalDeliverySettings: {
-          enabled: extDeliveryEnabled,
-          deliveryChargeType: extChargeType,
-          fixedCharge: parseFloat(extFixedCharge) || 0,
-          freeDeliveryOverOrderValue: extFreeThreshold.trim() ? parseFloat(extFreeThreshold) : null,
-          chargePerMile: parseFloat(extPerMile) || 0,
-          baseDeliveryDistance: parseFloat(extBaseDist) || 0,
-          baseDeliveryCharge: parseFloat(extBaseCharge) || 0,
-          maxDeliveryRadius: parseFloat(extMaxRadius) || 10,
-          distanceTiers: extDistanceTiers,
+          enabled: form.extDeliveryEnabled,
+          deliveryChargeType: form.extChargeType,
+          fixedCharge: parseFloat(form.extFixedCharge) || 0,
+          freeDeliveryOverOrderValue: form.extFreeThreshold.trim() ? parseFloat(form.extFreeThreshold) : null,
+          chargePerMile: parseFloat(form.extPerMile) || 0,
+          baseDeliveryDistance: parseFloat(form.extBaseDist) || 0,
+          baseDeliveryCharge: parseFloat(form.extBaseCharge) || 0,
+          maxDeliveryRadius: parseFloat(form.extMaxRadius) || 10,
+          distanceTiers: form.extDistanceTiers,
         },
       };
 
       const res = await restaurantService.updateRestaurantDetails(restaurant._id, payload);
       if (res.success) {
-        showToast({ title: 'Saved', message: 'Restaurant settings and rates saved successfully.', type: 'success' });
-        fetchRestaurantDetail();
+        setSavedForm(form);
+        setRestaurant((prev) => (prev ? { ...prev, ...payload } as Restaurant : prev));
+        showToast({ title: 'Changes saved', message: 'Restaurant settings have been updated.', type: 'success' });
       } else {
-        showToast({ title: 'Error', message: res.message || 'Failed to save settings.', type: 'error' });
+        showToast({ title: 'Save failed', message: res.message || 'Could not save settings.', type: 'error' });
       }
     } catch (e: any) {
-      showToast({ title: 'Error', message: e.message || 'Error occurred while saving.', type: 'error' });
+      showToast({ title: 'Save failed', message: e?.message || 'Could not reach the server.', type: 'error' });
     } finally {
-      setSavingSettings(false);
+      setSaving(false);
     }
   };
 
-  const handleSaveTier = () => {
-    const maxD = parseFloat(tierMaxDist);
-    const ch = parseFloat(tierCharge);
-    if (isNaN(maxD) || maxD < 0 || isNaN(ch) || ch < 0) {
-      showToast({ title: 'Validation', message: 'Enter valid distance and charge numbers.', type: 'error' });
-      return;
-    }
+  /* ── Verification & availability ──────────────────────────────────────── */
 
-    if (editingTierIndex !== null) {
-      const updated = [...extDistanceTiers];
-      updated[editingTierIndex] = { maxDistance: maxD, charge: ch };
-      setExtDistanceTiers(updated.sort((a, b) => a.maxDistance - b.maxDistance));
-    } else {
-      const updated = [...extDistanceTiers, { maxDistance: maxD, charge: ch }];
-      setExtDistanceTiers(updated.sort((a, b) => a.maxDistance - b.maxDistance));
+  const applyStatus = async (newStatus: VerificationStatus) => {
+    if (!restaurant) return;
+    setUpdatingStatus(true);
+    try {
+      const res = await restaurantService.verifyRestaurant(restaurant._id, newStatus, remarks.trim());
+      if (res.success) {
+        // Update locally so unsaved form edits are preserved.
+        setRestaurant((prev) => (prev ? withVerificationStatus(prev, newStatus, remarks.trim()) : prev));
+        showToast({
+          title: 'Verification updated',
+          message: `${restaurant.restaurantName} is now ${STATUS_STYLES[newStatus].label.toLowerCase()}.`,
+          type: 'success',
+        });
+      } else {
+        showToast({ title: 'Update failed', message: res.message || 'Could not update verification.', type: 'error' });
+      }
+    } catch (e: any) {
+      showToast({ title: 'Update failed', message: e?.message || 'Could not reach the server.', type: 'error' });
+    } finally {
+      setUpdatingStatus(false);
+      setStatusToConfirm(null);
     }
-    setTierModalVisible(false);
   };
 
-  const handleDeleteTier = (index: number) => {
-    setExtDistanceTiers(extDistanceTiers.filter((_, idx) => idx !== index));
+  const applyActive = async (nextActive: boolean) => {
+    if (!restaurant) return;
+    setTogglingActive(true);
+    try {
+      const res = await restaurantService.toggleActiveStatus(restaurant._id, nextActive);
+      if (res.success) {
+        setRestaurant((prev) => (prev ? { ...prev, isActive: nextActive } : prev));
+        showToast({
+          title: nextActive ? 'Restaurant is live' : 'Restaurant is offline',
+          message: nextActive ? 'Customers can see the menu and order again.' : 'Customers can no longer order.',
+          type: 'success',
+        });
+      } else {
+        showToast({ title: 'Update failed', message: res.message || 'Could not change availability.', type: 'error' });
+      }
+    } catch (e: any) {
+      showToast({ title: 'Update failed', message: e?.message || 'Could not reach the server.', type: 'error' });
+    } finally {
+      setTogglingActive(false);
+    }
   };
+
+  /* ── Distance tiers ───────────────────────────────────────────────────── */
+
+  const saveTier = () => {
+    if (!tierDraft || !form) return;
+    const maxD = Number(tierDraft.maxDistance);
+    const ch = Number(tierDraft.charge);
+    if (!DECIMAL_RE.test(tierDraft.maxDistance) || maxD <= 0) return setTierError('Enter a distance greater than 0.');
+    if (!DECIMAL_RE.test(tierDraft.charge)) return setTierError('Enter a valid charge.');
+    const clash = form.extDistanceTiers.some((t, i) => t.maxDistance === maxD && i !== tierDraft.index);
+    if (clash) return setTierError(`A tier for ${maxD} mi already exists.`);
+
+    const next = [...form.extDistanceTiers];
+    if (tierDraft.index !== null) next[tierDraft.index] = { maxDistance: maxD, charge: ch };
+    else next.push({ maxDistance: maxD, charge: ch });
+    set('extDistanceTiers', next.sort((a, b) => a.maxDistance - b.maxDistance));
+    setTierDraft(null);
+    setTierError(null);
+  };
+
+  /* ── States ───────────────────────────────────────────────────────────── */
 
   if (loading) {
     return (
       <View style={styles.container}>
-        <Header title="Restaurant Details" showBackButton={true} />
-        <View style={styles.centerBox}>
+        <Header title="Restaurant" showBackButton />
+        <View style={styles.center}>
           <ActivityIndicator size="large" color={Colors.primary} />
-          <Text style={styles.loadingText}>Loading restaurant details...</Text>
+          <Text style={styles.centerText}>Loading restaurant…</Text>
         </View>
       </View>
     );
   }
 
-  if (!restaurant) {
+  if (!restaurant || !form) {
     return (
       <View style={styles.container}>
-        <Header title="Restaurant Details" showBackButton={true} />
-        <View style={styles.centerBox}>
-          <Text style={styles.errorText}>No restaurant data loaded.</Text>
+        <Header title="Restaurant" showBackButton />
+        <View style={styles.center}>
+          <View style={styles.centerIcon}>
+            <Store size={30} color={Colors.textSubtle} />
+          </View>
+          <Text style={styles.centerTitle}>Couldn’t load this restaurant</Text>
+          <Text style={styles.centerText}>{loadError || 'Something went wrong.'}</Text>
+          <View style={styles.centerActions}>
+            <TouchableOpacity style={styles.btnSecondary} onPress={() => router.back()}>
+              <Text style={styles.btnSecondaryText}>Go back</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.btnPrimary} onPress={fetchRestaurantDetail}>
+              <RotateCcw size={15} color="#FFFFFF" />
+              <Text style={styles.btnPrimaryText}>Try again</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
     );
   }
 
-  const addr = typeof restaurant.address === 'object' && restaurant.address !== null ? restaurant.address : null;
-  const showFullLocation = addr !== null;
-  const displayAddress = addr
-    ? addr.formattedAddress ||
-      [addr.shopNo, addr.floor, addr.street, addr.area, addr.city, addr.pincode]
-        .filter(Boolean)
-        .join(', ')
-    : typeof restaurant.address === 'string'
-    ? restaurant.address
-    : 'N/A';
+  /* ── Derived ──────────────────────────────────────────────────────────── */
+
+  const status = getVerificationStatus(restaurant);
+  const statusStyle = STATUS_STYLES[status];
+  const StatusIcon = STATUS_ICON[status];
+  const owner = restaurant.ownerFullName ?? restaurant.ownerName;
+  const address = getAddressText(restaurant);
+  const addr = typeof restaurant.address === 'object' && restaurant.address ? restaurant.address : null;
+  const coords = addr?.coordinates?.coordinates;
+  const joined = restaurant.createdAt
+    ? new Date(restaurant.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
+    : null;
+  const logoSource = resolveMediaImageSource(
+    restaurant.imageUrl ||
+      (restaurant as any).logoUrl ||
+      (restaurant as any).logo ||
+      restaurant.externalWebsiteSettings?.logoUrl ||
+      restaurant.externalWebsiteSettings?.heroBannerUrl
+  );
+  const errorCount = Object.keys(errors).length;
+
+  const openMaps = () => {
+    const q = coords ? `${coords[1]},${coords[0]}` : address;
+    if (q) Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`).catch(() => {});
+  };
+  const openLink = (url: string) => Linking.openURL(url).catch(() => {});
+
+  const statusActions: { status: VerificationStatus; label: string; icon: IconType; tone: 'success' | 'danger' | 'neutral' }[] =
+    status === 'pending'
+      ? [
+          { status: 'rejected', label: 'Reject', icon: X, tone: 'danger' },
+          { status: 'approved', label: 'Approve', icon: Check, tone: 'success' },
+        ]
+      : status === 'approved'
+      ? [
+          { status: 'pending', label: 'Back to pending', icon: Clock, tone: 'neutral' },
+          { status: 'rejected', label: 'Reject', icon: X, tone: 'danger' },
+        ]
+      : [
+          { status: 'pending', label: 'Back to pending', icon: Clock, tone: 'neutral' },
+          { status: 'approved', label: 'Approve', icon: Check, tone: 'success' },
+        ];
+
+  /* ── Sections ─────────────────────────────────────────────────────────── */
+
+  const verificationSection = (
+    <Section icon={ShieldCheck} title="Verification" subtitle="Review the application and set its status">
+      <View style={[styles.statusBanner, { backgroundColor: statusStyle.bg }]}>
+        <StatusIcon size={20} color={statusStyle.text} />
+        <View style={styles.flex}>
+          <Text style={[styles.statusBannerTitle, { color: statusStyle.text }]}>{statusStyle.label}</Text>
+          <Text style={[styles.statusBannerSub, { color: statusStyle.text }]}>
+            {status === 'pending'
+              ? 'This restaurant is waiting for your decision.'
+              : status === 'approved'
+              ? 'This restaurant can sign in and trade.'
+              : 'This restaurant cannot sign in.'}
+          </Text>
+        </View>
+      </View>
+
+      <Text style={styles.label}>Remarks for the owner</Text>
+      <TextInput
+        style={[styles.textArea, Platform.OS === 'web' && ({ outlineStyle: 'none' } as any)]}
+        placeholder="e.g. Hygiene certificate is out of date — please upload a new one."
+        placeholderTextColor={Colors.textSubtle}
+        multiline
+        maxLength={500}
+        textAlignVertical="top"
+        value={remarks}
+        onChangeText={setRemarks}
+      />
+      <Text style={styles.counter}>{remarks.length}/500 · sent with the status change</Text>
+
+      <View style={styles.statusActions}>
+        {statusActions.map((a) => {
+          const Icon = a.icon;
+          const toneStyle =
+            a.tone === 'success' ? styles.actSuccess : a.tone === 'danger' ? styles.actDanger : styles.actNeutral;
+          const iconColor = a.tone === 'success' ? '#FFFFFF' : a.tone === 'danger' ? Colors.danger : Colors.text;
+          return (
+            <TouchableOpacity
+              key={a.status}
+              style={[styles.actBtn, toneStyle, updatingStatus && styles.disabled]}
+              disabled={updatingStatus}
+              onPress={() => setStatusToConfirm(a.status)}
+            >
+              {updatingStatus && statusToConfirm === a.status ? (
+                <ActivityIndicator size="small" color={iconColor} />
+              ) : (
+                <>
+                  <Icon size={16} color={iconColor} strokeWidth={2.5} />
+                  <Text style={[styles.actText, { color: iconColor }]}>{a.label}</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+    </Section>
+  );
+
+  const availabilitySection = (
+    <Section icon={Power} title="Availability">
+      <ToggleRow
+        title={restaurant.isActive ? 'Live — accepting orders' : 'Offline — hidden from customers'}
+        subtitle="Controls whether customers can see this restaurant and place orders."
+        value={restaurant.isActive}
+        busy={togglingActive}
+        onChange={(v) => (v ? applyActive(true) : setDeactivateVisible(true))}
+      />
+    </Section>
+  );
+
+  const contactSection = (
+    <Section icon={User} title="Contact & location">
+      <View style={styles.kv}>
+        <User size={15} color={Colors.textSubtle} />
+        <Text style={styles.kvLabel}>Owner</Text>
+        <Text style={styles.kvValue} selectable>
+          {owner || 'Not specified'}
+        </Text>
+      </View>
+      <TouchableOpacity
+        style={styles.kv}
+        disabled={!restaurant.email}
+        onPress={() => openLink(`mailto:${restaurant.email}`)}
+      >
+        <Mail size={15} color={Colors.textSubtle} />
+        <Text style={styles.kvLabel}>Email</Text>
+        <Text style={[styles.kvValue, !!restaurant.email && styles.kvLink]} numberOfLines={1}>
+          {restaurant.email || 'Not provided'}
+        </Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={styles.kv}
+        disabled={!restaurant.phoneNumber}
+        onPress={() => openLink(`tel:${restaurant.phoneNumber?.replace(/\s/g, '')}`)}
+      >
+        <Phone size={15} color={Colors.textSubtle} />
+        <Text style={styles.kvLabel}>Phone</Text>
+        <Text style={[styles.kvValue, !!restaurant.phoneNumber && styles.kvLink]}>
+          {restaurant.phoneNumber || 'Not provided'}
+        </Text>
+      </TouchableOpacity>
+      <View style={styles.kv}>
+        <MapPin size={15} color={Colors.textSubtle} />
+        <Text style={styles.kvLabel}>Address</Text>
+        <Text style={styles.kvValue} selectable>
+          {address || 'Not provided'}
+        </Text>
+      </View>
+      {restaurant.cuisineTypes?.length ? (
+        <View style={[styles.kv, styles.kvLast]}>
+          <Info size={15} color={Colors.textSubtle} />
+          <Text style={styles.kvLabel}>Cuisines</Text>
+          <Text style={styles.kvValue}>{restaurant.cuisineTypes.join(', ')}</Text>
+        </View>
+      ) : null}
+      {(coords || address) && (
+        <TouchableOpacity style={styles.mapBtn} onPress={openMaps}>
+          <Navigation size={15} color={Colors.primary} />
+          <Text style={styles.mapBtnText}>Open in Maps</Text>
+        </TouchableOpacity>
+      )}
+    </Section>
+  );
+
+  const commercialSection = (
+    <Section icon={Percent} title="Commercial & operations" subtitle="Rates Krifoo applies to this restaurant">
+      <Row stack={stackPairs}>
+        <Field label="Commission" suffix="%" maxLength={6} hint="0–100" {...num('commissionRate')} />
+        <Field label="Handling charge" suffix="%" maxLength={6} hint="Added to each order" {...num('handlingFee')} />
+      </Row>
+      <View style={!stackPairs ? styles.half : undefined}>
+        <Field
+          label="Default prep time"
+          suffix="min"
+          maxLength={3}
+          hint="Shown to customers as the estimate"
+          {...num('defaultDeliveryTime')}
+          onChangeText={(v) => set('defaultDeliveryTime', v.replace(/\D/g, ''))}
+          keyboardType="number-pad"
+        />
+      </View>
+    </Section>
+  );
+
+  const swatch = (hex: string) => (
+    <View style={[styles.swatch, { backgroundColor: HEX_RE.test(hex.trim()) ? hex.trim() : Colors.cardSurface }]} />
+  );
+
+  const websiteSection = (
+    <Section
+      icon={Globe}
+      title="Website & branding"
+      subtitle="The restaurant’s own ordering site"
+      right={
+        <TouchableOpacity
+          style={styles.linkBtn}
+          onPress={() => router.push({ pathname: '/external-website-settings', params: { restaurantId: restaurant._id } })}
+        >
+          <Text style={styles.linkBtnText}>Open Studio</Text>
+          <ExternalLink size={13} color={Colors.primary} />
+        </TouchableOpacity>
+      }
+    >
+      <ToggleRow
+        title="Website published"
+        subtitle={form.extPublished ? 'The site is live for customers.' : 'The site is hidden.'}
+        value={form.extPublished}
+        onChange={(v) => set('extPublished', v)}
+      />
+      <View style={styles.divider} />
+      <Row stack={!isTablet}>
+        <Field
+          label="Custom domain"
+          placeholder="myrestaurant.co.uk"
+          autoCapitalize="none"
+          autoCorrect={false}
+          keyboardType="url"
+          {...text('extDomain')}
+        />
+        <Field label="Brand display name" placeholder="Demo Kitchen" maxLength={60} {...text('extBrandName')} />
+      </Row>
+      <Row stack={stackPairs}>
+        <Field
+          label="Primary colour"
+          placeholder="#E11D48"
+          autoCapitalize="characters"
+          autoCorrect={false}
+          maxLength={7}
+          leading={swatch(form.extPrimaryColor)}
+          {...text('extPrimaryColor')}
+        />
+        <Field
+          label="Secondary colour"
+          placeholder="#4F46E5"
+          autoCapitalize="characters"
+          autoCorrect={false}
+          maxLength={7}
+          leading={swatch(form.extSecondaryColor)}
+          {...text('extSecondaryColor')}
+        />
+      </Row>
+      <Field
+        label="Logo image URL"
+        placeholder="https://…"
+        autoCapitalize="none"
+        autoCorrect={false}
+        keyboardType="url"
+        {...text('extLogoUrl')}
+      />
+      <Field
+        label="Hero banner image URL"
+        placeholder="https://…"
+        autoCapitalize="none"
+        autoCorrect={false}
+        keyboardType="url"
+        {...text('extHeroBanner')}
+      />
+    </Section>
+  );
+
+  const CHARGE_TYPES: { value: ChargeType; label: string; desc: string }[] = [
+    { value: 'tiered', label: 'Tiered', desc: 'Price by distance band' },
+    { value: 'fixed', label: 'Fixed', desc: 'One flat fee' },
+    { value: 'per_mile', label: 'Per mile', desc: 'Base fee + per mile' },
+  ];
+
+  const tiers = form.extDistanceTiers;
+  const deliverySection = (
+    <Section icon={Truck} title="External delivery" subtitle="Delivery fees for orders from the restaurant’s website">
+      <ToggleRow
+        title="Use custom delivery charges"
+        subtitle={form.extDeliveryEnabled ? 'Fees below apply to website orders.' : 'Platform defaults are used.'}
+        value={form.extDeliveryEnabled}
+        onChange={(v) => set('extDeliveryEnabled', v)}
+      />
+
+      {form.extDeliveryEnabled && (
+        <>
+          <View style={styles.divider} />
+          <Text style={styles.label}>Charge type</Text>
+          <View style={styles.typeGrid}>
+            {CHARGE_TYPES.map((t) => {
+              const active = form.extChargeType === t.value;
+              return (
+                <TouchableOpacity
+                  key={t.value}
+                  style={[styles.typeCard, active && styles.typeCardActive]}
+                  onPress={() => set('extChargeType', t.value)}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected: active }}
+                >
+                  <View style={[styles.radio, active && styles.radioActive]}>{active && <View style={styles.radioDot} />}</View>
+                  <Text style={[styles.typeLabel, active && { color: Colors.primaryDark }]}>{t.label}</Text>
+                  <Text style={styles.typeDesc}>{t.desc}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          <Row stack={stackPairs}>
+            <Field label="Max delivery radius" suffix="mi" maxLength={5} {...num('extMaxRadius')} />
+            <Field
+              label="Free delivery over"
+              prefix="£"
+              placeholder="Off"
+              maxLength={7}
+              hint="Leave blank to disable"
+              {...num('extFreeThreshold')}
+            />
+          </Row>
+
+          {form.extChargeType === 'fixed' && (
+            <View style={!stackPairs ? styles.half : undefined}>
+              <Field label="Fixed delivery charge" prefix="£" maxLength={6} {...num('extFixedCharge')} />
+            </View>
+          )}
+
+          {form.extChargeType === 'per_mile' && (
+            <Row stack={!isTablet}>
+              <Field label="Base charge" prefix="£" maxLength={6} {...num('extBaseCharge')} />
+              <Field label="Base distance" suffix="mi" maxLength={5} {...num('extBaseDist')} />
+              <Field label="Each extra mile" prefix="£" maxLength={5} {...num('extPerMile')} />
+            </Row>
+          )}
+
+          {form.extChargeType === 'tiered' && (
+            <View style={styles.tiersBox}>
+              <View style={styles.tiersHead}>
+                <Text style={styles.label}>Distance tiers</Text>
+                {!tierDraft && (
+                  <TouchableOpacity
+                    style={styles.addTierBtn}
+                    onPress={() => {
+                      setTierError(null);
+                      setTierDraft({ index: null, maxDistance: '', charge: '' });
+                    }}
+                  >
+                    <Plus size={14} color={Colors.primary} />
+                    <Text style={styles.addTierText}>Add tier</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {tiers.length === 0 && !tierDraft ? (
+                <Text style={[styles.emptyTiers, errors.extDistanceTiers && { color: Colors.danger }]}>
+                  {errors.extDistanceTiers || 'No tiers yet. Add one to set a price for each distance band.'}
+                </Text>
+              ) : (
+                tiers.map((t, i) => {
+                  const from = i === 0 ? 0 : tiers[i - 1].maxDistance;
+                  const editing = tierDraft?.index === i;
+                  if (editing) return null;
+                  return (
+                    <View key={`${t.maxDistance}-${i}`} style={styles.tierRow}>
+                      <View style={styles.flex}>
+                        <Text style={styles.tierRange}>
+                          {from}–{t.maxDistance} mi
+                        </Text>
+                      </View>
+                      <Text style={styles.tierCharge}>{Number(t.charge) === 0 ? 'Free' : `£${Number(t.charge).toFixed(2)}`}</Text>
+                      <TouchableOpacity
+                        style={styles.iconBtn}
+                        onPress={() => {
+                          setTierError(null);
+                          setTierDraft({ index: i, maxDistance: String(t.maxDistance), charge: String(t.charge) });
+                        }}
+                        accessibilityLabel={`Edit tier up to ${t.maxDistance} miles`}
+                      >
+                        <Pencil size={15} color={Colors.textMuted} />
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.iconBtn}
+                        onPress={() => set('extDistanceTiers', tiers.filter((_, idx) => idx !== i))}
+                        accessibilityLabel={`Delete tier up to ${t.maxDistance} miles`}
+                      >
+                        <Trash2 size={15} color={Colors.danger} />
+                      </TouchableOpacity>
+                    </View>
+                  );
+                })
+              )}
+
+              {tierDraft && (
+                <View style={styles.tierEditor}>
+                  <Text style={styles.tierEditorTitle}>{tierDraft.index !== null ? 'Edit tier' : 'New tier'}</Text>
+                  <Row>
+                    <Field
+                      label="Up to"
+                      suffix="mi"
+                      placeholder="3"
+                      keyboardType="decimal-pad"
+                      maxLength={5}
+                      value={tierDraft.maxDistance}
+                      onChangeText={(v) => setTierDraft((d) => (d ? { ...d, maxDistance: sanitizeDecimal(v) } : d))}
+                      autoFocus
+                    />
+                    <Field
+                      label="Charge"
+                      prefix="£"
+                      placeholder="2.50"
+                      keyboardType="decimal-pad"
+                      maxLength={6}
+                      value={tierDraft.charge}
+                      onChangeText={(v) => setTierDraft((d) => (d ? { ...d, charge: sanitizeDecimal(v) } : d))}
+                      onSubmitEditing={saveTier}
+                    />
+                  </Row>
+                  {tierError && (
+                    <View style={[styles.msgRow, { marginTop: -6, marginBottom: 10 }]}>
+                      <CircleAlert size={12} color={Colors.danger} />
+                      <Text style={styles.errorText}>{tierError}</Text>
+                    </View>
+                  )}
+                  <View style={styles.tierEditorActions}>
+                    <TouchableOpacity
+                      style={styles.btnSecondarySm}
+                      onPress={() => {
+                        setTierDraft(null);
+                        setTierError(null);
+                      }}
+                    >
+                      <Text style={styles.btnSecondaryText}>Cancel</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.btnPrimarySm} onPress={saveTier}>
+                      <Text style={styles.btnPrimaryText}>{tierDraft.index !== null ? 'Update tier' : 'Add tier'}</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
+
+              {tiers.length > 0 &&
+                !errors.extMaxRadius &&
+                tiers[tiers.length - 1].maxDistance < Number(form.extMaxRadius) && (
+                  <View style={styles.note}>
+                    <Info size={14} color={Colors.statusPending.text} />
+                    <Text style={styles.noteText}>
+                      Tiers stop at {tiers[tiers.length - 1].maxDistance} mi but the max radius is {form.extMaxRadius} mi.
+                      Add a tier to cover the full radius.
+                    </Text>
+                  </View>
+                )}
+            </View>
+          )}
+        </>
+      )}
+    </Section>
+  );
+
+  /* ── Layout ───────────────────────────────────────────────────────────── */
+
+  const bottomPad = isDirty ? 110 + insets.bottom : 32 + insets.bottom;
 
   return (
     <View style={styles.container}>
-      <Header
-        title="Restaurant Details"
-        showBackButton={true}
-        rightAction={
-          <TouchableOpacity style={styles.saveHeaderBtn} onPress={handleSaveSettings} disabled={savingSettings}>
-            {savingSettings ? (
-              <ActivityIndicator size="small" color="#FFFFFF" />
-            ) : (
-              <>
-                <Save size={15} color="#FFFFFF" />
-                <Text style={styles.saveHeaderBtnText}>Save</Text>
-              </>
-            )}
-          </TouchableOpacity>
-        }
-      />
+      <Header title="Restaurant" showBackButton />
 
-      <ScrollView style={styles.scrollBody} showsVerticalScrollIndicator={false}>
-        {/* Banner & Brand Card */}
-        <View style={styles.bannerCard}>
-          {(() => {
-            const bannerSource = resolveMediaImageSource(
-              restaurant.imageUrl ||
-              (restaurant as any).logoUrl ||
-              (restaurant as any).logo ||
-              restaurant.externalWebsiteSettings?.heroBannerUrl ||
-              restaurant.externalWebsiteSettings?.logoUrl
-            );
-            return bannerSource ? (
-              <Image
-                source={bannerSource}
-                style={styles.bannerImage}
-                contentFit="cover"
-                transition={200}
-                cachePolicy="memory-disk"
-              />
-            ) : (
-              <View style={[styles.bannerImage, styles.imagePlaceholder]}>
-                <Text style={styles.placeholderText}>{restaurant.restaurantName?.charAt(0)}</Text>
-              </View>
-            );
-          })()}
-          <View style={styles.bannerInfo}>
-            <Text style={styles.restaurantName}>{restaurant.restaurantName}</Text>
-            <View style={styles.rowAlign}>
-              <User size={14} color={Colors.textMuted} />
-              <Text style={styles.ownerText}>Owner: {restaurant.ownerFullName ?? restaurant.ownerName ?? 'Not specified'}</Text>
-            </View>
-            <View style={styles.badgeWrap}>
-              <StatusBadge status={restaurant.verificationStatus} type="restaurant" />
-              <StatusBadge status={restaurant.isActive ? 'active' : 'inactive'} type="restaurant" />
-            </View>
-          </View>
-        </View>
-
-        {/* Commercial & Rate Settings Card */}
-        <View style={styles.sectionCard}>
-          <View style={styles.titleRow}>
-            <Percent size={18} color={Colors.primary} />
-            <Text style={styles.sectionTitle}>Commercial & Operations</Text>
-          </View>
-
-          <View style={styles.formRow}>
-            <View style={[styles.inputGroup, { flex: 1, marginRight: 8 }]}>
-              <Text style={styles.inputLabel}>Commission Rate (%)</Text>
-              <TextInput
-                style={styles.textInput}
-                keyboardType="numeric"
-                value={commissionRate}
-                onChangeText={setCommissionRate}
-              />
-            </View>
-            <View style={[styles.inputGroup, { flex: 1 }]}>
-              <Text style={styles.inputLabel}>Default Prep Time (Mins)</Text>
-              <TextInput
-                style={styles.textInput}
-                keyboardType="numeric"
-                value={defaultDeliveryTime}
-                onChangeText={setDefaultDeliveryTime}
-              />
-            </View>
-          </View>
-        </View>
-
-        {/* External Website Configuration Card */}
-        <View style={styles.sectionCard}>
-          <View style={[styles.titleRow, { justifyContent: 'space-between' }]}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <Globe size={18} color={Colors.primary} />
-              <Text style={styles.sectionTitle}>External Website & Branding</Text>
-            </View>
-            <TouchableOpacity
-              onPress={() =>
-                router.push({
-                  pathname: '/external-website-settings',
-                  params: { restaurantId: restaurant._id },
-                })
-              }
-              style={{ paddingVertical: 4, paddingHorizontal: 8, backgroundColor: Colors.primaryLight, borderRadius: 6 }}
-            >
-              <Text style={{ fontSize: 11, fontWeight: '700', color: Colors.primary }}>Studio UI →</Text>
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.inputGroup}>
-            <Text style={styles.inputLabel}>Custom Domain / Hostname</Text>
-            <TextInput
-              style={styles.textInput}
-              placeholder="e.g. myrestaurant.co.uk"
-              placeholderTextColor={Colors.textSubtle}
-              autoCapitalize="none"
-              value={extDomain}
-              onChangeText={setExtDomain}
-            />
-          </View>
-
-          <View style={styles.inputGroup}>
-            <Text style={styles.inputLabel}>Brand Display Name</Text>
-            <TextInput
-              style={styles.textInput}
-              placeholder="e.g. Demo Kitchen"
-              placeholderTextColor={Colors.textSubtle}
-              value={extBrandName}
-              onChangeText={setExtBrandName}
-            />
-          </View>
-
-          <View style={styles.formRow}>
-            <View style={[styles.inputGroup, { flex: 1, marginRight: 8 }]}>
-              <Text style={styles.inputLabel}>Primary Color</Text>
-              <TextInput
-                style={styles.textInput}
-                placeholder="#E11D48"
-                placeholderTextColor={Colors.textSubtle}
-                value={extPrimaryColor}
-                onChangeText={setExtPrimaryColor}
-              />
-            </View>
-            <View style={[styles.inputGroup, { flex: 1 }]}>
-              <Text style={styles.inputLabel}>Secondary Color</Text>
-              <TextInput
-                style={styles.textInput}
-                placeholder="#4F46E5"
-                placeholderTextColor={Colors.textSubtle}
-                value={extSecondaryColor}
-                onChangeText={setExtSecondaryColor}
-              />
-            </View>
-          </View>
-
-          <View style={styles.inputGroup}>
-            <Text style={styles.inputLabel}>Hero Banner Image URL</Text>
-            <TextInput
-              style={styles.textInput}
-              placeholder="https://..."
-              placeholderTextColor={Colors.textSubtle}
-              value={extHeroBanner}
-              onChangeText={setExtHeroBanner}
-            />
-          </View>
-
-          <View style={styles.switchRow}>
-            <Text style={styles.switchLabel}>External Website Published</Text>
-            <Switch
-              value={extPublished}
-              onValueChange={setExtPublished}
-              trackColor={{ false: '#334155', true: '#10B981' }}
-              thumbColor={extPublished ? '#FFFFFF' : '#94A3B8'}
-            />
-          </View>
-        </View>
-
-        {/* External Delivery Settings Card */}
-        <View style={styles.sectionCard}>
-          <View style={styles.titleRow}>
-            <Truck size={18} color={Colors.primary} />
-            <Text style={styles.sectionTitle}>External Delivery Configuration</Text>
-          </View>
-
-          <View style={styles.switchRow}>
-            <Text style={styles.switchLabel}>Enable Custom External Delivery Charges</Text>
-            <Switch
-              value={extDeliveryEnabled}
-              onValueChange={setExtDeliveryEnabled}
-              trackColor={{ false: '#334155', true: '#10B981' }}
-              thumbColor={extDeliveryEnabled ? '#FFFFFF' : '#94A3B8'}
-            />
-          </View>
-
-          {extDeliveryEnabled && (
-            <View style={{ gap: 12, marginTop: 12 }}>
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Delivery Charge Type</Text>
-                <View style={styles.typeSelectorRow}>
-                  {(['tiered', 'fixed', 'per_mile'] as const).map((t) => (
-                    <TouchableOpacity
-                      key={t}
-                      style={[styles.typeOption, extChargeType === t && styles.activeTypeOption]}
-                      onPress={() => setExtChargeType(t)}
-                    >
-                      <Text style={[styles.typeOptionText, extChargeType === t && styles.activeTypeOptionText]}>
-                        {t === 'tiered' ? 'Tiered' : t === 'fixed' ? 'Fixed' : 'Per Mile'}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
-
-              <View style={styles.formRow}>
-                <View style={[styles.inputGroup, { flex: 1, marginRight: 8 }]}>
-                  <Text style={styles.inputLabel}>Max Delivery Radius (Miles)</Text>
-                  <TextInput
-                    style={styles.textInput}
-                    keyboardType="numeric"
-                    value={extMaxRadius}
-                    onChangeText={setExtMaxRadius}
-                  />
-                </View>
-                <View style={[styles.inputGroup, { flex: 1 }]}>
-                  <Text style={styles.inputLabel}>Free Delivery Over (£)</Text>
-                  <TextInput
-                    style={styles.textInput}
-                    placeholder="e.g. 30"
-                    placeholderTextColor={Colors.textSubtle}
-                    keyboardType="numeric"
-                    value={extFreeThreshold}
-                    onChangeText={setExtFreeThreshold}
-                  />
-                </View>
-              </View>
-
-              {extChargeType === 'fixed' && (
-                <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>Fixed Delivery Charge (£)</Text>
-                  <TextInput
-                    style={styles.textInput}
-                    keyboardType="numeric"
-                    value={extFixedCharge}
-                    onChangeText={setExtFixedCharge}
-                  />
-                </View>
-              )}
-
-              {extChargeType === 'per_mile' && (
-                <View style={styles.formRow}>
-                  <View style={[styles.inputGroup, { flex: 1, marginRight: 8 }]}>
-                    <Text style={styles.inputLabel}>Base Charge (£)</Text>
-                    <TextInput
-                      style={styles.textInput}
-                      keyboardType="numeric"
-                      value={extBaseCharge}
-                      onChangeText={setExtBaseCharge}
-                    />
-                  </View>
-                  <View style={[styles.inputGroup, { flex: 1, marginRight: 8 }]}>
-                    <Text style={styles.inputLabel}>Base Distance (Mi)</Text>
-                    <TextInput
-                      style={styles.textInput}
-                      keyboardType="numeric"
-                      value={extBaseDist}
-                      onChangeText={setExtBaseDist}
-                    />
-                  </View>
-                  <View style={[styles.inputGroup, { flex: 1 }]}>
-                    <Text style={styles.inputLabel}>£ / Addl Mile</Text>
-                    <TextInput
-                      style={styles.textInput}
-                      keyboardType="numeric"
-                      value={extPerMile}
-                      onChangeText={setExtPerMile}
-                    />
-                  </View>
-                </View>
-              )}
-
-              {extChargeType === 'tiered' && (
-                <View style={{ gap: 8, marginTop: 4 }}>
-                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <Text style={styles.inputLabel}>Distance Tiers</Text>
-                    <TouchableOpacity
-                      style={styles.addTierBtn}
-                      onPress={() => {
-                        setEditingTierIndex(null);
-                        setTierMaxDist('');
-                        setTierCharge('');
-                        setTierModalVisible(true);
-                      }}
-                    >
-                      <Plus size={14} color={Colors.primary} />
-                      <Text style={styles.addTierBtnText}>Add Tier</Text>
-                    </TouchableOpacity>
-                  </View>
-
-                  {extDistanceTiers.length === 0 ? (
-                    <Text style={styles.noTiersText}>No custom distance tiers added yet.</Text>
-                  ) : (
-                    extDistanceTiers.map((tier, idx) => (
-                      <View key={idx} style={styles.tierRowItem}>
-                        <Text style={styles.tierRowText}>
-                          Up to <Text style={{ fontWeight: '700' }}>{tier.maxDistance} Mi</Text>
-                        </Text>
-                        <Text style={styles.tierRowCharge}>£{Number(tier.charge).toFixed(2)}</Text>
-                        <View style={{ flexDirection: 'row', gap: 6 }}>
-                          <TouchableOpacity
-                            onPress={() => {
-                              setEditingTierIndex(idx);
-                              setTierMaxDist(String(tier.maxDistance));
-                              setTierCharge(String(tier.charge));
-                              setTierModalVisible(true);
-                            }}
-                          >
-                            <Edit2 size={15} color={Colors.primary} />
-                          </TouchableOpacity>
-                          <TouchableOpacity onPress={() => handleDeleteTier(idx)}>
-                            <Trash2 size={15} color={Colors.danger} />
-                          </TouchableOpacity>
-                        </View>
-                      </View>
-                    ))
-                  )}
-                </View>
-              )}
-            </View>
-          )}
-        </View>
-
-        {/* Contact Info Card */}
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>Contact Profile</Text>
-          <View style={styles.detailRow}>
-            <Mail size={16} color={Colors.textSubtle} />
-            <Text style={styles.detailVal}>{restaurant.email || 'N/A'}</Text>
-          </View>
-          <View style={styles.detailRow}>
-            <Phone size={16} color={Colors.textSubtle} />
-            <Text style={styles.detailVal}>{restaurant.phoneNumber || 'N/A'}</Text>
-          </View>
-          {restaurant.cuisineTypes && restaurant.cuisineTypes.length > 0 && (
-            <View style={styles.detailRow}>
-              <Info size={16} color={Colors.textSubtle} />
-              <Text style={styles.detailVal}>Cuisines: {restaurant.cuisineTypes.join(', ')}</Text>
-            </View>
-          )}
-        </View>
-
-        {/* Location Details Card */}
-        <View style={styles.sectionCard}>
-          <View style={styles.titleRow}>
-            <MapPin size={18} color={Colors.primary} />
-            <Text style={styles.sectionTitle}>Full Location Details</Text>
-          </View>
-
-          {showFullLocation ? (
-            <View style={styles.locationFields}>
-              {addr?.shopNo && (
-                <View style={styles.locationFieldRow}>
-                  <Text style={styles.locationLabel}>Shop/Flat No:</Text>
-                  <Text style={styles.locationValue}>{addr.shopNo}</Text>
-                </View>
-              )}
-              {addr?.floor && (
-                <View style={styles.locationFieldRow}>
-                  <Text style={styles.locationLabel}>Floor:</Text>
-                  <Text style={styles.locationValue}>{addr.floor}</Text>
-                </View>
-              )}
-              {addr?.street && (
-                <View style={styles.locationFieldRow}>
-                  <Text style={styles.locationLabel}>Street/Road:</Text>
-                  <Text style={styles.locationValue}>{addr.street}</Text>
-                </View>
-              )}
-              {addr?.city && (
-                <View style={styles.locationFieldRow}>
-                  <Text style={styles.locationLabel}>City:</Text>
-                  <Text style={styles.locationValue}>{addr.city}</Text>
-                </View>
-              )}
-              {addr?.pincode && (
-                <View style={styles.locationFieldRow}>
-                  <Text style={styles.locationLabel}>Pincode/Postcode:</Text>
-                  <Text style={styles.locationValue}>{addr.pincode}</Text>
-                </View>
-              )}
-            </View>
-          ) : (
-            <View style={styles.locationFields}>
-              <View style={styles.locationFieldRow}>
-                <Text style={styles.locationLabel}>Address:</Text>
-                <Text style={styles.locationValue}>{displayAddress}</Text>
-              </View>
-            </View>
-          )}
-        </View>
-
-        {/* Verification Status Feedback Remarks */}
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>Verification Feedback & Remarks</Text>
-          <TextInput
-            style={styles.remarksInput}
-            placeholder="Type verification remarks or reasons for rejection here..."
-            placeholderTextColor={Colors.textSubtle}
-            multiline={true}
-            numberOfLines={4}
-            value={remarks}
-            onChangeText={setRemarks}
-          />
-        </View>
-
-        {/* Global Active Status Switch */}
-        <View style={styles.activeStatusCard}>
-          <View style={styles.activeStatusHeader}>
-            <Text style={styles.activeStatusTitle}>Account Active Status</Text>
-            <Text style={styles.activeStatusSubtitle}>Allow restaurant login and ordering availability</Text>
-          </View>
-          <Switch
-            value={restaurant.isActive}
-            onValueChange={handleToggleActive}
-            trackColor={{ false: '#334155', true: '#10B981' }}
-            thumbColor={restaurant.isActive ? '#FFFFFF' : '#94A3B8'}
-          />
-        </View>
-
-        <View style={{ height: 40 }} />
-      </ScrollView>
-
-      {/* Action Footer Actions */}
-      <View style={styles.footerActions}>
-        <TouchableOpacity
-          disabled={updating}
-          style={[styles.actionBtn, styles.approveBtn]}
-          onPress={() => handleUpdateVerification('approved')}
+      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <ScrollView
+          contentContainerStyle={[styles.frame, { paddingHorizontal: gutter, paddingTop: 16, paddingBottom: bottomPad }]}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
         >
-          {updating ? (
-            <ActivityIndicator size="small" color="#FFFFFF" />
+          {/* Hero */}
+          <View style={[styles.hero, isTablet && styles.heroTablet]}>
+            {logoSource ? (
+              <Image source={logoSource} style={[styles.logo, isTablet && styles.logoTablet]} contentFit="cover" transition={200} cachePolicy="memory-disk" />
+            ) : (
+              <View style={[styles.logo, isTablet && styles.logoTablet, styles.logoPlaceholder]}>
+                <Text style={styles.logoInitial}>{restaurant.restaurantName?.trim().charAt(0).toUpperCase() || 'R'}</Text>
+              </View>
+            )}
+            <View style={styles.heroText}>
+              <Text style={[styles.heroName, isTablet && { fontSize: 26 }]} numberOfLines={2}>
+                {restaurant.restaurantName}
+              </Text>
+              {owner ? <Text style={styles.heroOwner}>Owned by {owner}</Text> : null}
+              <View style={styles.pillRow}>
+                <View style={[styles.pill, { backgroundColor: statusStyle.bg }]}>
+                  <View style={[styles.dot, { backgroundColor: statusStyle.dot }]} />
+                  <Text style={[styles.pillText, { color: statusStyle.text }]}>{statusStyle.label}</Text>
+                </View>
+                <View style={[styles.pill, { backgroundColor: restaurant.isActive ? Colors.statusActive.bg : Colors.cardSurface }]}>
+                  <View style={[styles.dot, { backgroundColor: restaurant.isActive ? Colors.info : Colors.textSubtle }]} />
+                  <Text style={[styles.pillText, { color: restaurant.isActive ? Colors.statusActive.text : Colors.textMuted }]}>
+                    {restaurant.isActive ? 'Live' : 'Offline'}
+                  </Text>
+                </View>
+                {joined && (
+                  <View style={styles.joined}>
+                    <CalendarDays size={12} color={Colors.textSubtle} />
+                    <Text style={styles.joinedText}>Joined {joined}</Text>
+                  </View>
+                )}
+              </View>
+            </View>
+            {isTablet && (
+              <View style={styles.heroActions}>
+                {restaurant.phoneNumber ? (
+                  <TouchableOpacity style={styles.heroBtn} onPress={() => openLink(`tel:${restaurant.phoneNumber!.replace(/\s/g, '')}`)}>
+                    <Phone size={16} color={Colors.text} />
+                    <Text style={styles.heroBtnText}>Call</Text>
+                  </TouchableOpacity>
+                ) : null}
+                {restaurant.email ? (
+                  <TouchableOpacity style={styles.heroBtn} onPress={() => openLink(`mailto:${restaurant.email}`)}>
+                    <Mail size={16} color={Colors.text} />
+                    <Text style={styles.heroBtnText}>Email</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+            )}
+          </View>
+
+          {isWide ? (
+            <View style={styles.columns}>
+              <View style={styles.sideCol}>
+                {verificationSection}
+                {availabilitySection}
+                {contactSection}
+              </View>
+              <View style={styles.mainCol}>
+                {commercialSection}
+                {websiteSection}
+                {deliverySection}
+              </View>
+            </View>
           ) : (
             <>
-              <CheckCircle size={15} color="#FFFFFF" />
-              <Text style={styles.approveBtnText}>Approve</Text>
+              {verificationSection}
+              {availabilitySection}
+              {commercialSection}
+              {websiteSection}
+              {deliverySection}
+              {contactSection}
             </>
           )}
-        </TouchableOpacity>
+        </ScrollView>
+      </KeyboardAvoidingView>
 
-        <TouchableOpacity
-          disabled={updating}
-          style={[styles.actionBtn, styles.pendingBtn]}
-          onPress={() => handleUpdateVerification('pending')}
-        >
-          <Clock size={15} color="#FFFFFF" />
-          <Text style={styles.pendingBtnText}>Pending</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          disabled={updating}
-          style={[styles.actionBtn, styles.rejectBtn]}
-          onPress={() => handleUpdateVerification('rejected')}
-        >
-          <XCircle size={15} color="#FFFFFF" />
-          <Text style={styles.rejectBtnText}>Reject</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Tier Modal */}
-      <Modal visible={tierModalVisible} transparent={true} animationType="slide" onRequestClose={() => setTierModalVisible(false)}>
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalBox}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>{editingTierIndex !== null ? 'Edit Tier' : 'Add Distance Tier'}</Text>
-              <TouchableOpacity onPress={() => setTierModalVisible(false)}>
-                <X size={20} color={Colors.textSubtle} />
-              </TouchableOpacity>
+      {/* Sticky save bar — only when there are unsaved edits */}
+      {isDirty && (
+        <View style={[styles.saveBar, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+          <View style={[styles.saveBarInner, styles.frame]}>
+            <View style={styles.flex}>
+              <Text style={styles.saveBarTitle}>{errorCount ? `${errorCount} field${errorCount === 1 ? '' : 's'} to fix` : 'Unsaved changes'}</Text>
+              {isTablet && <Text style={styles.saveBarSub}>Save to apply these settings to the restaurant.</Text>}
             </View>
-            <View style={{ padding: 16, gap: 12 }}>
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Max Distance (Miles) *</Text>
-                <TextInput
-                  style={styles.textInput}
-                  keyboardType="numeric"
-                  placeholder="e.g. 3"
-                  placeholderTextColor={Colors.textSubtle}
-                  value={tierMaxDist}
-                  onChangeText={setTierMaxDist}
-                />
-              </View>
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Delivery Charge (£) *</Text>
-                <TextInput
-                  style={styles.textInput}
-                  keyboardType="numeric"
-                  placeholder="e.g. 2.50"
-                  placeholderTextColor={Colors.textSubtle}
-                  value={tierCharge}
-                  onChangeText={setTierCharge}
-                />
-              </View>
-            </View>
-            <View style={styles.modalFooter}>
-              <TouchableOpacity style={styles.cancelBtn} onPress={() => setTierModalVisible(false)}>
-                <Text style={styles.cancelBtnText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.submitBtn} onPress={handleSaveTier}>
-                <Text style={styles.submitBtnText}>Save</Text>
-              </TouchableOpacity>
-            </View>
+            <TouchableOpacity style={styles.btnSecondary} onPress={discardChanges} disabled={saving}>
+              <Text style={styles.btnSecondaryText}>Discard</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.btnPrimary, saving && styles.disabled]} onPress={handleSave} disabled={saving}>
+              {saving ? <ActivityIndicator size="small" color="#FFFFFF" /> : <Text style={styles.btnPrimaryText}>Save changes</Text>}
+            </TouchableOpacity>
           </View>
         </View>
-      </Modal>
+      )}
 
-      {/* Deactivate Confirm Modal */}
       <ConfirmModal
-        visible={deactivateModalVisible}
-        title="Deactivate Restaurant"
-        message={`Are you sure you want to deactivate '${restaurant?.restaurantName || 'this restaurant'}'? Customers will not be able to view their menu or place orders.`}
-        confirmText="Deactivate"
-        isDestructive={true}
-        onConfirm={async () => {
-          await performToggleActive(false);
-          setDeactivateModalVisible(false);
+        visible={!!statusToConfirm && !updatingStatus}
+        title={
+          statusToConfirm === 'approved'
+            ? 'Approve this restaurant?'
+            : statusToConfirm === 'rejected'
+            ? 'Reject this restaurant?'
+            : 'Move back to pending?'
+        }
+        message={
+          statusToConfirm === 'approved'
+            ? `${restaurant.restaurantName} will be able to sign in and start trading.`
+            : statusToConfirm === 'rejected'
+            ? `${restaurant.restaurantName} won’t be able to sign in.${remarks.trim() ? ' Your remarks will be shared with the owner.' : ' Consider adding remarks so the owner knows why.'}`
+            : `${restaurant.restaurantName} will return to the review queue.`
+        }
+        confirmText={statusToConfirm === 'approved' ? 'Approve' : statusToConfirm === 'rejected' ? 'Reject' : 'Move to pending'}
+        isDestructive={statusToConfirm === 'rejected'}
+        onConfirm={() => statusToConfirm && applyStatus(statusToConfirm)}
+        onClose={() => setStatusToConfirm(null)}
+      />
+
+      <ConfirmModal
+        visible={deactivateVisible}
+        title="Take restaurant offline?"
+        message={`${restaurant.restaurantName} will be hidden from customers and can’t receive new orders until you turn it back on.`}
+        confirmText="Take offline"
+        isDestructive
+        onConfirm={() => {
+          setDeactivateVisible(false);
+          applyActive(false);
         }}
-        onClose={() => setDeactivateModalVisible(false)}
+        onClose={() => setDeactivateVisible(false)}
       />
     </View>
   );
 }
 
+/* ────────────────────────────────────────────────────────────────────────────
+ * Styles
+ * ──────────────────────────────────────────────────────────────────────────── */
+
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: Colors.background,
-  },
-  saveHeaderBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: Colors.primary,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-  },
-  saveHeaderBtnText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-    fontSize: 13,
-  },
-  centerBox: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 30,
-  },
-  loadingText: {
-    color: Colors.textMuted,
-    fontSize: 14,
-    marginTop: 12,
-  },
-  errorText: {
-    color: Colors.danger,
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  scrollBody: {
-    padding: 16,
-  },
-  bannerCard: {
-    backgroundColor: Colors.card,
-    borderRadius: 16,
-    borderColor: Colors.cardBorder,
-    borderWidth: 1,
-    padding: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 14,
-  },
-  bannerImage: {
+  container: { flex: 1, backgroundColor: Colors.backgroundSecondary },
+  flex: { flex: 1 },
+  frame: { width: '100%', maxWidth: 1280, alignSelf: 'center' },
+  disabled: { opacity: 0.6 },
+
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },
+  centerIcon: {
     width: 72,
     height: 72,
-    borderRadius: 14,
-  },
-  imagePlaceholder: {
-    backgroundColor: Colors.cardSurface,
-    justifyContent: 'center',
+    borderRadius: 36,
+    backgroundColor: Colors.background,
+    borderWidth: 1,
+    borderColor: Colors.cardBorder,
     alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
   },
-  placeholderText: {
+  centerTitle: { fontSize: 18, fontWeight: '800', color: Colors.text },
+  centerText: { fontSize: 14, color: Colors.textMuted, marginTop: 8, textAlign: 'center' },
+  centerActions: { flexDirection: 'row', gap: 10, marginTop: 20 },
+
+  // Hero
+  hero: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    backgroundColor: Colors.background,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: Colors.cardBorder,
+    padding: 16,
+    marginBottom: 16,
+  },
+  heroTablet: { padding: 22, gap: 18 },
+  logo: { width: 68, height: 68, borderRadius: 16 },
+  logoTablet: { width: 84, height: 84, borderRadius: 20 },
+  logoPlaceholder: { backgroundColor: Colors.primaryLight, alignItems: 'center', justifyContent: 'center' },
+  logoInitial: { fontSize: 28, fontWeight: '800', color: Colors.primary },
+  heroText: { flex: 1, minWidth: 0 },
+  heroName: { fontSize: 20, fontWeight: '800', color: Colors.text, letterSpacing: -0.4 },
+  heroOwner: { fontSize: 13, color: Colors.textMuted, marginTop: 2 },
+  pillRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginTop: 8 },
+  pill: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 9, paddingVertical: 4, borderRadius: 999 },
+  pillText: { fontSize: 12, fontWeight: '700' },
+  dot: { width: 6, height: 6, borderRadius: 3 },
+  joined: { flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 4 },
+  joinedText: { fontSize: 12, color: Colors.textSubtle, fontWeight: '600' },
+  heroActions: { flexDirection: 'row', gap: 8 },
+  heroBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    height: 40,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.cardBorder,
+    backgroundColor: Colors.background,
+  },
+  heroBtnText: { fontSize: 14, fontWeight: '700', color: Colors.text },
+
+  // Columns
+  columns: { flexDirection: 'row', alignItems: 'flex-start', gap: 16 },
+  sideCol: { flex: 1, minWidth: 0 },
+  mainCol: { flex: 1.5, minWidth: 0 },
+
+  // Section
+  section: {
+    backgroundColor: Colors.background,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: Colors.cardBorder,
+    padding: 18,
+    marginBottom: 16,
+  },
+  sectionHead: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 16 },
+  sectionIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: Colors.primaryLight,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sectionTitle: { fontSize: 16, fontWeight: '800', color: Colors.text, letterSpacing: -0.2 },
+  sectionSub: { fontSize: 12, color: Colors.textMuted, marginTop: 1 },
+  divider: { height: 1, backgroundColor: Colors.cardBorder, marginVertical: 14 },
+
+  // Fields
+  row: { flexDirection: 'row', gap: 12 },
+  rowItem: { flex: 1, minWidth: 0 },
+  half: { width: '50%', paddingRight: 6 },
+  field: { marginBottom: 14 },
+  label: { fontSize: 13, fontWeight: '700', color: Colors.text, marginBottom: 7 },
+  inputWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    height: 48,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: Colors.cardBorder,
+    backgroundColor: Colors.cardSurface,
+  },
+  inputFocused: { borderColor: Colors.primary, backgroundColor: Colors.background },
+  inputError: { borderColor: Colors.danger, backgroundColor: '#FFFBFB' },
+  input: { flex: 1, minWidth: 0, height: '100%', fontSize: 15, color: Colors.text, paddingVertical: 0 },
+  affix: { fontSize: 15, fontWeight: '700', color: Colors.textMuted },
+  msgRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 5, marginTop: 5 },
+  errorText: { flex: 1, fontSize: 12, fontWeight: '600', color: Colors.danger, lineHeight: 16 },
+  hint: { fontSize: 12, color: Colors.textSubtle, marginTop: 5 },
+  swatch: { width: 22, height: 22, borderRadius: 6, borderWidth: 1, borderColor: 'rgba(0,0,0,0.1)' },
+  textArea: {
+    minHeight: 90,
+    maxHeight: 160,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: Colors.cardBorder,
+    backgroundColor: Colors.cardSurface,
+    padding: 12,
+    fontSize: 14,
     color: Colors.text,
-    fontSize: 28,
-    fontWeight: '800',
   },
-  bannerInfo: {
+  counter: { fontSize: 11, color: Colors.textSubtle, marginTop: 5, textAlign: 'right' },
+
+  toggleRow: { flexDirection: 'row', alignItems: 'center', gap: 16 },
+  toggleTitle: { fontSize: 15, fontWeight: '700', color: Colors.text },
+  toggleSub: { fontSize: 13, color: Colors.textMuted, marginTop: 2, lineHeight: 18 },
+
+  // Verification
+  statusBanner: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14, borderRadius: 14, marginBottom: 16 },
+  statusBannerTitle: { fontSize: 15, fontWeight: '800' },
+  statusBannerSub: { fontSize: 13, marginTop: 1, opacity: 0.9 },
+  statusActions: { flexDirection: 'row', gap: 10, marginTop: 14 },
+  actBtn: {
     flex: 1,
-    marginLeft: 14,
+    height: 46,
+    borderRadius: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
   },
-  restaurantName: {
-    color: Colors.text,
-    fontSize: 18,
-    fontWeight: '800',
-    marginBottom: 4,
+  actSuccess: { backgroundColor: Colors.success },
+  actDanger: { backgroundColor: Colors.background, borderWidth: 1.5, borderColor: '#FECACA' },
+  actNeutral: { backgroundColor: Colors.background, borderWidth: 1.5, borderColor: Colors.cardBorder },
+  actText: { fontSize: 14, fontWeight: '800' },
+
+  // Contact
+  kv: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    paddingVertical: 11,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.cardBorder,
   },
-  rowAlign: {
+  kvLast: { borderBottomWidth: 0 },
+  kvLabel: { width: 72, fontSize: 13, color: Colors.textSubtle, fontWeight: '600' },
+  kvValue: { flex: 1, fontSize: 14, color: Colors.text, lineHeight: 19 },
+  kvLink: { color: Colors.primary, fontWeight: '600' },
+  mapBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    height: 42,
+    marginTop: 14,
+    borderRadius: 12,
+    backgroundColor: Colors.primaryLight,
+  },
+  mapBtnText: { fontSize: 14, fontWeight: '700', color: Colors.primary },
+
+  linkBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    marginBottom: 6,
-  },
-  ownerText: {
-    color: Colors.textMuted,
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  badgeWrap: {
-    flexDirection: 'row',
-    gap: 6,
-  },
-  sectionCard: {
-    backgroundColor: Colors.card,
-    borderRadius: 16,
-    borderColor: Colors.cardBorder,
-    borderWidth: 1,
-    padding: 16,
-    marginBottom: 14,
-  },
-  titleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 14,
-  },
-  sectionTitle: {
-    color: Colors.primary,
-    fontSize: 13,
-    fontWeight: '800',
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
-  },
-  formRow: {
-    flexDirection: 'row',
-  },
-  inputGroup: {
-    marginBottom: 12,
-    gap: 6,
-  },
-  inputLabel: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: Colors.textMuted,
-  },
-  textInput: {
-    backgroundColor: Colors.cardSurface,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: Colors.cardBorder,
-    paddingHorizontal: 12,
-    height: 40,
-    color: Colors.text,
-    fontSize: 13,
-  },
-  switchRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 4,
-  },
-  switchLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: Colors.text,
-  },
-  typeSelectorRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  typeOption: {
-    flex: 1,
-    height: 38,
-    justifyContent: 'center',
-    alignItems: 'center',
+    paddingHorizontal: 10,
+    height: 32,
     borderRadius: 8,
-    backgroundColor: Colors.cardSurface,
-    borderWidth: 1,
+    backgroundColor: Colors.primaryLight,
+  },
+  linkBtnText: { fontSize: 12, fontWeight: '800', color: Colors.primary },
+
+  // Charge type
+  typeGrid: { flexDirection: 'row', gap: 8, marginBottom: 16 },
+  typeCard: {
+    flex: 1,
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1.5,
     borderColor: Colors.cardBorder,
+    backgroundColor: Colors.cardSurface,
   },
-  activeTypeOption: {
-    backgroundColor: Colors.primary,
-    borderColor: Colors.primary,
+  typeCardActive: { borderColor: Colors.primary, backgroundColor: Colors.primaryLight },
+  radio: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 2,
+    borderColor: Colors.textSubtle,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
   },
-  typeOptionText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: Colors.textMuted,
-  },
-  activeTypeOptionText: {
-    color: '#FFFFFF',
-  },
+  radioActive: { borderColor: Colors.primary },
+  radioDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: Colors.primary },
+  typeLabel: { fontSize: 14, fontWeight: '800', color: Colors.text },
+  typeDesc: { fontSize: 11, color: Colors.textMuted, marginTop: 2 },
+
+  // Tiers
+  tiersBox: { marginTop: 2 },
+  tiersHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   addTierBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-    backgroundColor: Colors.cardSurface,
-  },
-  addTierBtnText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: Colors.primary,
-  },
-  noTiersText: {
-    fontSize: 12,
-    color: Colors.textMuted,
-    fontStyle: 'italic',
-  },
-  tierRowItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: Colors.cardSurface,
-    padding: 10,
+    height: 32,
+    paddingHorizontal: 10,
     borderRadius: 8,
-    borderWidth: 1,
-    borderColor: Colors.cardBorder,
+    backgroundColor: Colors.primaryLight,
+    marginBottom: 7,
   },
-  tierRowText: {
-    fontSize: 13,
-    color: Colors.text,
-  },
-  tierRowCharge: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: Colors.primary,
-  },
-  detailRow: {
+  addTierText: { fontSize: 13, fontWeight: '700', color: Colors.primary },
+  emptyTiers: { fontSize: 13, color: Colors.textMuted, paddingVertical: 8 },
+  tierRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.cardBorder,
-  },
-  detailVal: {
-    color: Colors.text,
-    fontSize: 13,
-    fontWeight: '500',
-  },
-  locationFields: {
-    gap: 8,
-  },
-  locationFieldRow: {
-    flexDirection: 'row',
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.cardBorder,
-    paddingVertical: 6,
-  },
-  locationLabel: {
-    color: Colors.textSubtle,
-    width: 110,
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  locationValue: {
-    color: Colors.text,
-    fontSize: 12,
-    fontWeight: '500',
-    flex: 1,
-  },
-  remarksInput: {
-    backgroundColor: Colors.cardSurface,
-    color: Colors.text,
-    borderColor: Colors.cardBorder,
-    borderWidth: 1,
-    borderRadius: 10,
-    padding: 12,
-    fontSize: 13,
-    textAlignVertical: 'top',
-    height: 80,
-  },
-  activeStatusCard: {
-    backgroundColor: Colors.card,
-    borderRadius: 16,
-    borderColor: Colors.cardBorder,
-    borderWidth: 1,
-    padding: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 20,
-  },
-  activeStatusHeader: {
-    flex: 1,
-    marginRight: 16,
-  },
-  activeStatusTitle: {
-    color: Colors.text,
-    fontSize: 15,
-    fontWeight: '700',
-  },
-  activeStatusSubtitle: {
-    color: Colors.textMuted,
-    fontSize: 12,
-    marginTop: 2,
-  },
-  footerActions: {
-    flexDirection: 'row',
-    padding: 16,
-    backgroundColor: Colors.card,
-    borderColor: Colors.cardBorder,
-    borderTopWidth: 1,
-    gap: 8,
-  },
-  actionBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    justifyContent: 'center',
     alignItems: 'center',
     gap: 6,
-    paddingVertical: 12,
-    borderRadius: 10,
-  },
-  approveBtn: {
-    backgroundColor: Colors.primary,
-  },
-  approveBtnText: {
-    color: '#FFFFFF',
-    fontWeight: '800',
-    fontSize: 13,
-  },
-  pendingBtn: {
-    backgroundColor: Colors.warning,
-  },
-  pendingBtnText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-    fontSize: 13,
-  },
-  rejectBtn: {
-    backgroundColor: Colors.danger,
-  },
-  rejectBtnText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-    fontSize: 13,
-  },
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 16,
-  },
-  modalBox: {
-    backgroundColor: Colors.card,
-    borderRadius: 16,
-    width: '100%',
-    maxWidth: 420,
+    paddingVertical: 8,
+    paddingLeft: 14,
+    paddingRight: 4,
+    marginBottom: 8,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: Colors.cardBorder,
-    overflow: 'hidden',
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.cardBorder,
-  },
-  modalTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: Colors.text,
-  },
-  modalFooter: {
-    flexDirection: 'row',
-    padding: 16,
-    gap: 10,
-    borderTopWidth: 1,
-    borderTopColor: Colors.cardBorder,
-  },
-  cancelBtn: {
-    flex: 1,
-    height: 40,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderRadius: 8,
     backgroundColor: Colors.cardSurface,
   },
-  cancelBtnText: {
-    color: Colors.textMuted,
-    fontSize: 13,
-    fontWeight: '600',
+  tierRange: { fontSize: 14, fontWeight: '700', color: Colors.text },
+  tierCharge: { fontSize: 15, fontWeight: '800', color: Colors.primary, marginRight: 6 },
+  iconBtn: { width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  tierEditor: {
+    padding: 14,
+    marginBottom: 8,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: Colors.primary,
+    backgroundColor: Colors.background,
   },
-  submitBtn: {
-    flex: 1,
-    height: 40,
-    justifyContent: 'center',
+  tierEditorTitle: { fontSize: 14, fontWeight: '800', color: Colors.text, marginBottom: 10 },
+  tierEditorActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8 },
+  note: {
+    flexDirection: 'row',
+    gap: 8,
+    padding: 10,
+    borderRadius: 10,
+    backgroundColor: Colors.statusPending.bg,
+    marginTop: 4,
+  },
+  noteText: { flex: 1, fontSize: 12, color: Colors.statusPending.text, lineHeight: 17 },
+
+  // Buttons
+  btnPrimary: {
+    height: 44,
+    minWidth: 120,
+    paddingHorizontal: 18,
+    borderRadius: 12,
+    flexDirection: 'row',
     alignItems: 'center',
-    borderRadius: 8,
+    justifyContent: 'center',
+    gap: 6,
     backgroundColor: Colors.primary,
   },
-  submitBtnText: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '700',
+  btnPrimaryText: { fontSize: 14, fontWeight: '800', color: '#FFFFFF' },
+  btnSecondary: {
+    height: 44,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: Colors.cardBorder,
+    backgroundColor: Colors.background,
   },
+  btnSecondaryText: { fontSize: 14, fontWeight: '700', color: Colors.textMuted },
+  btnPrimarySm: {
+    height: 38,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.primary,
+  },
+  btnSecondarySm: {
+    height: 38,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: Colors.cardBorder,
+  },
+
+  // Save bar
+  saveBar: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: Colors.background,
+    borderTopWidth: 1,
+    borderTopColor: Colors.cardBorder,
+    paddingTop: 12,
+    paddingHorizontal: 16,
+    shadowColor: '#000',
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: -4 },
+    elevation: 12,
+  },
+  saveBarInner: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  saveBarTitle: { fontSize: 14, fontWeight: '800', color: Colors.text },
+  saveBarSub: { fontSize: 12, color: Colors.textMuted, marginTop: 1 },
 });

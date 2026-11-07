@@ -18,7 +18,6 @@ jest.mock('../services/pos-config.service', () => ({
 // Hardware drivers are not exercised on the system-spooler path
 jest.mock('../services/sunmi-printer.service', () => ({ isSunmiAvailable: jest.fn(async () => false) }));
 jest.mock('../services/printer/epson-printer.service', () => ({}));
-jest.mock('../services/printer/network-printer.service', () => ({}));
 jest.mock('../services/printer/print-queue.service', () => ({ PrintQueueService: {} }));
 jest.mock('../services/printer/printer-registry', () => ({ resolvePrinter: jest.fn() }));
 

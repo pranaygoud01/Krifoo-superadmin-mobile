@@ -38,6 +38,7 @@ import {
   ExternalLink,
 } from 'lucide-react-native';
 import { discoverEpsonPrinters } from '../services/thermal-print.service';
+import { ensureBluetoothPermissions } from '../services/printer/bluetooth-permissions';
 
 export interface DiscoveredPrinterDevice {
   id: string;
@@ -46,8 +47,16 @@ export interface DiscoveredPrinterDevice {
   target?: string;
   ipAddress?: string;
   macAddress?: string;
+  /** TCP port for network printers (manual entry). */
+  port?: number;
   isRecommended?: boolean;
+  /** How it was found — decides Bluetooth Classic vs BLE when saved. */
+  source?: 'classic' | 'ble' | 'network';
 }
+
+const IPV4_RE = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/;
+// Whole-word brand / model hints (the old check matched fragments like "rp" or "pos" in almost any name).
+const RECOMMENDED_RE = /\b(epson|tm-?[a-z0-9]+|star|tsp\d*|mc-print\d*|sunmi|xprinter|rongta|munbyn|pos-?(58|80)|thermal|printer)\b/i;
 
 interface BluetoothPrinterModalProps {
   visible: boolean;
@@ -84,6 +93,8 @@ export const BluetoothPrinterModal: React.FC<BluetoothPrinterModalProps> = ({
   const [customTarget, setCustomTarget] = useState('');
   const [customIp, setCustomIp] = useState('');
   const [customPort, setCustomPort] = useState('8008');
+  const [scanError, setScanError] = useState<string | null>(null);
+  const [manualError, setManualError] = useState<string | null>(null);
 
   // Pulse animation for scanning radar effect
   const radarScale = useRef(new Animated.Value(1)).current;
@@ -122,9 +133,24 @@ export const BluetoothPrinterModal: React.FC<BluetoothPrinterModalProps> = ({
   }, [isScanning, radarScale, radarOpacity]);
 
   const startScan = async () => {
+    if (isScanning) return; // ignore taps while a scan is already running
     setIsScanning(true);
+    setScanError(null);
     setSearchQuery('');
     try {
+      // Android 12+ needs "Nearby devices" permission before any Bluetooth scan
+      const permission = await ensureBluetoothPermissions();
+      if (permission !== 'granted') {
+        setDevices([]);
+        setSelectedDeviceId(null);
+        setScanError(
+          permission === 'blocked'
+            ? 'Bluetooth permission is blocked. Open App Settings and allow “Nearby devices”, then scan again.'
+            : 'Allow “Nearby devices” permission so the app can find your Bluetooth printer.'
+        );
+        return;
+      }
+
       const results = await discoverEpsonPrinters();
       const mapped: DiscoveredPrinterDevice[] = results.map((d: any, idx: number) => ({
         id: d.id || d.target || d.macAddress || `dev_${idx}_${Date.now()}`,
@@ -133,30 +159,23 @@ export const BluetoothPrinterModal: React.FC<BluetoothPrinterModalProps> = ({
         target: d.target || d.macAddress,
         ipAddress: d.ipAddress,
         macAddress: d.macAddress,
-        isRecommended:
-          d.name?.toLowerCase().includes('epson') ||
-          d.name?.toLowerCase().includes('m30') ||
-          d.name?.toLowerCase().includes('star') ||
-          d.name?.toLowerCase().includes('tsp') ||
-          d.name?.toLowerCase().includes('sunmi') ||
-          d.name?.toLowerCase().includes('pos') ||
-          d.name?.toLowerCase().includes('rp') ||
-          d.name?.toLowerCase().includes('printer') ||
-          d.name?.toLowerCase().includes('xprinter') ||
-          d.name?.toLowerCase().includes('rongta') ||
-          d.name?.toLowerCase().includes('munbyn'),
+        source: d.source,
+        isRecommended: d.isLikelyPrinter || RECOMMENDED_RE.test(d.name || ''),
       }));
 
       setDevices(mapped);
-      if (mapped.length > 0) {
-        setSelectedDeviceId(mapped[0].id);
-      } else {
-        setSelectedDeviceId(null);
-      }
-    } catch (err) {
+      // Only pre-select the printer that is already configured — never guess (it could be a TV or phone)
+      const current = activeTarget ? mapped.find((m) => m.target === activeTarget || m.id === activeTarget) : undefined;
+      setSelectedDeviceId(current ? current.id : null);
+    } catch (err: any) {
       console.warn('[BluetoothModal] Scan error:', err);
       setDevices([]);
       setSelectedDeviceId(null);
+      setScanError(
+        err?.code === 'BLUETOOTH_DISABLED'
+          ? 'Bluetooth is turned off. Turn it on and scan again.'
+          : err?.message || 'Couldn’t scan for printers. Check that Bluetooth is on and the app has “Nearby devices” permission.'
+      );
     } finally {
       setIsScanning(false);
     }
@@ -197,13 +216,23 @@ export const BluetoothPrinterModal: React.FC<BluetoothPrinterModalProps> = ({
     const ipVal = customIp.trim();
 
     if (isBt && !targetVal) {
-      alert('Please enter a Bluetooth device name or MAC address.');
+      setManualError('Enter the printer’s Bluetooth name or MAC address.');
       return;
     }
-    if (!isBt && !ipVal) {
-      alert('Please enter a valid printer IP address.');
-      return;
+    let portVal: number | undefined;
+    if (!isBt) {
+      if (!IPV4_RE.test(ipVal)) {
+        setManualError('Enter a valid IP address, e.g. 192.168.1.50.');
+        return;
+      }
+      const portText = customPort.trim();
+      portVal = portText ? parseInt(portText, 10) : 9100;
+      if (!/^\d{1,5}$/.test(String(portVal)) || portVal < 1 || portVal > 65535) {
+        setManualError('Port must be between 1 and 65535 — usually 9100, or 8008 for Epson.');
+        return;
+      }
     }
+    setManualError(null);
 
     const device: DiscoveredPrinterDevice = {
       id: `custom_${Date.now()}`,
@@ -212,6 +241,7 @@ export const BluetoothPrinterModal: React.FC<BluetoothPrinterModalProps> = ({
       target: isBt ? targetVal : undefined,
       ipAddress: !isBt ? ipVal : undefined,
       macAddress: isBt ? (targetVal.startsWith('BT:') ? undefined : targetVal) : undefined,
+      port: portVal,
       isRecommended: false,
     };
     onSelectPrinter(device);
@@ -388,7 +418,7 @@ export const BluetoothPrinterModal: React.FC<BluetoothPrinterModalProps> = ({
                       value={searchQuery}
                       onChangeText={setSearchQuery}
                       placeholder="Filter by name, MAC, or IP address..."
-                      placeholderTextColor="#9CA3AF"
+                      placeholderTextColor="#9BA1A6"
                     />
                     {searchQuery ? (
                       <TouchableOpacity onPress={() => setSearchQuery('')}>
@@ -515,7 +545,13 @@ export const BluetoothPrinterModal: React.FC<BluetoothPrinterModalProps> = ({
                         <View style={styles.emptyIconCircle}>
                           <Printer size={32} color="#4B5563" />
                         </View>
-                        <Text style={styles.emptyTitle}>No printers found nearby</Text>
+                        <Text style={styles.emptyTitle}>{scanError ? 'Scan failed' : 'No printers found nearby'}</Text>
+                        {scanError ? (
+                          <View style={[styles.inlineError, { alignSelf: 'stretch' }]}>
+                            <AlertCircle size={14} color="#B91C1C" />
+                            <Text style={styles.inlineErrorText}>{scanError}</Text>
+                          </View>
+                        ) : null}
                         <Text style={styles.emptySub}>
                           {searchQuery
                             ? `No devices matching "${searchQuery}". Clear your search or tap Search again.`
@@ -559,7 +595,7 @@ export const BluetoothPrinterModal: React.FC<BluetoothPrinterModalProps> = ({
                                 <Text style={styles.quickStepNumberText}>1</Text>
                               </View>
                               <Text style={styles.quickStepText}>
-                                Power <Text style={{ fontWeight: '700', color: '#111827' }}>ON</Text> printer & ensure paper roll is loaded
+                                Power <Text style={{ fontWeight: '700', color: '#11181C' }}>ON</Text> printer & ensure paper roll is loaded
                               </Text>
                             </View>
                             <View style={styles.quickStepItem}>
@@ -567,7 +603,7 @@ export const BluetoothPrinterModal: React.FC<BluetoothPrinterModalProps> = ({
                                 <Text style={styles.quickStepNumberText}>2</Text>
                               </View>
                               <Text style={styles.quickStepText}>
-                                Pair device in <Text style={{ fontWeight: '700', color: '#111827' }}>Tablet Bluetooth Settings</Text> (PIN 0000 or 1234)
+                                Pair device in <Text style={{ fontWeight: '700', color: '#11181C' }}>Tablet Bluetooth Settings</Text> (PIN 0000 or 1234)
                               </Text>
                             </View>
                             <View style={styles.quickStepItem}>
@@ -575,7 +611,7 @@ export const BluetoothPrinterModal: React.FC<BluetoothPrinterModalProps> = ({
                                 <Text style={styles.quickStepNumberText}>3</Text>
                               </View>
                               <Text style={styles.quickStepText}>
-                                Return here and tap <Text style={{ fontWeight: '700', color: '#111827' }}>Search again</Text> to route receipts
+                                Return here and tap <Text style={{ fontWeight: '700', color: '#11181C' }}>Search again</Text> to route receipts
                               </Text>
                             </View>
                           </View>
@@ -627,17 +663,17 @@ export const BluetoothPrinterModal: React.FC<BluetoothPrinterModalProps> = ({
                           <View style={styles.helpStepRow}>
                             <Text style={styles.helpStepNumber}>1</Text>
                             <Text style={styles.helpStepText}>
-                              <Text style={{ fontWeight: '700', color: '#000000' }}>Pair in tablet settings first:</Text>{' '}
-                              For Bluetooth printers (Star Micronics & Epson), open your tablet's{' '}
-                              <Text style={{ fontWeight: '700', color: '#000000' }}>Settings &gt; Bluetooth</Text> and pair first.
+                              <Text style={{ fontWeight: '700', color: '#11181C' }}>Pair in tablet settings first:</Text>{' '}
+                              For Bluetooth printers (Star Micronics & Epson), open your tablet’s{' '}
+                              <Text style={{ fontWeight: '700', color: '#11181C' }}>Settings &gt; Bluetooth</Text> and pair first.
                             </Text>
                           </View>
 
                           <View style={styles.helpStepRow}>
                             <Text style={styles.helpStepNumber}>2</Text>
                             <Text style={styles.helpStepText}>
-                              <Text style={{ fontWeight: '700', color: '#000000' }}>Star Micronics TSP143:</Text> Press and
-                              hold the red <Text style={{ fontWeight: '700', color: '#000000' }}>PAIR</Text> button on the back for
+                              <Text style={{ fontWeight: '700', color: '#11181C' }}>Star Micronics TSP143:</Text> Press and
+                              hold the red <Text style={{ fontWeight: '700', color: '#11181C' }}>PAIR</Text> button on the back for
                               5 seconds until the green LED blinks.
                             </Text>
                           </View>
@@ -645,7 +681,7 @@ export const BluetoothPrinterModal: React.FC<BluetoothPrinterModalProps> = ({
                           <View style={styles.helpStepRow}>
                             <Text style={styles.helpStepNumber}>3</Text>
                             <Text style={styles.helpStepText}>
-                              <Text style={{ fontWeight: '700', color: '#000000' }}>Epson TM-m30 / TM-T88:</Text> Check that the
+                              <Text style={{ fontWeight: '700', color: '#11181C' }}>Epson TM-m30 / TM-T88:</Text> Check that the
                               power & Bluetooth LED is solid blue and receipt paper roll is feeding from the bottom.
                             </Text>
                           </View>
@@ -653,8 +689,8 @@ export const BluetoothPrinterModal: React.FC<BluetoothPrinterModalProps> = ({
                           <View style={styles.helpStepRow}>
                             <Text style={styles.helpStepNumber}>4</Text>
                             <Text style={styles.helpStepText}>
-                              <Text style={{ fontWeight: '700', color: '#000000' }}>Network IP:</Text> If your printer is connected
-                              via Ethernet or Wi-Fi, use the <Text style={{ fontWeight: '700', color: '#000000' }}>Manual Setup</Text> tab above.
+                              <Text style={{ fontWeight: '700', color: '#11181C' }}>Network IP:</Text> If your printer is connected
+                              via Ethernet or Wi-Fi, use the <Text style={{ fontWeight: '700', color: '#11181C' }}>Manual Setup</Text> tab above.
                             </Text>
                           </View>
                         </View>
@@ -713,7 +749,7 @@ export const BluetoothPrinterModal: React.FC<BluetoothPrinterModalProps> = ({
                     value={customName}
                     onChangeText={setCustomName}
                     placeholder="e.g. Front Counter (Epson TM-m30)"
-                    placeholderTextColor="#9CA3AF"
+                    placeholderTextColor="#9BA1A6"
                   />
 
                   {customConnectionType === 'bluetooth' ? (
@@ -724,11 +760,11 @@ export const BluetoothPrinterModal: React.FC<BluetoothPrinterModalProps> = ({
                         value={customTarget}
                         onChangeText={setCustomTarget}
                         placeholder="e.g. BT:EP-TM-M30III or 00:01:90:84:7B:A2"
-                        placeholderTextColor="#9CA3AF"
+                        placeholderTextColor="#9BA1A6"
                         autoCapitalize="characters"
                       />
                       <Text style={styles.inputHint}>
-                        Enter the device name as shown in your tablet's Bluetooth paired list, or the 12-digit MAC address on the printer sticker.
+                        Enter the device name as shown in your tablet’s Bluetooth paired list, or the 12-digit MAC address on the printer sticker.
                       </Text>
                     </>
                   ) : (
@@ -741,7 +777,7 @@ export const BluetoothPrinterModal: React.FC<BluetoothPrinterModalProps> = ({
                             value={customIp}
                             onChangeText={setCustomIp}
                             placeholder="e.g. 192.168.1.100"
-                            placeholderTextColor="#9CA3AF"
+                            placeholderTextColor="#9BA1A6"
                             keyboardType="decimal-pad"
                             autoCapitalize="none"
                           />
@@ -753,7 +789,7 @@ export const BluetoothPrinterModal: React.FC<BluetoothPrinterModalProps> = ({
                             value={customPort}
                             onChangeText={setCustomPort}
                             placeholder="8008"
-                            placeholderTextColor="#9CA3AF"
+                            placeholderTextColor="#9BA1A6"
                             keyboardType="number-pad"
                           />
                         </View>
@@ -763,6 +799,13 @@ export const BluetoothPrinterModal: React.FC<BluetoothPrinterModalProps> = ({
                       </Text>
                     </>
                   )}
+
+                  {manualError ? (
+                    <View style={styles.inlineError}>
+                      <AlertCircle size={14} color="#B91C1C" />
+                      <Text style={styles.inlineErrorText}>{manualError}</Text>
+                    </View>
+                  ) : null}
 
                   <View style={styles.buttonRow}>
                     <TouchableOpacity onPress={onClose} style={styles.cancelBtn} activeOpacity={0.7}>
@@ -789,6 +832,18 @@ export const BluetoothPrinterModal: React.FC<BluetoothPrinterModalProps> = ({
 };
 
 const styles = StyleSheet.create({
+  inlineError: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    padding: 12,
+    marginVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    backgroundColor: '#FEF2F2',
+  },
+  inlineErrorText: { flex: 1, fontSize: 13, lineHeight: 18, fontWeight: '600', color: '#B91C1C' },
   fullScreenSafeArea: {
     flex: 1,
     backgroundColor: '#FFFFFF',
@@ -830,12 +885,12 @@ const styles = StyleSheet.create({
   navBarTitle: {
     fontSize: 18,
     fontWeight: '800',
-    color: '#000000',
+    color: '#11181C',
     letterSpacing: -0.3,
   },
   navBarSubtitle: {
     fontSize: 12,
-    color: '#6B7280',
+    color: '#687076',
     marginTop: 2,
   },
 
@@ -872,11 +927,11 @@ const styles = StyleSheet.create({
   tabText: {
     fontSize: 13.5,
     fontWeight: '600',
-    color: '#6B7280',
+    color: '#687076',
   },
   tabTextActive: {
     fontWeight: '700',
-    color: '#000000',
+    color: '#11181C',
   },
 
   /* Status Banner */
@@ -924,11 +979,11 @@ const styles = StyleSheet.create({
   statusBannerTitle: {
     fontSize: 13.5,
     fontWeight: '700',
-    color: '#111827',
+    color: '#11181C',
   },
   statusBannerSub: {
     fontSize: 11.5,
-    color: '#6B7280',
+    color: '#687076',
     marginTop: 2,
   },
   rescanBtn: {
@@ -944,7 +999,7 @@ const styles = StyleSheet.create({
   rescanBtnText: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#000000',
+    color: '#11181C',
   },
 
   /* 2-Step Pairing Guide Banner */
@@ -1040,7 +1095,7 @@ const styles = StyleSheet.create({
   searchBarInput: {
     flex: 1,
     fontSize: 13,
-    color: '#000000',
+    color: '#11181C',
     padding: 0,
   },
 
@@ -1080,11 +1135,11 @@ const styles = StyleSheet.create({
   deviceName: {
     fontSize: 15,
     fontWeight: '700',
-    color: '#000000',
+    color: '#11181C',
   },
   deviceSub: {
     fontSize: 12,
-    color: '#6B7280',
+    color: '#687076',
     marginTop: 4,
   },
 
@@ -1172,11 +1227,11 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#000000',
+    color: '#11181C',
   },
   emptySub: {
     fontSize: 12.5,
-    color: '#6B7280',
+    color: '#687076',
     textAlign: 'center',
     marginTop: 6,
     marginBottom: 16,
@@ -1210,12 +1265,12 @@ const styles = StyleSheet.create({
   quickStepNumberText: {
     fontSize: 11,
     fontWeight: '800',
-    color: '#374151',
+    color: '#11181C',
   },
   quickStepText: {
     flex: 1,
     fontSize: 12,
-    color: '#4B5563',
+    color: '#687076',
     lineHeight: 16,
   },
   emptyRescanBtn: {
@@ -1252,7 +1307,7 @@ const styles = StyleSheet.create({
   helpAccordionTitle: {
     fontSize: 13.5,
     fontWeight: '700',
-    color: '#111827',
+    color: '#11181C',
   },
   helpAccordionContent: {
     paddingHorizontal: 16,
@@ -1272,14 +1327,14 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontSize: 11,
     fontWeight: '800',
-    color: '#000000',
+    color: '#11181C',
     lineHeight: 20,
     marginTop: 1,
   },
   helpStepText: {
     flex: 1,
     fontSize: 12.5,
-    color: '#4B5563',
+    color: '#687076',
     lineHeight: 18,
   },
 
@@ -1299,19 +1354,19 @@ const styles = StyleSheet.create({
   formCardHeader: {
     fontSize: 16,
     fontWeight: '800',
-    color: '#000000',
+    color: '#11181C',
     marginBottom: 16,
   },
   inputLabel: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#374151',
+    color: '#11181C',
     marginTop: 6,
     marginBottom: 8,
   },
   inputHint: {
     fontSize: 11.5,
-    color: '#6B7280',
+    color: '#687076',
     lineHeight: 16,
     marginBottom: 10,
     marginTop: -2,
@@ -1324,7 +1379,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 11,
     fontSize: 13.5,
-    color: '#000000',
+    color: '#11181C',
     marginBottom: 10,
   },
   chipBtn: {
@@ -1352,11 +1407,11 @@ const styles = StyleSheet.create({
   chipText: {
     fontSize: 12.5,
     fontWeight: '600',
-    color: '#6B7280',
+    color: '#687076',
   },
   chipTextSelected: {
     fontWeight: '700',
-    color: '#000000',
+    color: '#11181C',
   },
   buttonRow: {
     flexDirection: 'row',
@@ -1373,7 +1428,7 @@ const styles = StyleSheet.create({
   cancelBtnText: {
     fontSize: 13.5,
     fontWeight: '700',
-    color: '#374151',
+    color: '#11181C',
   },
   uberBlackBtn: {
     flexDirection: 'row',
@@ -1383,7 +1438,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 22,
     borderRadius: 9,
-    backgroundColor: '#000000',
+    backgroundColor: '#FF5C39',
   },
   uberBlackBtnText: {
     fontSize: 13.5,

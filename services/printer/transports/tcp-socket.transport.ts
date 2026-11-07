@@ -16,18 +16,17 @@ export class TcpSocketTransport implements PrinterTransport {
     const dataBytes =
       typeof payload === 'string' ? new TextEncoder().encode(payload) : payload;
 
-    // Check if react-native-tcp-socket native module is compiled into this build
+    // Load react-native-tcp-socket. (We no longer look it up in NativeModules: with the New
+    // Architecture enabled, TurboModules are not listed there, which falsely reported
+    // "not compiled". A missing native module throws from createConnection instead.)
     let TcpSocket: any;
-    let hasNativeModule = false;
     try {
-      const { NativeModules } = require('react-native');
-      hasNativeModule = Boolean(NativeModules?.TcpSockets || NativeModules?.TcpSocketModule);
       TcpSocket = require('react-native-tcp-socket').default || require('react-native-tcp-socket');
     } catch {
       TcpSocket = null;
     }
 
-    if (!TcpSocket || typeof TcpSocket.createConnection !== 'function' || !hasNativeModule) {
+    if (!TcpSocket || typeof TcpSocket.createConnection !== 'function') {
       return {
         ok: false,
         kind: 'unreachable',

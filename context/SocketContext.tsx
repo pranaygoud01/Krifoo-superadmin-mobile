@@ -3,7 +3,8 @@ import { DeviceEventEmitter, AppState } from 'react-native';
 import { useAuth } from './AuthContext';
 import { getApiBaseUrl, getAuthToken } from '../services/api';
 import { playOrderBuzzSound } from '../services/sound.service';
-import { printThermalReceipt, isAutoPrintEnabled } from '../services/thermal-print.service';
+import { printThermalReceipt, isAutoPrintEnabled, PRINT_FAILED_EVENT } from '../services/thermal-print.service';
+import { useToast } from './ToastContext';
 import { orderService } from '../services/order.service';
 import { claimOrderAlert, markOrdersSeen } from '../services/order-alert-registry';
 
@@ -15,7 +16,21 @@ const SocketContext = createContext<SocketContextType>({ socket: null });
 
 export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user } = useAuth();
+  const { showToast } = useToast();
   const socketRef = useRef<WebSocket | null>(null);
+
+  // Unattended auto-prints never open a print dialog — tell staff when one fails instead
+  useEffect(() => {
+    if (!PRINT_FAILED_EVENT) return;
+    const sub = DeviceEventEmitter.addListener(PRINT_FAILED_EVENT, (report: any) => {
+      showToast?.({
+        title: `Order ${report?.orderNumber || ''} did not print`,
+        message: report?.error || 'Check that the printer is on and connected, then print it from the order.',
+        type: 'error',
+      });
+    });
+    return () => sub.remove();
+  }, [showToast]);
 
   useEffect(() => {
     let active = true;
@@ -122,7 +137,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
               }
 
               console.log('[Socket] New order detected. Triggering 5-sec buzz sound...');
-              playOrderBuzzSound(5000).catch(console.error);
+              playOrderBuzzSound(undefined, 'order').catch(console.error);
 
               // Auto-print thermal receipt if enabled
               isAutoPrintEnabled().then(async (autoPrint) => {
@@ -134,7 +149,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                   if (isOwner && currentRestId && orderRestId && String(currentRestId) !== String(orderRestId)) {
                     return;
                   }
-                  await printThermalReceipt(orderObj);
+                  await printThermalReceipt(orderObj, false, undefined, undefined, 'new_order');
                 } else if (orderId) {
                   try {
                     const res = await orderService.getOrderById(orderId);
@@ -144,7 +159,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                         console.log(`[Socket] Auto-print skipped: Order restaurant ${fetchedRestId} !== active ${currentRestId}`);
                         return;
                       }
-                      await printThermalReceipt(res.data);
+                      await printThermalReceipt(res.data, false, undefined, undefined, 'new_order');
                     }
                   } catch (err) {
                     console.error('[Socket] Failed to fetch order for auto-print:', err);
@@ -241,13 +256,13 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                 });
 
                 // Trigger 5-sec buzz sound
-                playOrderBuzzSound(5000).catch(console.error);
+                playOrderBuzzSound(undefined, 'order').catch(console.error);
 
                 // Trigger thermal receipt auto-print if enabled
                 const autoPrint = await isAutoPrintEnabled();
                 if (autoPrint) {
                   console.log('[OrderSync] Auto-printing receipt for website order:', order.orderNumber || order._id);
-                  await printThermalReceipt(order);
+                  await printThermalReceipt(order, false, undefined, undefined, 'new_order');
                 }
               }
             }

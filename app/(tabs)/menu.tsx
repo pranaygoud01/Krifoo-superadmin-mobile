@@ -49,6 +49,8 @@ import {
   Layers,
   Power,
   PowerOff,
+  House,
+  ChevronDown,
 } from 'lucide-react-native';
 
 type SortOption = 'default' | 'price_asc' | 'price_desc' | 'discount' | 'name_asc' | 'stock_asc';
@@ -73,6 +75,7 @@ export default function MenuScreen() {
   // Filters State
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState('all');
+  const [categoryPickerOpen, setCategoryPickerOpen] = useState(false);
   const [typeFilter, setTypeFilter] = useState('all');
   const [selectedSort, setSelectedSort] = useState<SortOption>('default');
   const [channelFilter, setChannelFilter] = useState<'all' | 'delivery' | 'dine_in' | 'collection'>('all');
@@ -568,11 +571,11 @@ export default function MenuScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <SafeAreaView style={[styles.container, { backgroundColor: '#FFFFFF' }]} edges={['top']}>
       <ScrollView
         style={styles.mainScroll}
         contentContainerStyle={styles.mainScrollContent}
-        stickyHeaderIndices={[1]}
+        stickyHeaderIndices={[0]}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl
@@ -583,37 +586,108 @@ export default function MenuScreen() {
           />
         }
       >
-        {/* CHILD 0: Top Scrollable Section (Header, Notice, KPI Bar) */}
-        <View style={styles.topScrollableSection}>
-          {/* 1. Page Header */}
-          <View style={styles.pageHeader}>
-        <View>
-          <View style={styles.pageTitleRow}>
-            <Text style={styles.pageTitle}>Menu Management</Text>
-            <View style={styles.liveBadge}>
-              <View style={styles.liveDot} />
-              {/* <Text style={styles.liveText}>Catalog</Text> */}
-            </View>
-          </View>
-          <Text style={styles.pageSubtitle}>
-            {filteredItems.length} of {stats.total} items showing ({stats.online} online)
-          </Text>
-        </View>
+        {/* CHILD 0: Sticky Search, Filters & Category (top) */}
+        <View style={styles.stickyHeaderSection}>
+          {/* 4. Search and Filter Modal Button Row */}
+          <View style={[styles.controlsRow, isTablet && styles.controlsRowTablet]}>
+        <TouchableOpacity
+          style={styles.homeBtn}
+          onPress={() => router.navigate('/(tabs)')}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel="Go to Home"
+        >
+          <House size={20} color="#FF5C39" />
+        </TouchableOpacity>
 
-        <View style={styles.headerRightControls}>
-          {!isSuperAdmin && (
-            <TouchableOpacity style={styles.addItemHeaderBtn} onPress={openAddPage} activeOpacity={0.85}>
-              <Plus size={14} color="#FFFFFF" strokeWidth={2.8} />
-              <Text style={styles.addItemHeaderBtnText}>Add New</Text>
+        <View style={styles.searchBox}>
+          <Search size={18} color={Colors.textSubtle} />
+          <TextInput
+            style={styles.searchInput}
+            placeholder={isTablet ? 'Search items, ingredients or tags' : 'Search menu'}
+            placeholderTextColor={Colors.textSubtle}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            autoCorrect={false}
+            returnKeyType="search"
+            accessibilityLabel="Search menu"
+          />
+          {searchQuery.length > 0 && (
+            <TouchableOpacity
+              onPress={() => setSearchQuery('')}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              style={styles.searchClearBtn}
+              accessibilityLabel="Clear search"
+            >
+              <X size={14} color="#FFFFFF" strokeWidth={3} />
             </TouchableOpacity>
           )}
-
-          {/* <TouchableOpacity style={styles.refreshBtn} onPress={onRefresh} activeOpacity={0.7}>
-            <RefreshCw size={15} color={Colors.textSubtle} />
-          </TouchableOpacity> */}
         </View>
+
+        {/* Icon-only filter button, same as Orders */}
+        <TouchableOpacity
+          style={[styles.filterButton, activeFiltersCount > 0 && styles.filterButtonActive]}
+          onPress={() => setFilterModalOpen(true)}
+          activeOpacity={0.8}
+          accessibilityRole="button"
+          accessibilityLabel={activeFiltersCount > 0 ? `Filters, ${activeFiltersCount} active` : 'Filters'}
+        >
+          <SlidersHorizontal size={18} color={activeFiltersCount > 0 ? '#FFFFFF' : '#11181C'} />
+          {activeFiltersCount > 0 && (
+            <View style={styles.filterCountBadge}>
+              <Text style={styles.filterCountBadgeText}>{activeFiltersCount}</Text>
+            </View>
+          )}
+        </TouchableOpacity>
       </View>
 
+      {/* 5. Category dropdown */}
+      <View style={[styles.categoryRow, isTablet && styles.categoryRowTablet]}>
+        <TouchableOpacity
+          style={[styles.categoryDropdown, selectedCategoryFilter !== 'all' && styles.categoryDropdownActive]}
+          onPress={() => setCategoryPickerOpen(true)}
+          activeOpacity={0.8}
+          accessibilityRole="button"
+          accessibilityLabel={`Category: ${selectedCategoryFilter === 'all' ? 'All categories' : selectedCategoryFilter}. Tap to change`}
+        >
+          <Utensils size={16} color="#FF5C39" />
+          <Text style={styles.categoryDropdownLabel} numberOfLines={1}>
+            {selectedCategoryFilter === 'all' ? 'All Categories' : selectedCategoryFilter}
+          </Text>
+          <View style={styles.categoryDropdownCount}>
+            <Text style={styles.categoryDropdownCountText}>{categoryCounts[selectedCategoryFilter] || 0}</Text>
+          </View>
+          <ChevronDown size={18} color="#687076" />
+        </TouchableOpacity>
+        {!isSuperAdmin && (
+          <TouchableOpacity
+            style={styles.addItemHeaderBtn}
+            onPress={openAddPage}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel="Add new menu item"
+          >
+            <Plus size={16} color="#FFFFFF" strokeWidth={2.8} />
+            <Text style={styles.addItemHeaderBtnText}>Add New</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+
+      {/* Active filters pill badge line when filters are active */}
+      {activeFiltersCount > 0 && (
+        <View style={styles.activeFilterNotice}>
+          <Text style={styles.activeFilterNoticeText}>
+            Showing <Text style={{ fontWeight: '800', color: '#11181C' }}>{filteredItems.length}</Text> filtered items
+          </Text>
+          <TouchableOpacity onPress={clearAllFilters} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+            <Text style={styles.clearAllFiltersText}>Reset All</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+        </View>
+
+        {/* CHILD 1: Scrollable Notice & KPI Bar */}
+        <View style={styles.topScrollableSection}>
       {/* 2. Super Admin Read-Only Notice */}
       {isSuperAdmin && (
         <View style={styles.adminBanner}>
@@ -723,125 +797,6 @@ export default function MenuScreen() {
           </View>
         </View>
 
-        {/* CHILD 1: Sticky Search & Filters Section */}
-        <View style={styles.stickyHeaderSection}>
-          {/* 4. Search and Filter Modal Button Row */}
-          <View style={styles.controlsRow}>
-        <View style={styles.searchBox}>
-          <Search size={15} color={Colors.textSubtle} />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Search items, ingredients, tags..."
-            placeholderTextColor={Colors.textSubtle}
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-          />
-          {searchQuery.length > 0 && (
-            <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-              <X size={15} color={Colors.textSubtle} />
-            </TouchableOpacity>
-          )}
-        </View>
-
-        <TouchableOpacity
-          style={[styles.filterButton, activeFiltersCount > 0 && styles.filterButtonActive]}
-          onPress={() => setFilterModalOpen(true)}
-          activeOpacity={0.8}
-        >
-          <SlidersHorizontal size={14} color={activeFiltersCount > 0 ? '#FFFFFF' : '#11181C'} />
-          <Text style={[styles.filterButtonText, activeFiltersCount > 0 && styles.filterButtonTextActive]}>
-            Filters
-          </Text>
-          {activeFiltersCount > 0 && (
-            <View style={styles.filterCountBadge}>
-              <Text style={styles.filterCountBadgeText}>{activeFiltersCount}</Text>
-            </View>
-          )}
-        </TouchableOpacity>
-      </View>
-
-      {/* 5. Categories Horizontal Navigation Tabs */}
-      <View style={styles.statusTabsBarContainer}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.statusTabsBar}>
-          <TouchableOpacity
-            style={[
-              styles.statusTabPill,
-              selectedCategoryFilter === 'all' && styles.statusTabPillActive,
-            ]}
-            onPress={() => setSelectedCategoryFilter('all')}
-            activeOpacity={0.7}
-          >
-            <Utensils size={13} color={selectedCategoryFilter === 'all' ? '#FFFFFF' : '#FF5C39'} />
-            <Text
-              style={[
-                styles.statusTabLabel,
-                selectedCategoryFilter === 'all' && styles.statusTabLabelActive,
-              ]}
-            >
-              All Categories
-            </Text>
-            <View
-              style={[
-                styles.tabBadge,
-                selectedCategoryFilter === 'all' ? styles.tabBadgeActive : styles.tabBadgeInactive,
-              ]}
-            >
-              <Text
-                style={[
-                  styles.tabBadgeText,
-                  selectedCategoryFilter === 'all' && { color: '#11181C' },
-                ]}
-              >
-                {categoryCounts['all'] || 0}
-              </Text>
-            </View>
-          </TouchableOpacity>
-
-          {categories.map((cat) => {
-            const isCatActive = selectedCategoryFilter === cat.categoryName;
-            const count = categoryCounts[cat.categoryName] || 0;
-            return (
-              <TouchableOpacity
-                key={cat._id}
-                style={[
-                  styles.statusTabPill,
-                  isCatActive && styles.statusTabPillActive,
-                ]}
-                onPress={() => setSelectedCategoryFilter(isCatActive ? 'all' : cat.categoryName)}
-                activeOpacity={0.7}
-              >
-                <Text style={[styles.statusTabLabel, isCatActive && styles.statusTabLabelActive]}>
-                  {cat.categoryName}
-                </Text>
-                <View
-                  style={[
-                    styles.tabBadge,
-                    isCatActive ? styles.tabBadgeActive : { backgroundColor: '#CBD5E1' },
-                  ]}
-                >
-                  <Text style={[styles.tabBadgeText, isCatActive && { color: '#11181C' }]}>
-                    {count}
-                  </Text>
-                </View>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
-      </View>
-
-      {/* Active filters pill badge line when filters are active */}
-      {activeFiltersCount > 0 && (
-        <View style={styles.activeFilterNotice}>
-          <Text style={styles.activeFilterNoticeText}>
-            Showing <Text style={{ fontWeight: '800', color: '#11181C' }}>{filteredItems.length}</Text> filtered items
-          </Text>
-          <TouchableOpacity onPress={clearAllFilters} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
-            <Text style={styles.clearAllFiltersText}>Reset All</Text>
-          </TouchableOpacity>
-        </View>
-      )}
-        </View>
-
         {/* CHILD 2: Menu Item Feed / Loading / Error / Empty States */}
         <View style={styles.feedContainer}>
           {loading ? (
@@ -901,12 +856,68 @@ export default function MenuScreen() {
     </View>
   </ScrollView>
 
-      {/* Floating Add Item FAB */}
-      {!isSuperAdmin && (
-        <TouchableOpacity style={styles.fab} onPress={openAddPage} activeOpacity={0.88}>
-          <Plus size={26} color="#FFFFFF" strokeWidth={2.8} />
-        </TouchableOpacity>
-      )}
+  
+
+      {/* Category picker (dropdown) */}
+      <Modal
+        visible={categoryPickerOpen}
+        transparent
+        animationType={isTablet ? 'fade' : 'slide'}
+        statusBarTranslucent
+        onRequestClose={() => setCategoryPickerOpen(false)}
+      >
+        <View style={[styles.catPickerOverlay, isTablet && styles.catPickerOverlayTablet]}>
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={() => setCategoryPickerOpen(false)}
+            accessibilityLabel="Close"
+          />
+          <View style={[styles.catPickerSheet, isTablet && styles.catPickerSheetTablet]}>
+            {!isTablet && <View style={styles.catPickerHandle} />}
+            <View style={styles.catPickerHeader}>
+              <Text style={styles.catPickerTitle}>Choose category</Text>
+              <TouchableOpacity
+                style={styles.catPickerClose}
+                onPress={() => setCategoryPickerOpen(false)}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                accessibilityLabel="Close"
+              >
+                <X size={16} color="#687076" />
+              </TouchableOpacity>
+            </View>
+            <ScrollView contentContainerStyle={styles.catPickerList} showsVerticalScrollIndicator={false}>
+              {[{ _id: '__all', categoryName: 'all' } as Category, ...categories].map((cat) => {
+                const isAll = cat.categoryName === 'all';
+                const selected = selectedCategoryFilter === cat.categoryName;
+                const count = categoryCounts[cat.categoryName] || 0;
+                return (
+                  <TouchableOpacity
+                    key={cat._id}
+                    style={[styles.catPickerItem, selected && styles.catPickerItemActive]}
+                    onPress={() => {
+                      setSelectedCategoryFilter(cat.categoryName);
+                      setCategoryPickerOpen(false);
+                    }}
+                    activeOpacity={0.75}
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected }}
+                  >
+                    {isAll && <Utensils size={16} color={selected ? '#FF5C39' : '#687076'} />}
+                    <Text style={[styles.catPickerItemText, selected && styles.catPickerItemTextActive]} numberOfLines={1}>
+                      {isAll ? 'All Categories' : cat.categoryName}
+                    </Text>
+                    <View style={[styles.catPickerCount, selected && styles.catPickerCountActive]}>
+                      <Text style={[styles.catPickerCountText, selected && { color: '#FFFFFF' }]}>{count}</Text>
+                    </View>
+                    {selected && <Check size={18} color="#FF5C39" strokeWidth={2.5} />}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
 
 
       {/* Online/Offline Availability Confirmation Modal */}
@@ -938,7 +949,7 @@ export default function MenuScreen() {
             </Text>
 
             <Text style={styles.confirmModalItemName} numberOfLines={2}>
-              "{availabilityConfirmItem?.name}"
+              “{availabilityConfirmItem?.name}”
             </Text>
 
             <Text style={styles.confirmModalMessage}>
@@ -1210,12 +1221,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    gap: 12,
     paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 10,
+    paddingTop: 16,
+    paddingBottom: 12,
     backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: '#EEEEEE',
   },
   pageTitleRow: {
     flexDirection: 'row',
@@ -1223,10 +1233,10 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   pageTitle: {
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: '800',
-    color: '#0F172A',
-    letterSpacing: -0.3,
+    color: '#11181C',
+    letterSpacing: -0.5,
   },
   liveBadge: {
     flexDirection: 'row',
@@ -1248,10 +1258,9 @@ const styles = StyleSheet.create({
     color: '#065F46',
   },
   pageSubtitle: {
-    fontSize: 12,
-    color: '#64748B',
+    fontSize: 13,
+    color: '#687076',
     marginTop: 2,
-    fontWeight: '500',
   },
   headerRightControls: {
     flexDirection: 'row',
@@ -1262,21 +1271,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#FF5C39',
-    paddingHorizontal: 13,
-    paddingVertical: 8,
-    borderRadius: 9,
-    gap: 5,
-    shadowColor: '#FF5C39',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
-    elevation: 3,
+    paddingHorizontal: 16,
+    height: 44,
+    borderRadius: 12,
+    gap: 6,
   },
   addItemHeaderBtnText: {
     color: '#FFFFFF',
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '800',
-    letterSpacing: 0.2,
   },
   refreshBtn: {
     padding: 8,
@@ -1359,45 +1362,153 @@ const styles = StyleSheet.create({
   controlsRow: {
     backgroundColor: '#FFFFFF',
     paddingHorizontal: 16,
-    paddingTop: 8,
+    paddingTop: 12,
     paddingBottom: 8,
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 8,
+  },
+  categoryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingBottom: 10,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#EEEEEE',
+  },
+  categoryRowTablet: { paddingHorizontal: 24 },
+  categoryDropdown: {
+    flex: 1,
+    maxWidth: 420,
+    height: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#EEEEEE',
+    backgroundColor: '#F8F9FA',
+  },
+  categoryDropdownActive: { borderColor: '#FF5C39', backgroundColor: '#FFF0EC' },
+  categoryDropdownLabel: { flex: 1, minWidth: 0, fontSize: 14, fontWeight: '700', color: '#11181C' },
+  categoryDropdownCount: {
+    minWidth: 24,
+    height: 22,
+    paddingHorizontal: 7,
+    borderRadius: 11,
+    backgroundColor: '#11181C',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  categoryDropdownCountText: { fontSize: 11, fontWeight: '800', color: '#FFFFFF' },
+  itemsSummary: { flexShrink: 0, fontSize: 12, fontWeight: '600', color: '#687076' },
+
+  // Category picker
+  catPickerOverlay: { flex: 1, backgroundColor: 'rgba(17, 24, 28, 0.45)', justifyContent: 'flex-end' },
+  catPickerOverlayTablet: { justifyContent: 'center', alignItems: 'center', padding: 24 },
+  catPickerSheet: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    maxHeight: '75%',
+    paddingBottom: 24,
+  },
+  catPickerSheetTablet: { width: '100%', maxWidth: 440, borderRadius: 20, maxHeight: '80%', paddingBottom: 12 },
+  catPickerHandle: { alignSelf: 'center', width: 40, height: 5, borderRadius: 3, backgroundColor: '#E6E8EB', marginTop: 8 },
+  catPickerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 14,
+    paddingBottom: 10,
+  },
+  catPickerTitle: { fontSize: 17, fontWeight: '800', color: '#11181C' },
+  catPickerClose: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#F1F3F5',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  catPickerList: { paddingHorizontal: 12, paddingBottom: 8 },
+  catPickerItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 10,
+    minHeight: 52,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+  },
+  catPickerItemActive: { backgroundColor: '#FFF0EC' },
+  catPickerItemText: { flex: 1, fontSize: 15, fontWeight: '600', color: '#11181C' },
+  catPickerItemTextActive: { color: '#E04B2A', fontWeight: '800' },
+  catPickerCount: {
+    minWidth: 26,
+    height: 22,
+    paddingHorizontal: 7,
+    borderRadius: 11,
+    backgroundColor: '#F1F3F5',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  catPickerCountActive: { backgroundColor: '#FF5C39' },
+  catPickerCountText: { fontSize: 11, fontWeight: '800', color: '#687076' },
+  controlsRowTablet: { paddingHorizontal: 24 },
+  pageHeaderTablet: { paddingHorizontal: 24 },
+  homeBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: '#FFF0EC',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  searchClearBtn: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#9BA1A6',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   searchBox: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F8FAFC',
-    borderRadius: 9,
+    backgroundColor: '#F8F9FA',
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
-    paddingHorizontal: 10,
+    borderColor: '#EEEEEE',
+    paddingHorizontal: 12,
     gap: 8,
-    height: 38,
+    height: 44,
   },
   searchInput: {
     flex: 1,
-    fontSize: 13,
-    color: '#0F172A',
-    height: 38,
+    minWidth: 0,
+    fontSize: 14,
+    color: '#11181C',
+    height: 44,
     paddingVertical: 0,
   },
   filterButton: {
-    flexDirection: 'row',
+    width: 44,
+    height: 44,
     alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#F8FAFC',
+    justifyContent: 'center',
+    backgroundColor: '#F8F9FA',
     borderWidth: 1,
-    borderColor: '#E2E8F0',
-    paddingHorizontal: 12,
-    height: 38,
-    borderRadius: 9,
+    borderColor: '#EEEEEE',
+    borderRadius: 12,
   },
   filterButtonActive: {
-    backgroundColor: '#0F172A',
-    borderColor: '#0F172A',
+    backgroundColor: '#FF5C39',
+    borderColor: '#FF5C39',
   },
   filterButtonText: {
     fontSize: 12,
@@ -1408,16 +1519,22 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
   },
   filterCountBadge: {
-    backgroundColor: '#FF5C39',
-    borderRadius: 8,
-    paddingHorizontal: 5,
-    paddingVertical: 1,
-    minWidth: 16,
+    position: 'absolute',
+    top: -6,
+    right: -6,
+    backgroundColor: '#11181C',
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+    minWidth: 20,
+    height: 20,
+    paddingHorizontal: 4,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   filterCountBadgeText: {
     color: '#FFFFFF',
-    fontSize: 9,
+    fontSize: 10,
     fontWeight: '800',
   },
   statusTabsBarContainer: {

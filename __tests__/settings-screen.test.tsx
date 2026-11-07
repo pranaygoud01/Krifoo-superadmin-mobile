@@ -11,8 +11,17 @@ jest.mock('../context/ToastContext', () => ({
   useToast: () => ({ showToast: jest.fn() }),
 }));
 jest.mock('expo-router', () => ({
-  useRouter: () => ({ replace: jest.fn(), push: jest.fn(), back: jest.fn() }),
+  useRouter: () => ({ replace: jest.fn(), push: jest.fn(), back: jest.fn(), canGoBack: () => false }),
+  useSegments: () => [],
 }));
+jest.mock('react-native-safe-area-context', () => {
+  const { View } = require('react-native');
+  return {
+    SafeAreaView: View,
+    SafeAreaProvider: View,
+    useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
+  };
+});
 jest.mock('../services/orientation.service', () => ({
   getSavedOrientation: jest.fn(() => Promise.resolve('portrait')),
   applyOrientation: jest.fn(() => Promise.resolve(true)),

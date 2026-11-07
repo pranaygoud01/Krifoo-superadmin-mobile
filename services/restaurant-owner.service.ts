@@ -1,5 +1,11 @@
 import { apiRequest } from './api';
 
+/**
+ * DeviceEventEmitter event fired after the store is switched online/offline.
+ * Payload: `isActive: boolean`. Lets the header status pill update instantly.
+ */
+export const STORE_STATUS_CHANGED_EVENT = 'krifoo:store-status-changed';
+
 export const restaurantOwnerService = {
   // --- Dining Tables ---
   async getTables(): Promise<{ success: boolean; data?: any[]; message?: string }> {

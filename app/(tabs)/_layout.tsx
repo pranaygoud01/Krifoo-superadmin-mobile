@@ -4,13 +4,11 @@ import { Colors } from '../../constants/colors';
 import { Home, Store, Receipt, Users, Menu as MenuIcon, Settings } from 'lucide-react-native';
 import { StatusBar } from 'expo-status-bar';
 import {
-  TouchableOpacity,
+  Pressable,
   StyleSheet,
   View,
   Text,
   Platform,
-  LayoutAnimation,
-  UIManager,
   Animated,
   useWindowDimensions,
 } from 'react-native';
@@ -18,227 +16,253 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { useAuth } from '../../context/AuthContext';
 
-if (Platform.OS === 'android' && !(global as any)._IS_FABRIC && !(global as any).nativeFabricUIManager) {
-  if (UIManager.setLayoutAnimationEnabledExperimental) {
-    UIManager.setLayoutAnimationEnabledExperimental(true);
-  }
+/**
+ * Bottom navigation — Material 3 "Navigation bar" pattern
+ * ───────────────────────────────────────────────────────
+ *  • Icon sits inside a pill-shaped active indicator, label always visible below.
+ *  • Bar is docked full-width; content area = 64–80dp, plus the device safe-area
+ *    inset (home indicator / gesture bar). When the device has no inset
+ *    (Android 3-button nav, Touch ID iPhones) a minimum bottom padding is applied.
+ *  • Tablets / iPads: items are grouped and centred with a max width so they
+ *    don't stretch edge-to-edge on wide screens.
+ */
+
+const ACTIVE_COLOR = Colors.primary;
+const INACTIVE_COLOR = '#49454F';
+const INDICATOR_COLOR = Colors.primaryLight;
+const BAR_BG = '#FFFFFF';
+
+interface Metrics {
+  barHeight: number;
+  indicatorWidth: number;
+  indicatorHeight: number;
+  iconSize: number;
+  fontSize: number;
+  labelGap: number;
 }
 
 interface TabButtonProps {
-  route: any;
   isFocused: boolean;
   label: string;
   onPress: () => void;
-  renderIcon: () => React.ReactNode;
-  itemHeight: number;
-  fontSize: number;
-  iconGap: number;
-  activeFlex: number;
-  isTablet?: boolean;
+  onLongPress: () => void;
+  renderIcon: (color: string) => React.ReactNode;
+  metrics: Metrics;
+  maxItemWidth?: number;
 }
 
 const TabButton: React.FC<TabButtonProps> = ({
-  route,
   isFocused,
   label,
   onPress,
+  onLongPress,
   renderIcon,
-  itemHeight,
-  fontSize,
-  iconGap,
-  activeFlex,
-  isTablet = false,
+  metrics,
+  maxItemWidth,
 }) => {
-  const animation = React.useRef(new Animated.Value(isFocused ? 1 : 0)).current;
+  const progress = React.useRef(new Animated.Value(isFocused ? 1 : 0)).current;
 
   React.useEffect(() => {
-    Animated.spring(animation, {
+    Animated.spring(progress, {
       toValue: isFocused ? 1 : 0,
       useNativeDriver: true,
-      tension: 120,
-      friction: 14,
+      tension: 160,
+      friction: 18,
     }).start();
-  }, [isFocused]);
+  }, [isFocused, progress]);
 
-  const scale = animation.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0.85, 1],
-  });
+  // Indicator grows horizontally from the centre (M3 motion)
+  const indicatorScaleX = progress.interpolate({ inputRange: [0, 1], outputRange: [0.4, 1] });
+  const indicatorOpacity = progress;
 
-  const opacity = animation.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0, 1],
-  });
+  const color = isFocused ? ACTIVE_COLOR : INACTIVE_COLOR;
 
   return (
-    <TouchableOpacity
+    <Pressable
       onPress={onPress}
-      activeOpacity={0.8}
-      style={[
-        styles.tabItem,
-        { height: itemHeight, borderRadius: itemHeight / 2 },
-        isFocused ? [styles.tabItemActive, { flex: activeFlex }] : [styles.tabItemInactive, isTablet && { flex: 1 }],
-      ]}
+      onLongPress={onLongPress}
+      accessibilityRole="tab"
+      accessibilityState={{ selected: isFocused }}
+      accessibilityLabel={label}
+      style={[styles.tabItem, maxItemWidth ? { maxWidth: maxItemWidth } : null]}
     >
-      <Animated.View
-        style={[
-          styles.pillBackground,
-          {
-            borderRadius: itemHeight / 2,
-            opacity,
-            transform: [{ scale }],
-          },
-        ]}
-      />
-      <View style={[styles.tabContent, { gap: iconGap }]}>
-        {renderIcon()}
-        {(isFocused || isTablet) && (
+      {({ pressed }) => (
+        <>
+          <View
+            style={[
+              styles.indicatorWrap,
+              {
+                width: metrics.indicatorWidth,
+                height: metrics.indicatorHeight,
+                borderRadius: metrics.indicatorHeight / 2,
+              },
+            ]}
+          >
+            {/* Pressed state layer (shown on inactive tabs for touch feedback) */}
+            {pressed && !isFocused && (
+              <View
+                style={[
+                  StyleSheet.absoluteFillObject,
+                  styles.pressedLayer,
+                  { borderRadius: metrics.indicatorHeight / 2 },
+                ]}
+              />
+            )}
+            <Animated.View
+              pointerEvents="none"
+              style={[
+                StyleSheet.absoluteFillObject,
+                styles.indicator,
+                {
+                  borderRadius: metrics.indicatorHeight / 2,
+                  opacity: indicatorOpacity,
+                  transform: [{ scaleX: indicatorScaleX }],
+                },
+              ]}
+            />
+            {renderIcon(color)}
+          </View>
+
           <Text
             style={[
               styles.tabLabel,
-              { fontSize },
-              !isFocused && styles.tabLabelInactive,
+              {
+                fontSize: metrics.fontSize,
+                lineHeight: Math.round(metrics.fontSize * 1.34),
+                marginTop: metrics.labelGap,
+                color,
+              },
+              isFocused ? styles.tabLabelActive : styles.tabLabelInactive,
             ]}
             numberOfLines={1}
             ellipsizeMode="tail"
+            maxFontSizeMultiplier={1.3}
           >
             {label}
           </Text>
-        )}
-      </View>
-    </TouchableOpacity>
+        </>
+      )}
+    </Pressable>
   );
 };
 
 function AdminTabBar({ state, descriptors, navigation }: any) {
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
 
   const isSuperAdmin = user?.userType === 'super_admin';
 
-  // Responsive device classifications
+  // Device classes
   const isTablet = width >= 768;
   const isLargeTablet = width >= 1024;
   const isSmallDevice = width < 360;
+  const isPhoneLandscape = !isTablet && width > height;
 
-  // Dynamic bottom margin respecting safe area insets:
-  const bottomMargin = insets.bottom > 0
-    ? insets.bottom + (Platform.OS === 'ios' ? 8 : 10)
-    : (Platform.OS === 'ios' ? 18 : 14);
+  // Compact sizing (scaled down from the Material 3 80dp bar / 64×32 indicator / 24dp icon)
+  const metrics: Metrics = isTablet
+    ? { barHeight: 66, indicatorWidth: 56, indicatorHeight: 28, iconSize: 20, fontSize: 12, labelGap: 3 }
+    : isPhoneLandscape
+    ? { barHeight: 54, indicatorWidth: 48, indicatorHeight: 24, iconSize: 18, fontSize: 11, labelGap: 2 }
+    : isSmallDevice
+    ? { barHeight: 58, indicatorWidth: 46, indicatorHeight: 26, iconSize: 18, fontSize: 10.5, labelGap: 3 }
+    : { barHeight: 62, indicatorWidth: 52, indicatorHeight: 28, iconSize: 20, fontSize: 11.5, labelGap: 3 };
 
-  // Responsive sizing
-  const tabBarHeight = isTablet ? 62 : (isSmallDevice ? 52 : 56);
-  const tabItemHeight = isTablet ? 52 : (isSmallDevice ? 44 : 48);
-  const iconSize = isTablet ? 20 : (isSmallDevice ? 18 : 20);
-  const fontSize = isTablet ? 12 : (isSmallDevice ? 10.5 : 12);
-  const iconGap = isTablet ? 6 : (isSmallDevice ? 5 : 7);
+  // Bottom padding: honour the safe area (home indicator / gesture bar);
+  // fall back to a minimum on devices without an inset.
+  const minBottom = Platform.OS === 'ios' ? 8 : 6;
+  const paddingBottom = Math.max(insets.bottom, minBottom);
 
-  // Horizontal margins:
-  // On tablets, center floating dock with comfortable 640-720dp width
-  // On small phones, give 12dp side margin so 5 tabs fit comfortably
-  // On standard phones, give 16dp side margin
-  const dockMaxWidth = isTablet ? (isLargeTablet ? 720 : 640) : width - (isSmallDevice ? 24 : 32);
-  const horizontalMargin = isTablet
-    ? Math.max(24, Math.round((width - dockMaxWidth) / 2))
-    : (isSmallDevice ? 12 : 16);
+  // On wide screens keep items grouped in the centre instead of spreading edge-to-edge
+  const groupMaxWidth = isLargeTablet ? 720 : isTablet ? 600 : undefined;
+  const maxItemWidth = isTablet ? 168 : undefined;
 
-  // Filter visible tabs to compute active expansion flex accurately
   const visibleRoutes = state.routes.filter((route: any) => {
     if (isSuperAdmin && route.name === 'menu') return false;
     if (!isSuperAdmin && (route.name === 'restaurants' || route.name === 'users')) return false;
     return true;
   });
-  const totalTabs = visibleRoutes.length;
-  const activeFlex = isTablet
-    ? 1
-    : isSmallDevice
-    ? (totalTabs >= 5 ? 1.35 : 1.5)
-    : (totalTabs >= 5 ? 1.45 : 1.6);
 
   return (
     <View
       style={[
         styles.tabBar,
         {
-          bottom: bottomMargin,
-          left: horizontalMargin,
-          right: horizontalMargin,
-          height: tabBarHeight,
-          borderRadius: tabBarHeight / 2,
+          paddingBottom,
+          paddingLeft: Math.max(insets.left, isSmallDevice ? 4 : 8),
+          paddingRight: Math.max(insets.right, isSmallDevice ? 4 : 8),
         },
       ]}
     >
-      {state.routes.map((route: any) => {
-        // Dynamically hide tabs based on user role
-        if (isSuperAdmin && route.name === 'menu') {
-          return null;
-        }
-        if (!isSuperAdmin && (route.name === 'restaurants' || route.name === 'users')) {
-          return null;
-        }
+      <View
+        accessibilityRole="tablist"
+        style={[
+          styles.tabRow,
+          { height: metrics.barHeight },
+          groupMaxWidth ? { maxWidth: groupMaxWidth } : null,
+        ]}
+      >
+        {visibleRoutes.map((route: any) => {
+          const isFocused = state.routes.indexOf(route) === state.index;
+          const { options } = descriptors[route.key];
+          const label = options.title !== undefined ? options.title : route.name;
 
-        const isFocused = state.routes.indexOf(route) === state.index;
-        const { options } = descriptors[route.key];
+          const onPress = () => {
+            const event = navigation.emit({
+              type: 'tabPress',
+              target: route.key,
+              canPreventDefault: true,
+            });
 
-        const label = options.title !== undefined ? options.title : route.name;
-
-        const onPress = () => {
-          const event = navigation.emit({
-            type: 'tabPress',
-            target: route.key,
-            canPreventDefault: true,
-          });
-
-          if (!isFocused && !event.defaultPrevented) {
-            try {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            } catch (e) {
-              // Silently handle if haptics not supported in env
+            if (!isFocused && !event.defaultPrevented) {
+              try {
+                Haptics.selectionAsync();
+              } catch (e) {
+                // Haptics not supported in this environment
+              }
+              navigation.navigate(route.name, route.params);
             }
-            LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-            navigation.navigate(route.name, route.params);
-          }
-        };
+          };
 
-        const color = isFocused ? '#FF5C39' : '#687076';
+          const onLongPress = () => {
+            navigation.emit({ type: 'tabLongPress', target: route.key });
+          };
 
-        const renderIcon = () => {
-          const stroke = isFocused ? 2.2 : 1.8;
-          switch (route.name) {
-            case 'index':
-              return <Home size={iconSize} color={color} strokeWidth={stroke} />;
-            case 'restaurants':
-              return <Store size={iconSize} color={color} strokeWidth={stroke} />;
-            case 'orders':
-              return <Receipt size={iconSize} color={color} strokeWidth={stroke} />;
-            case 'users':
-              return <Users size={iconSize} color={color} strokeWidth={stroke} />;
-            case 'menu':
-              return <MenuIcon size={iconSize} color={color} strokeWidth={stroke} />;
-            case 'settings':
-              return <Settings size={iconSize} color={color} strokeWidth={stroke} />;
-            default:
-              return null;
-          }
-        };
+          const renderIcon = (color: string) => {
+            const size = metrics.iconSize;
+            const stroke = isFocused ? 2.2 : 1.9;
+            switch (route.name) {
+              case 'index':
+                return <Home size={size} color={color} strokeWidth={stroke} />;
+              case 'restaurants':
+                return <Store size={size} color={color} strokeWidth={stroke} />;
+              case 'orders':
+                return <Receipt size={size} color={color} strokeWidth={stroke} />;
+              case 'users':
+                return <Users size={size} color={color} strokeWidth={stroke} />;
+              case 'menu':
+                return <MenuIcon size={size} color={color} strokeWidth={stroke} />;
+              case 'settings':
+                return <Settings size={size} color={color} strokeWidth={stroke} />;
+              default:
+                return null;
+            }
+          };
 
-        return (
-          <TabButton
-            key={route.key}
-            route={route}
-            isFocused={isFocused}
-            label={label}
-            onPress={onPress}
-            renderIcon={renderIcon}
-            itemHeight={tabItemHeight}
-            fontSize={fontSize}
-            iconGap={iconGap}
-            activeFlex={activeFlex}
-            isTablet={isTablet}
-          />
-        );
-      })}
+          return (
+            <TabButton
+              key={route.key}
+              isFocused={isFocused}
+              label={label}
+              onPress={onPress}
+              onLongPress={onLongPress}
+              renderIcon={renderIcon}
+              metrics={metrics}
+              maxItemWidth={maxItemWidth}
+            />
+          );
+        })}
+      </View>
     </View>
   );
 }
@@ -253,42 +277,12 @@ export default function TabLayout() {
           headerShown: false,
         }}
       >
-        <Tabs.Screen
-          name="index"
-          options={{
-            title: 'Home',
-          }}
-        />
-        <Tabs.Screen
-          name="restaurants"
-          options={{
-            title: 'Stores',
-          }}
-        />
-        <Tabs.Screen
-          name="orders"
-          options={{
-            title: 'Orders',
-          }}
-        />
-        <Tabs.Screen
-          name="users"
-          options={{
-            title: 'Users',
-          }}
-        />
-        <Tabs.Screen
-          name="menu"
-          options={{
-            title: 'Menu',
-          }}
-        />
-        <Tabs.Screen
-          name="settings"
-          options={{
-            title: 'Settings',
-          }}
-        />
+        <Tabs.Screen name="index" options={{ title: 'Home' }} />
+        <Tabs.Screen name="restaurants" options={{ title: 'Stores' }} />
+        <Tabs.Screen name="orders" options={{ title: 'Orders' }} />
+        <Tabs.Screen name="users" options={{ title: 'Users' }} />
+        <Tabs.Screen name="menu" options={{ title: 'Menu' }} />
+        <Tabs.Screen name="settings" options={{ title: 'Settings' }} />
       </Tabs>
     </>
   );
@@ -296,47 +290,49 @@ export default function TabLayout() {
 
 const styles = StyleSheet.create({
   tabBar: {
-    position: 'absolute',
-    flexDirection: 'row',
-    backgroundColor: 'rgba(255, 255, 255, 0.96)',
+    backgroundColor: BAR_BG,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: Colors.tabBorder,
     alignItems: 'center',
-    paddingHorizontal: 4,
-    borderWidth: 1,
-    borderColor: 'rgba(241, 245, 249, 0.95)',
+    // Soft elevation upward
     shadowColor: '#0F172A',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.08,
-    shadowRadius: 12,
-    elevation: 8,
-    zIndex: 100,
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 12,
+  },
+  tabRow: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   tabItem: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  tabItemInactive: {
     flex: 1,
-    backgroundColor: 'transparent',
-  },
-  tabItemActive: {
-    marginHorizontal: 2,
-  },
-  pillBackground: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: '#FFF0EC', // soft brand orange background matching colors.ts
-  },
-  tabContent: {
-    flexDirection: 'row',
+    height: '100%',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 4,
+    paddingHorizontal: 2,
+  },
+  indicatorWrap: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  indicator: {
+    backgroundColor: INDICATOR_COLOR,
+  },
+  pressedLayer: {
+    backgroundColor: 'rgba(17, 24, 28, 0.06)',
   },
   tabLabel: {
-    fontWeight: '800',
-    color: '#FF5C39',
+    textAlign: 'center',
+    letterSpacing: 0.2,
+  },
+  tabLabelActive: {
+    fontWeight: '700',
   },
   tabLabelInactive: {
-    color: '#64748B',
-    fontWeight: '600',
+    fontWeight: '500',
   },
 });

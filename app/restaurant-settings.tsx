@@ -1,21 +1,12 @@
-import React, { useState, useEffect } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
-  Switch,
-  Alert,
-  useWindowDimensions,
-} from 'react-native';
-import { useRouter } from 'expo-router';
-import { Header } from '../components/Header';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
+import { View, Text, ScrollView, Switch, ActivityIndicator, StyleSheet, RefreshControl, DeviceEventEmitter } from 'react-native';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { Colors } from '../constants/colors';
 import { RestaurantSettingsSkeleton } from '../components/Skeleton';
-import { restaurantOwnerService } from '../services/restaurant-owner.service';
+import { restaurantOwnerService, STORE_STATUS_CHANGED_EVENT } from '../services/restaurant-owner.service';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
 import {
   Store,
   Settings2,
@@ -25,47 +16,46 @@ import {
   Bell,
   CreditCard,
   Shield,
-  ChevronRight,
-  LogOut,
-  Trash2,
+  FileText,
   Globe,
 } from 'lucide-react-native';
+import {
+  DangerZone,
+  SettingsNoResults,
+  SettingsSectionData,
+  SettingsSectionsGrid,
+  SettingsTopBar,
+  filterSections,
+  settingsStyles as ss,
+  useSettingsLayout,
+} from '../components/settings/SettingsKit';
+
+const STORE_TYPE_LABELS: Record<string, string> = {
+  food_delivery_and_dining: 'Food & Dining',
+  food_delivery: 'Delivery only',
+  groceries: 'Groceries',
+  meat_poultry: 'Meat & Poultry',
+};
+
+/** Maps a Stripe account status to a friendly label + badge tone. */
+const payoutStatus = (s: string): { label: string; tone: 'success' | 'warning' | 'neutral' } => {
+  const v = (s || '').toLowerCase();
+  if (v === 'active' || v === 'enabled' || v === 'complete' || v === 'verified') return { label: 'Active', tone: 'success' };
+  if (v === 'restricted' || v === 'rejected' || v === 'disabled') return { label: 'Action needed', tone: 'warning' };
+  return { label: 'Pending', tone: 'warning' };
+};
 
 export default function RestaurantSettingsScreen() {
   const router = useRouter();
   const { logout } = useAuth();
-  const { width } = useWindowDimensions();
-  const isTablet = width >= 768;
+  const { showToast } = useToast();
+  const { isTablet, gutter } = useSettingsLayout();
 
-  const [loading, setLoading] = useState(false);
-  const [logoutModalVisible, setLogoutModalVisible] = useState(false);
-  const [deleteAccountModalVisible, setDeleteAccountModalVisible] = useState(false);
-  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
-
-  const handleDeleteAccountConfirm = async () => {
-    setIsDeletingAccount(true);
-    try {
-      const res = await restaurantOwnerService.deleteAccount();
-      if (res.success) {
-        setDeleteAccountModalVisible(false);
-        await logout();
-        Alert.alert(
-          'Account Deleted',
-          'Your store account, products, and associated data have been permanently deleted.'
-        );
-        router.replace('/login');
-      } else {
-        Alert.alert('Error', res.message || 'Failed to delete account. Please contact support.');
-      }
-    } catch (e: any) {
-      Alert.alert('Error', e.message || 'An error occurred while deleting account.');
-    } finally {
-      setIsDeletingAccount(false);
-    }
-  };
-  const [restaurantId, setRestaurantId] = useState<string>('');
-
-  const [storeSummary, setStoreSummary] = useState({
+  const [query, setQuery] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [restaurantId, setRestaurantId] = useState('');
+  const [store, setStore] = useState({
     name: 'My Store',
     city: '',
     isActive: true,
@@ -74,56 +64,99 @@ export default function RestaurantSettingsScreen() {
     hasExternalWebsite: false,
   });
 
-  const loadStoreSummary = async () => {
-    setLoading(true);
+  const [togglingActive, setTogglingActive] = useState(false);
+  const [offlineConfirmVisible, setOfflineConfirmVisible] = useState(false);
+  const [logoutModalVisible, setLogoutModalVisible] = useState(false);
+  const [deleteAccountModalVisible, setDeleteAccountModalVisible] = useState(false);
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
+  const loadedOnce = useRef(false);
+
+  /* ── Data ─────────────────────────────────────────────────────────────── */
+
+  const loadStoreSummary = useCallback(async () => {
+    if (!loadedOnce.current) setLoading(true);
     try {
       const res = await restaurantOwnerService.getRestaurantProfile();
       if (res.success && res.data) {
         const r = res.data;
         if (r._id) setRestaurantId(r._id);
-        setStoreSummary({
+        setStore({
           name: r.restaurantName || 'My Store',
-          city: r.address?.city || 'Location',
+          city: r.address?.city || '',
           isActive: r.isActive ?? true,
           type: r.restaurantType || 'food_delivery_and_dining',
           stripeStatus: r.stripeAccountStatus || 'pending',
           hasExternalWebsite: Boolean(r.externalWebsiteSettings?.domain),
         });
+        loadedOnce.current = true;
       }
     } catch (e) {
       console.error('Failed loading settings hub:', e);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
-  };
-
-  useEffect(() => {
-    loadStoreSummary();
   }, []);
 
-  const [togglingActive, setTogglingActive] = useState(false);
+  // Refresh whenever the screen is shown, so edits made on sub-pages show up here.
+  useFocusEffect(
+    useCallback(() => {
+      loadStoreSummary();
+    }, [loadStoreSummary])
+  );
 
-  const handleToggleStoreActive = async (newVal: boolean) => {
+  /* ── Actions ──────────────────────────────────────────────────────────── */
+
+  const applyStoreActive = async (newVal: boolean) => {
     setTogglingActive(true);
     try {
       let res = await restaurantOwnerService.toggleRestaurantStatus(newVal);
-      if (!res.success) {
-        res = await restaurantOwnerService.updateRestaurantProfile({ isActive: newVal });
-      }
+      if (!res.success) res = await restaurantOwnerService.updateRestaurantProfile({ isActive: newVal });
       if (res.success) {
-        const actualActive = res.data?.isActive !== undefined ? Boolean(res.data.isActive) : newVal;
-        setStoreSummary((prev) => ({ ...prev, isActive: actualActive }));
-        Alert.alert(
-          'Store Status Updated',
-          `Your store is now ${actualActive ? 'ONLINE' : 'OFFLINE'}.`
-        );
+        const actual = res.data?.isActive !== undefined ? Boolean(res.data.isActive) : newVal;
+        setStore((prev) => ({ ...prev, isActive: actual }));
+        DeviceEventEmitter.emit(STORE_STATUS_CHANGED_EVENT, actual);
+        showToast({
+          title: actual ? 'Store is online' : 'Store is offline',
+          message: actual ? 'Customers can see your menu and order again.' : 'Customers can’t place new orders.',
+          type: 'success',
+        });
       } else {
-        Alert.alert('Error', res.message || 'Failed to update store status.');
+        showToast({ title: 'Update failed', message: res.message || 'Could not change store status.', type: 'error' });
       }
     } catch (e: any) {
-      Alert.alert('Error', e.message || 'Could not change store active status.');
+      showToast({ title: 'Update failed', message: e?.message || 'Could not reach the server.', type: 'error' });
     } finally {
       setTogglingActive(false);
+    }
+  };
+
+  const onToggleStore = (next: boolean) => {
+    if (next) applyStoreActive(true);
+    else setOfflineConfirmVisible(true); // taking the store offline is disruptive — confirm first
+  };
+
+  const handleDeleteAccountConfirm = async () => {
+    if (isDeletingAccount) return;
+    setIsDeletingAccount(true);
+    try {
+      const res = await restaurantOwnerService.deleteAccount();
+      if (res.success) {
+        setDeleteAccountModalVisible(false);
+        await logout();
+        showToast({
+          title: 'Account deleted',
+          message: 'Your store account and data have been permanently deleted.',
+          type: 'success',
+        });
+        router.replace('/login');
+      } else {
+        showToast({ title: 'Delete failed', message: res.message || 'Please contact support.', type: 'error' });
+      }
+    } catch (e: any) {
+      showToast({ title: 'Delete failed', message: e?.message || 'Could not reach the server.', type: 'error' });
+    } finally {
+      setIsDeletingAccount(false);
     }
   };
 
@@ -133,315 +166,274 @@ export default function RestaurantSettingsScreen() {
     router.replace('/login');
   };
 
+  /* ── Content ──────────────────────────────────────────────────────────── */
+
+  const payout = payoutStatus(store.stripeStatus);
+
+  const sections: SettingsSectionData[] = useMemo(
+    () => [
+      {
+        key: 'store',
+        title: 'Store & online channels',
+        items: [
+          {
+            key: 'profile',
+            title: 'Store profile',
+            subtitle: 'Name, contact details, address and notifications',
+            icon: Store,
+            color: '#16A34A',
+            bg: '#F0FDF4',
+            keywords: 'restaurant identity logo phone email',
+            onPress: () => router.push('/store-profile'),
+          },
+          {
+            key: 'website',
+            title: 'Website Delivery settings',
+            subtitle: 'Custom your website delivery rules and delivery fees',
+            icon: Globe,
+            color: '#4F46E5',
+            bg: '#EEF2FF',
+            badge: store.hasExternalWebsite ? { label: 'CONNECTED', tone: 'success' } : { label: 'NOT SET UP', tone: 'neutral' },
+            keywords: 'external domain brand',
+            onPress: () => router.push({ pathname: '/external-website-settings', params: { restaurantId } }),
+          },
+        ],
+      },
+      {
+        key: 'operations',
+        title: 'Operations & delivery',
+        items: [
+          {
+            key: 'acceptance',
+            title: 'Order acceptance',
+            subtitle: 'Online orders, table bookings, cash on delivery, auto-approve',
+            icon: Settings2,
+            color: '#D97706',
+            bg: '#FEF3C7',
+            keywords: 'cod payment pickup dining booking',
+            onPress: () => router.push('/operation-settings'),
+          },
+          {
+            key: 'delivery',
+            title: 'Delivery settings',
+            subtitle: 'Free delivery radius, per-mile charge and handling fee',
+            icon: Truck,
+            color: '#CA8A04',
+            bg: '#FEF9C3',
+            keywords: 'distance miles radius fee',
+            onPress: () => router.push('/delivery-settings'),
+          },
+          {
+            key: 'timings',
+            title: 'Opening hours',
+            subtitle: 'Weekly opening times and delivery hours',
+            icon: Clock,
+            color: '#9333EA',
+            bg: '#F3E8FF',
+            keywords: 'timings schedule open close',
+            onPress: () => router.push('/operational-timings'),
+          },
+        ],
+      },
+      {
+        key: 'hardware',
+        title: 'Printing & alerts',
+        items: [
+          {
+            key: 'printer',
+            title: 'Set up printer',
+            subtitle: 'Bluetooth and LAN/Wifi printers',
+            icon: Printer,
+            color: '#0284C7',
+            bg: '#E0F2FE',
+            keywords: 'thermal pos receipt print',
+            onPress: () => router.push({ pathname: '/printer-settings', params: { restaurantId } }),
+          },
+          {
+            key: 'sound',
+            title: 'Order alerts',
+            subtitle: 'New-order buzzer, volume, repeat and vibration',
+            icon: Bell,
+            color: '#DC2626',
+            bg: '#FEE2E2',
+            keywords: 'sound buzz notification vibrate',
+            onPress: () => router.push('/sound-settings'),
+          },
+        ],
+      },
+      {
+        key: 'payments',
+        title: 'Payments',
+        items: [
+          {
+            key: 'payouts',
+            title: 'Payouts',
+            subtitle: 'Stripe account and bank settlements',
+            icon: CreditCard,
+            color: '#059669',
+            bg: '#ECFDF5',
+            badge: { label: payout.label.toUpperCase(), tone: payout.tone },
+            keywords: 'stripe bank money settlement',
+            onPress: () => router.push('/payout-settings'),
+          },
+        ],
+      },
+      {
+        key: 'legal',
+        title: 'Legal',
+        items: [
+          {
+            key: 'terms',
+            title: 'Terms & Conditions',
+            subtitle: 'Krifoo partner service agreement',
+            icon: FileText,
+            color: Colors.textMuted,
+            bg: Colors.cardSurface,
+            onPress: () => router.push('/terms-conditions'),
+          },
+          {
+            key: 'privacy',
+            title: 'Privacy Policy',
+            subtitle: 'How partner data is protected',
+            icon: Shield,
+            color: Colors.textMuted,
+            bg: Colors.cardSurface,
+            keywords: 'gdpr data',
+            onPress: () => router.push('/privacy-policy'),
+          },
+        ],
+      },
+    ],
+    [router, restaurantId, store.hasExternalWebsite, payout.label, payout.tone]
+  );
+
+  const visible = filterSections(sections, query);
+  const searching = query.trim().length > 0;
+
   return (
-    <View style={styles.container}>
-      <Header
-        title="Store Configuration"
-        showBackButton={true}
-        rightElement={
-          <TouchableOpacity
-            style={styles.headerLogoutBtn}
-            onPress={() => setLogoutModalVisible(true)}
-            activeOpacity={0.7}
-          >
-            <LogOut size={18} color={Colors.danger} />
-          </TouchableOpacity>
+    <View style={ss.screen}>
+      <SettingsTopBar query={query} onQueryChange={setQuery} />
+
+      <ScrollView
+        contentContainerStyle={[ss.scroll, { paddingHorizontal: gutter }]}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => {
+              setRefreshing(true);
+              loadStoreSummary();
+            }}
+            tintColor={Colors.primary}
+            colors={[Colors.primary]}
+          />
         }
-      />
-
-      {loading ? (
-        <ScrollView
-          contentContainerStyle={[
-            styles.scrollContent,
-            { paddingHorizontal: isTablet ? 24 : 16, maxWidth: 840, alignSelf: 'center', width: '100%' },
-          ]}
-          showsVerticalScrollIndicator={false}
-        >
-          <RestaurantSettingsSkeleton />
-        </ScrollView>
-      ) : (
-        <ScrollView
-          contentContainerStyle={[
-            styles.scrollContent,
-            { paddingHorizontal: isTablet ? 24 : 16, maxWidth: 840, alignSelf: 'center', width: '100%' },
-          ]}
-          showsVerticalScrollIndicator={false}
-        >
-          {/* Store Summary Banner */}
-          <View style={styles.storeBannerCard}>
-            <View style={styles.storeBannerBadge}>
-              <Store size={22} color={Colors.primary} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.bannerStoreName}>{storeSummary.name}</Text>
-              <Text style={styles.bannerStoreSub}>
-                {storeSummary.city ? `${storeSummary.city} · ` : ''}
-                {storeSummary.type === 'food_delivery_and_dining'
-                  ? 'Food & Dining'
-                  : storeSummary.type === 'food_delivery'
-                  ? 'Delivery Only'
-                  : 'Retail Store'}
-              </Text>
-            </View>
-            <View style={styles.statusToggleContainer}>
-              <View
-                style={[
-                  styles.statusBadge,
-                  storeSummary.isActive ? styles.statusActive : styles.statusInactive,
-                ]}
-              >
-                <Text style={styles.statusBadgeText}>
-                  {storeSummary.isActive ? 'ONLINE' : 'OFFLINE'}
-                </Text>
-              </View>
-              <Switch
-                value={storeSummary.isActive}
-                disabled={togglingActive}
-                onValueChange={handleToggleStoreActive}
-                trackColor={{ true: Colors.primaryLight, false: Colors.cardBorder }}
-                thumbColor={storeSummary.isActive ? Colors.primary : Colors.textSubtle}
-              />
-            </View>
-          </View>
-
-          {/* SECTION 1: STORE & CHANNELS */}
-          <Text style={styles.sectionHeader}>STOREFRONT & ONLINE CHANNELS</Text>
-          <View style={styles.cardGroup}>
-            {/* Store & Restaurant Profile */}
-            <TouchableOpacity
-              style={[styles.groupItem, styles.groupItemBorder]}
-              onPress={() => router.push('/store-profile')}
-              activeOpacity={0.7}
-            >
-              <View style={[styles.itemIconBadge, { backgroundColor: '#F0FDF4' }]}>
-                <Store size={18} color="#16A34A" />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.itemTitle}>Store & Restaurant Profile</Text>
-                <Text style={styles.itemSubtitle}>Identity, contact details, shop address & notifications</Text>
-              </View>
-              <ChevronRight size={18} color={Colors.textMuted} />
-            </TouchableOpacity>
-
-            {/* External Website & Online Ordering */}
-            <TouchableOpacity
-              style={styles.groupItem}
-              onPress={() =>
-                router.push({
-                  pathname: '/external-website-settings',
-                  params: { restaurantId },
-                })
-              }
-              activeOpacity={0.7}
-            >
-              <View style={[styles.itemIconBadge, { backgroundColor: '#EEF2FF' }]}>
-                <Globe size={18} color="#4F46E5" />
-              </View>
-              <View style={{ flex: 1 }}>
-                <View style={styles.itemTitleRow}>
-                  <Text style={styles.itemTitle}>External Website & Delivery</Text>
-                  <View style={styles.newBadge}>
-                    <Text style={styles.newBadgeText}>LIVE EDITS</Text>
+      >
+        <View style={ss.frame}>
+          {loading ? (
+            <RestaurantSettingsSkeleton />
+          ) : (
+            <>
+              {/* Store hero with the online / offline switch */}
+              {!searching && (
+                <View style={[ss.hero, isTablet && ss.heroTablet]}>
+                  <View style={[ss.heroAvatar, { backgroundColor: Colors.primaryLight }]}>
+                    <Text style={[ss.heroAvatarText, { color: Colors.primary }]}>
+                      {store.name.trim().charAt(0).toUpperCase() || 'S'}
+                    </Text>
+                  </View>
+                  <View style={ss.heroBody}>
+                    <Text style={ss.heroTitle} numberOfLines={1}>
+                      {store.name}
+                    </Text>
+                    <Text style={ss.heroSub} numberOfLines={1}>
+                      {[store.city, STORE_TYPE_LABELS[store.type] || 'Store'].filter(Boolean).join(' · ')}
+                    </Text>
+                    <View style={ss.pillRow}>
+                      <View
+                        style={[ss.pill, { backgroundColor: store.isActive ? Colors.statusApproved.bg : Colors.cardSurface }]}
+                      >
+                        <View style={[ss.pillDot, { backgroundColor: store.isActive ? Colors.success : Colors.textSubtle }]} />
+                        <Text style={[ss.pillText, { color: store.isActive ? Colors.statusApproved.text : Colors.textMuted }]}>
+                          {store.isActive ? 'ONLINE' : 'OFFLINE'}
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
+                  <View style={styles.switchCol}>
+                    {togglingActive ? (
+                      <ActivityIndicator color={Colors.primary} style={styles.switchSpinner} />
+                    ) : (
+                      <Switch
+                        value={store.isActive}
+                        onValueChange={onToggleStore}
+                        trackColor={{ false: Colors.cardBorder, true: Colors.success }}
+                        thumbColor="#FFFFFF"
+                        ios_backgroundColor={Colors.cardBorder}
+                        accessibilityLabel={store.isActive ? 'Store is online. Turn off to go offline' : 'Store is offline. Turn on to go online'}
+                      />
+                    )}
+                    <Text style={styles.switchLabel}>{store.isActive ? 'Accepting orders' : 'Paused'}</Text>
                   </View>
                 </View>
-                <Text style={styles.itemSubtitle}>
-                  Custom domain, theme colors, banners & tiered delivery rates
-                </Text>
-              </View>
-              <ChevronRight size={18} color={Colors.textMuted} />
-            </TouchableOpacity>
-          </View>
+              )}
 
-          {/* SECTION 2: OPERATIONS & TIMINGS */}
-          <Text style={styles.sectionHeader}>OPERATIONS & DELIVERY RULES</Text>
-          <View style={styles.cardGroup}>
-            {/* Acceptance Settings */}
-            <TouchableOpacity
-              style={[styles.groupItem, styles.groupItemBorder]}
-              onPress={() => router.push('/operation-settings')}
-              activeOpacity={0.7}
-            >
-              <View style={[styles.itemIconBadge, { backgroundColor: '#FEF3C7' }]}>
-                <Settings2 size={18} color="#D97706" />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.itemTitle}>Acceptance Settings</Text>
-                <Text style={styles.itemSubtitle}>Online Orders, Table Bookings, COD, Auto Approve</Text>
-              </View>
-              <ChevronRight size={18} color={Colors.textMuted} />
-            </TouchableOpacity>
+              {visible.length ? (
+                <SettingsSectionsGrid sections={visible} />
+              ) : (
+                <SettingsNoResults query={query} onClear={() => setQuery('')} />
+              )}
 
-            {/* Platform Delivery Settings */}
-            <TouchableOpacity
-              style={[styles.groupItem, styles.groupItemBorder]}
-              onPress={() => router.push('/delivery-settings')}
-              activeOpacity={0.7}
-            >
-              <View style={[styles.itemIconBadge, { backgroundColor: '#FEF9C3' }]}>
-                <Truck size={18} color="#CA8A04" />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.itemTitle}>Standard Delivery Settings</Text>
-                <Text style={styles.itemSubtitle}>Free delivery radius, per-mile charges & handling fees</Text>
-              </View>
-              <ChevronRight size={18} color={Colors.textMuted} />
-            </TouchableOpacity>
+              {!searching && (
+                <>
+                  <DangerZone
+                    signOutLabel="Log out"
+                    onSignOut={() => setLogoutModalVisible(true)}
+                    deleteSubtitle="Permanently removes your store, menu, order history and account."
+                    onDelete={() => setDeleteAccountModalVisible(true)}
+                  />
+                  <Text style={ss.version}>Krifoo Store Portal</Text>
+                </>
+              )}
+            </>
+          )}
+        </View>
+      </ScrollView>
 
-            {/* Operational Timings */}
-            <TouchableOpacity
-              style={styles.groupItem}
-              onPress={() => router.push('/operational-timings')}
-              activeOpacity={0.7}
-            >
-              <View style={[styles.itemIconBadge, { backgroundColor: '#F3E8FF' }]}>
-                <Clock size={18} color="#9333EA" />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.itemTitle}>Operational Timings</Text>
-                <Text style={styles.itemSubtitle}>Weekly open/close schedule & delivery operating hours</Text>
-              </View>
-              <ChevronRight size={18} color={Colors.textMuted} />
-            </TouchableOpacity>
-          </View>
-
-          {/* SECTION 3: HARDWARE & SOUND */}
-          <Text style={styles.sectionHeader}>POS HARDWARE & NOTIFICATIONS</Text>
-          <View style={styles.cardGroup}>
-            {/* Universal Thermal POS Printer Setup */}
-            <TouchableOpacity
-              style={[styles.groupItem, styles.groupItemBorder]}
-              onPress={() => router.push({ pathname: '/printer-settings', params: { restaurantId } })}
-              activeOpacity={0.7}
-            >
-              <View style={[styles.itemIconBadge, { backgroundColor: '#E0F2FE' }]}>
-                <Printer size={18} color="#0284C7" />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.itemTitle}>Thermal Printing Setup</Text>
-                <Text style={styles.itemSubtitle}>Epson TM-m30III, SUNMI, Star Micronics & LAN</Text>
-              </View>
-              <ChevronRight size={18} color={Colors.textMuted} />
-            </TouchableOpacity>
-
-            {/* Order Sound & Buzz Alerts */}
-            <TouchableOpacity
-              style={[styles.groupItem, styles.groupItemBorder]}
-              onPress={() => router.push('/sound-settings')}
-              activeOpacity={0.7}
-            >
-              <View style={[styles.itemIconBadge, { backgroundColor: '#FEE2E2' }]}>
-                <Bell size={18} color="#DC2626" />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.itemTitle}>Order Sound & Buzz Alerts</Text>
-                <Text style={styles.itemSubtitle}>Loud buzzer chime, duration loop & vibrations</Text>
-              </View>
-              <ChevronRight size={18} color={Colors.textMuted} />
-            </TouchableOpacity>
-
-            {/* Payouts Integration */}
-            <TouchableOpacity
-              style={styles.groupItem}
-              onPress={() => router.push('/payout-settings')}
-              activeOpacity={0.7}
-            >
-              <View style={[styles.itemIconBadge, { backgroundColor: '#ECFDF5' }]}>
-                <CreditCard size={18} color="#059669" />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.itemTitle}>Payouts Integration (Stripe)</Text>
-                <Text style={styles.itemSubtitle}>Status: {storeSummary.stripeStatus.toUpperCase()} · Bank settlements</Text>
-              </View>
-              <ChevronRight size={18} color={Colors.textMuted} />
-            </TouchableOpacity>
-          </View>
-
-          {/* SECTION 4: LEGAL & SUPPORT */}
-          <Text style={styles.sectionHeader}>LEGAL & SUPPORT</Text>
-          <View style={styles.cardGroup}>
-            <TouchableOpacity
-              style={[styles.groupItem, styles.groupItemBorder]}
-              onPress={() => router.push('/terms-conditions')}
-              activeOpacity={0.7}
-            >
-              <View style={[styles.itemIconBadge, { backgroundColor: '#F8FAFC' }]}>
-                <Shield size={18} color={Colors.textMuted} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.itemTitle}>Terms & Conditions</Text>
-                <Text style={styles.itemSubtitle}>Krifoo Admin partner service agreement</Text>
-              </View>
-              <ChevronRight size={18} color={Colors.textMuted} />
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.groupItem}
-              onPress={() => router.push('/privacy-policy')}
-              activeOpacity={0.7}
-            >
-              <View style={[styles.itemIconBadge, { backgroundColor: '#F8FAFC' }]}>
-                <Shield size={18} color={Colors.textMuted} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.itemTitle}>Privacy Policy</Text>
-                <Text style={styles.itemSubtitle}>Partner data protection & guidelines</Text>
-              </View>
-              <ChevronRight size={18} color={Colors.textMuted} />
-            </TouchableOpacity>
-          </View>
-
-          {/* SECTION 5: ACCOUNT ACTIONS */}
-          <Text style={[styles.sectionHeader, { color: Colors.danger }]}>ACCOUNT MANAGEMENT</Text>
-          <View style={[styles.cardGroup, { borderColor: '#FEE2E2' }]}>
-            <TouchableOpacity
-              style={styles.groupItem}
-              onPress={() => setDeleteAccountModalVisible(true)}
-              activeOpacity={0.7}
-            >
-              <View style={[styles.itemIconBadge, { backgroundColor: '#FEF2F2' }]}>
-                <Trash2 size={18} color={Colors.danger} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.itemTitle, { color: Colors.danger }]}>Delete Account</Text>
-                <Text style={styles.itemSubtitle}>
-                  Permanently delete your store account, products, and personal data
-                </Text>
-              </View>
-              <ChevronRight size={18} color={Colors.danger} />
-            </TouchableOpacity>
-          </View>
-
-          {/* Logout Button */}
-          <TouchableOpacity
-            style={styles.logoutCard}
-            onPress={() => setLogoutModalVisible(true)}
-            activeOpacity={0.7}
-          >
-            <LogOut size={18} color={Colors.danger} />
-            <Text style={styles.logoutCardText}>Log Out from Store Portal</Text>
-          </TouchableOpacity>
-        </ScrollView>
-      )}
-
-            {/* Delete Account Confirm Modal */}
       <ConfirmModal
-        visible={deleteAccountModalVisible}
-        title="Delete Account"
-        message="Are you sure you want to permanently delete your store account? This action cannot be undone. All your store profile, menu items, orders history, and account data will be permanently erased."
-        confirmText="Delete Account"
-        cancelText="Cancel"
-        isDestructive={true}
-        onConfirm={handleDeleteAccountConfirm}
-        onClose={() => setDeleteAccountModalVisible(false)}
+        visible={offlineConfirmVisible}
+        title="Take your store offline?"
+        message="Customers won’t be able to see your menu or place new orders until you turn it back on."
+        confirmText="Go offline"
+        cancelText="Stay online"
+        isDestructive
+        onConfirm={() => {
+          setOfflineConfirmVisible(false);
+          applyStoreActive(false);
+        }}
+        onClose={() => setOfflineConfirmVisible(false)}
       />
 
-<ConfirmModal
-        visible={logoutModalVisible}
-        title="Logout"
-        message="Are you sure you want to log out?"
-        confirmText="Logout"
+      <ConfirmModal
+        visible={deleteAccountModalVisible}
+        title="Delete your store account?"
+        message="This permanently erases your store profile, menu items, order history and account data. This can’t be undone."
+        confirmText={isDeletingAccount ? 'Deleting…' : 'Delete account'}
         cancelText="Cancel"
-        isDestructive={true}
+        isDestructive
+        onConfirm={handleDeleteAccountConfirm}
+        onClose={() => !isDeletingAccount && setDeleteAccountModalVisible(false)}
+      />
+
+      <ConfirmModal
+        visible={logoutModalVisible}
+        title="Log out?"
+        message="You’ll need to sign in again to manage your store."
+        confirmText="Log out"
+        cancelText="Cancel"
+        isDestructive
         onConfirm={handleLogoutConfirm}
         onClose={() => setLogoutModalVisible(false)}
       />
@@ -450,151 +442,7 @@ export default function RestaurantSettingsScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: Colors.background,
-  },
-  headerLogoutBtn: {
-    padding: 8,
-    marginRight: 4,
-  },
-  scrollContent: {
-    padding: 16,
-    paddingBottom: 110,
-  },
-  storeBannerCard: {
-    backgroundColor: Colors.cardSurface,
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: Colors.cardBorder,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  storeBannerBadge: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: Colors.primaryLight,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  bannerStoreName: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: Colors.text,
-  },
-  bannerStoreSub: {
-    fontSize: 12,
-    color: Colors.textMuted,
-    marginTop: 2,
-  },
-  statusToggleContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  statusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
-    borderWidth: 1,
-  },
-  statusActive: {
-    backgroundColor: '#ECFDF5',
-    borderColor: '#A7F3D0',
-  },
-  statusInactive: {
-    backgroundColor: '#FEF2F2',
-    borderColor: '#FCA5A5',
-  },
-  statusBadgeText: {
-    fontSize: 9.5,
-    fontWeight: '800',
-    color: '#065F46',
-  },
-  sectionHeader: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: Colors.textSubtle,
-    letterSpacing: 0.6,
-    marginBottom: 8,
-    marginLeft: 4,
-  },
-  cardGroup: {
-    backgroundColor: Colors.cardSurface,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: Colors.cardBorder,
-    marginBottom: 20,
-    overflow: 'hidden',
-  },
-  groupItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 13,
-    gap: 12,
-  },
-  groupItemBorder: {
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.cardBorder,
-  },
-  itemIconBadge: {
-    width: 38,
-    height: 38,
-    borderRadius: 10,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  itemTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  itemTitle: {
-    fontSize: 13.5,
-    fontWeight: '700',
-    color: Colors.text,
-  },
-  itemSubtitle: {
-    fontSize: 11,
-    color: Colors.textMuted,
-    marginTop: 2,
-    lineHeight: 15,
-  },
-  newBadge: {
-    backgroundColor: '#EEF2FF',
-    borderColor: '#C7D2FE',
-    borderWidth: 1,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
-    marginRight: 6,
-  },
-  newBadgeText: {
-    fontSize: 9,
-    fontWeight: '800',
-    color: '#4F46E5',
-    letterSpacing: 0.3,
-  },
-  logoutCard: {
-    backgroundColor: '#FEF2F2',
-    borderWidth: 1,
-    borderColor: '#FECACA',
-    borderRadius: 14,
-    paddingVertical: 14,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 16,
-  },
-  logoutCardText: {
-    fontSize: 13.5,
-    fontWeight: '700',
-    color: Colors.danger,
-  },
+  switchCol: { alignItems: 'center', gap: 4 },
+  switchSpinner: { width: 51, height: 31 },
+  switchLabel: { fontSize: 11, fontWeight: '700', color: Colors.textMuted },
 });
