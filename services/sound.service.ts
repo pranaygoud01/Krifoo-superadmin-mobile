@@ -72,7 +72,7 @@ export async function configureAudio() {
     await Audio.setAudioModeAsync({
       allowsRecordingIOS: false,
       playsInSilentModeIOS: true,
-      staysActiveInBackground: true,    // Keep iOS audio session alive for alert sounds
+      staysActiveInBackground: false,   // No background audio (App Store Guideline 2.5.4); background alerts use push notifications
       interruptionModeIOS: InterruptionModeIOS.DoNotMix,
       shouldDuckAndroid: true,
       interruptionModeAndroid: InterruptionModeAndroid.DoNotMix,

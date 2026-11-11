@@ -20,18 +20,15 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.krifoo.admin",
-      "buildNumber": "40",
+      "buildNumber": "45",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "NSBluetoothAlwaysUsageDescription": "This app requires Bluetooth access to discover and print receipt orders on thermal receipt printers.",
         "NSBluetoothPeripheralUsageDescription": "This app requires Bluetooth access to connect to thermal receipt printers.",
         "NSLocalNetworkUsageDescription": "This app requires Local Network access to discover and print receipts on network printers (Epson TM-m30III).",
         "NSAppTransportSecurity": {
-          "NSAllowsArbitraryLoads": true
+          "NSAllowsLocalNetworking": true
         },
-        "UIBackgroundModes": [
-          "audio"
-        ],
         "NSPhotoLibraryUsageDescription": "Krifoo Admin requires access to your photo library to allow store managers to upload dish photos, menu item images, restaurant logos, and receipt attachments.",
         "NSCameraUsageDescription": "Krifoo Admin requires camera access to allow store staff to photograph menu items and scan order verification QR codes."
       }
