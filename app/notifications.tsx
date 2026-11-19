@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Header } from '../components/Header';
+import { KrifooUpdatesEntry } from '../components/KrifooUpdatesEntry';
 import { StatusBadge } from '../components/StatusBadge';
 import { Colors } from '../constants/colors';
 import { orderService } from '../services/order.service';
@@ -310,6 +311,7 @@ export default function NotificationsScreen() {
   return (
     <View style={styles.container}>
       <Header title="Notification Feed" showBackButton={true} />
+      <KrifooUpdatesEntry />
 
       <View style={[styles.contentWrapper, isTablet && styles.contentWrapperTablet]}>
         {/* ========================================================================= */}

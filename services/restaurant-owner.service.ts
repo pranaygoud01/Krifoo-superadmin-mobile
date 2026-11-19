@@ -1,4 +1,14 @@
 import { apiRequest } from './api';
+import { Platform } from 'react-native';
+
+export interface RestaurantUpdate {
+  _id: string;
+  title: string;
+  body: string;
+  category: 'info' | 'important' | 'maintenance';
+  createdAt: string;
+  isRead: boolean;
+}
 
 /**
  * DeviceEventEmitter event fired after the store is switched online/offline.
@@ -100,6 +110,36 @@ export const restaurantOwnerService = {
   },
   async getRestaurantProfile(): Promise<{ success: boolean; data?: any; message?: string }> {
     return apiRequest('/api/restaurants/me', { method: 'GET' });
+  },
+  /** Krifoo service updates sent to this restaurant (GET /api/restaurants/updates). */
+  async getUpdates(): Promise<{ success: boolean; data?: RestaurantUpdate[]; unreadCount?: number; message?: string }> {
+    return apiRequest('/api/restaurants/updates', { method: 'GET' });
+  },
+  /** Mark all Krifoo updates as read. */
+  async markUpdatesRead(): Promise<{ success: boolean; message?: string }> {
+    return apiRequest('/api/restaurants/updates/read', { method: 'POST' });
+  },
+  /** Upload / replace the restaurant logo (PUT /api/restaurants/logo, multipart field "image"). */
+  async uploadLogo(uri: string): Promise<{ success: boolean; data?: { logoUrl: string }; message?: string }> {
+    const form = new FormData();
+    const ext = (uri.split('?')[0].split('.').pop() || 'jpg').toLowerCase();
+    const safeExt = ['jpg', 'jpeg', 'png', 'webp'].includes(ext) ? ext : 'jpg';
+    const mime = `image/${safeExt === 'jpg' ? 'jpeg' : safeExt}`;
+    if (Platform.OS === 'web') {
+      const blob = await (await fetch(uri)).blob();
+      form.append('image', blob, `logo.${safeExt}`);
+    } else {
+      form.append('image', {
+        uri: Platform.OS === 'android' ? uri : uri.replace('file://', ''),
+        name: `logo.${safeExt}`,
+        type: mime,
+      } as any);
+    }
+    return apiRequest('/api/restaurants/logo', { method: 'PUT', body: form, timeoutMs: 60000 });
+  },
+  /** Remove the restaurant logo (DELETE /api/restaurants/logo). */
+  async removeLogo(): Promise<{ success: boolean; message?: string }> {
+    return apiRequest('/api/restaurants/logo', { method: 'DELETE' });
   },
   async updateRestaurantProfile(payload: any): Promise<{ success: boolean; data?: any; message?: string }> {
     return apiRequest('/api/restaurants/profile', {

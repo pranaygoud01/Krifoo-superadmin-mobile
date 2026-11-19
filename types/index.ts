@@ -192,6 +192,8 @@ export interface Order {
   status: OrderStatus;
   paymentType?: 'cash' | 'card' | 'online';
   paymentStatus?: 'pending' | 'paid' | 'completed' | 'failed' | 'refunded';
+  /** Stripe checkout session / PaymentIntent id — present only for orders paid online. */
+  sessionId?: string | null;
   deliveryAddress?: {
     addressLine1?: string;
     addressLine2?: string;

@@ -1,10 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, KeyboardAvoidingView, Linking } from 'react-native';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { Colors } from '../constants/colors';
 import { restaurantOwnerService } from '../services/restaurant-owner.service';
 import { useToast } from '../context/ToastContext';
-import { Store, User, MapPin, Mail, Lock, TriangleAlert, Check } from 'lucide-react-native';
+import { LogoPicker } from '../components/settings/LogoPicker';
+import { Store, User, MapPin, Mail, Lock, TriangleAlert, Check, Search, ExternalLink } from 'lucide-react-native';
+import { AddressFinderSheet } from '../components/settings/AddressFinderSheet';
+import type { AddressMatch } from '../services/location.service';
 import {
   EmailListEditor,
   ErrorView,
@@ -21,12 +24,15 @@ import {
   useFormLayout,
   useUnsavedChangesGuard,
 } from '../components/settings/FormKit';
+import { KEYBOARD_BEHAVIOR } from '../utils/keyboard';
 
 /**
  * Store profile (restaurant owner).
- * Backend: GET /api/restaurants/me, PUT /api/restaurants/profile.
+ * Backend: GET /api/restaurants/me, PUT /api/restaurants/profile, PUT/DELETE /api/restaurants/logo.
  * The profile endpoint accepts: restaurantName, ownerFullName, primaryContactName, phoneNumber,
- * restaurantType, orderNotificationEmails, address.{shopNo, floor, area, city, landmark}.
+ * restaurantType, orderNotificationEmails, address.{shopNo, floor, area, city, landmark, coordinates}.
+ * The map location (address.coordinates, GeoJSON [lng, lat]) is set by searching a real address —
+ * delivery distances and fees are calculated from it.
  * Login email is read-only. Store online/offline is NOT sent from here (it's controlled on the
  * Settings screen) so saving the profile can never flip the store's live status.
  */
@@ -52,6 +58,9 @@ type ProfileForm = {
   landmark: string;
   area: string;
   city: string;
+  /** Map location used for delivery distances (null = not set) */
+  lat: number | null;
+  lng: number | null;
 };
 
 type FormKey = keyof ProfileForm;
@@ -68,6 +77,16 @@ const EMPTY_FORM: ProfileForm = {
   landmark: '',
   area: '',
   city: '',
+  lat: null,
+  lng: null,
+};
+
+/** Reads GeoJSON [lng, lat]; [0, 0] (an unset placeholder) counts as not set. */
+const coordsFrom = (r: any): { lat: number | null; lng: number | null } => {
+  const c = r?.address?.coordinates?.coordinates;
+  const lng = Number(c?.[0]);
+  const lat = Number(c?.[1]);
+  return Array.isArray(c) && Number.isFinite(lat) && Number.isFinite(lng) && !(lat === 0 && lng === 0) ? { lat, lng } : { lat: null, lng: null };
 };
 
 const toForm = (r: any): ProfileForm => ({
@@ -82,6 +101,7 @@ const toForm = (r: any): ProfileForm => ({
   landmark: r?.address?.landmark || '',
   area: r?.address?.area || '',
   city: r?.address?.city || '',
+  ...coordsFrom(r),
 });
 
 const PHONE_RE = /^\+?[\d\s()-]{7,20}$/;
@@ -123,6 +143,34 @@ export default function StoreProfileScreen() {
   const [saved, setSaved] = useState<ProfileForm>(EMPTY_FORM);
   const [showErrors, setShowErrors] = useState(false);
 
+  // Logo saves on its own (not part of the form / Save bar).
+  const [logoUrl, setLogoUrl] = useState('');
+
+  // Address finder: picks a real address and its map location
+  const [finderOpen, setFinderOpen] = useState(false);
+  /** Street/postcode/city at the moment the map location was set; edits after that make the pin stale */
+  const [pinnedText, setPinnedText] = useState<string | null>(null);
+  const addressText = `${form.landmark}|${form.area}|${form.city}`.toLowerCase().trim();
+  const hasPin = form.lat !== null && form.lng !== null;
+  const pinStale = hasPin && pinnedText !== null && pinnedText !== addressText;
+
+  const applyMatch = (m: AddressMatch) => {
+    const postcode = (m.postalCode || '').toUpperCase();
+    setForm(prev => {
+      const next = {
+        ...prev,
+        landmark: m.line1 || prev.landmark,
+        area: postcode || prev.area,
+        city: m.city || prev.city,
+        lat: m.lat,
+        lng: m.lon,
+      };
+      setPinnedText(`${next.landmark}|${next.area}|${next.city}`.toLowerCase().trim());
+      return next;
+    });
+    showToast({ title: 'Address found', message: 'Check the unit and floor, then save.', type: 'success' });
+  };
+
   const dirty = !isEqualJSON(form, saved);
   useUnsavedChangesGuard(dirty);
 
@@ -138,8 +186,10 @@ export default function StoreProfileScreen() {
       if (res.success && res.data) {
         const f = toForm(res.data);
         setEmail(res.data.email || '');
+        setLogoUrl(res.data.logoUrl || '');
         setForm(f);
         setSaved(f);
+        setPinnedText(`${f.landmark}|${f.area}|${f.city}`.toLowerCase().trim());
       } else {
         setLoadError(res.message || 'Your store profile could not be loaded.');
       }
@@ -156,7 +206,7 @@ export default function StoreProfileScreen() {
 
   const set = <K extends FormKey>(key: K, value: ProfileForm[K]) => setForm((prev) => ({ ...prev, [key]: value }));
 
-  const bind = (key: Exclude<FormKey, 'restaurantType' | 'orderNotificationEmails'>) => ({
+  const bind = (key: Exclude<FormKey, 'restaurantType' | 'orderNotificationEmails' | 'lat' | 'lng'>) => ({
     value: form[key],
     onChangeText: (v: string) => set(key, v),
     error: visibleErrors[key],
@@ -183,6 +233,9 @@ export default function StoreProfileScreen() {
           landmark: form.landmark.trim(),
           area: form.area.trim().toUpperCase(),
           city: form.city.trim(),
+          ...(form.lat !== null && form.lng !== null
+            ? { coordinates: { type: 'Point', coordinates: [form.lng, form.lat] } }
+            : {}),
         },
       });
       if (res.success) {
@@ -206,7 +259,7 @@ export default function StoreProfileScreen() {
     saved.restaurantType === 'food_delivery_and_dining' && form.restaurantType !== 'food_delivery_and_dining';
 
   return (
-    <KeyboardAvoidingView style={formStyles.screen} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoidingView style={formStyles.screen} behavior={KEYBOARD_BEHAVIOR}>
       <ScreenHeader title="Store profile" subtitle="Business details, contact and address" />
 
       {loading ? (
@@ -222,6 +275,7 @@ export default function StoreProfileScreen() {
           <FormFrame>
             {/* Business */}
             <FormSection icon={Store} title="Business" description="How your store appears to customers.">
+              <LogoPicker logoUrl={logoUrl} restaurantName={form.restaurantName} onChange={setLogoUrl} />
               <Field
                 label="Business name"
                 required
@@ -303,6 +357,22 @@ export default function StoreProfileScreen() {
 
             {/* Address */}
             <FormSection icon={MapPin} title="Address" description="Used for delivery distances and shown to customers.">
+              <TouchableOpacity
+                style={styles.findBtn}
+                onPress={() => setFinderOpen(true)}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel="Find your address"
+              >
+                <View style={styles.findIcon}>
+                  <Search size={18} color={Colors.primary} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.findTitle}>{hasPin ? 'Search again' : 'Find your address'}</Text>
+                  <Text style={styles.findSub}>Search a postcode or street to fill this in and pin the map location</Text>
+                </View>
+              </TouchableOpacity>
+
               <FieldRow stack={isCompact}>
                 <Field label="Shop / unit no." placeholder="Unit 4B" {...bind('shopNo')} />
                 <Field label="Floor" placeholder="Ground floor" {...bind('floor')} />
@@ -318,10 +388,44 @@ export default function StoreProfileScreen() {
                 />
                 <Field label="City" required placeholder="London" autoCapitalize="words" {...bind('city')} />
               </FieldRow>
+
+              {/* Map location status */}
+              {hasPin && !pinStale ? (
+                <View style={[styles.pinStatus, styles.pinOk]}>
+                  <Check size={16} color={Colors.statusApproved.text} />
+                  <Text style={[styles.pinText, { color: Colors.statusApproved.text }]}>
+                    Map location set ({form.lat!.toFixed(5)}, {form.lng!.toFixed(5)})
+                  </Text>
+                  <TouchableOpacity
+                    onPress={() => Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${form.lat},${form.lng}`).catch(() => {})}
+                    style={styles.pinLink}
+                    accessibilityLabel="View on map"
+                  >
+                    <Text style={styles.pinLinkText}>View on map</Text>
+                    <ExternalLink size={13} color={Colors.primary} />
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <TouchableOpacity style={[styles.pinStatus, styles.pinWarn]} onPress={() => setFinderOpen(true)} activeOpacity={0.8}>
+                  <TriangleAlert size={16} color={Colors.statusPending.text} />
+                  <Text style={[styles.pinText, { color: Colors.statusPending.text }]}>
+                    {pinStale
+                      ? 'Address changed — search again to update the map location.'
+                      : 'Map location not set — delivery distances can’t be calculated. Tap to find your address.'}
+                  </Text>
+                </TouchableOpacity>
+              )}
             </FormSection>
           </FormFrame>
         </ScrollView>
       )}
+
+      <AddressFinderSheet
+        visible={finderOpen}
+        onClose={() => setFinderOpen(false)}
+        onPick={applyMatch}
+        initialQuery={form.area || form.landmark}
+      />
 
       <SaveBar
         visible={dirty && !loading}
@@ -330,6 +434,7 @@ export default function StoreProfileScreen() {
         onSave={save}
         onDiscard={() => {
           setForm(saved);
+          setPinnedText(`${saved.landmark}|${saved.area}|${saved.city}`.toLowerCase().trim());
           setShowErrors(false);
         }}
       />
@@ -353,4 +458,24 @@ const styles = StyleSheet.create({
   typeLabel: { flexShrink: 1, fontSize: 14, fontWeight: '800', color: Colors.text },
   typeLabelActive: { color: Colors.primaryDark },
   typeDesc: { fontSize: 12, color: Colors.textMuted, marginTop: 2 },
+  findBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 12,
+    marginBottom: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.primary,
+    backgroundColor: Colors.primaryLight,
+  },
+  findIcon: { width: 36, height: 36, borderRadius: 18, backgroundColor: Colors.background, alignItems: 'center', justifyContent: 'center' },
+  findTitle: { fontSize: 15, fontWeight: '700', color: Colors.primaryDark },
+  findSub: { fontSize: 12, color: Colors.textMuted, marginTop: 2 },
+  pinStatus: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8, padding: 12, borderRadius: 12, borderWidth: 1, marginTop: 4 },
+  pinOk: { backgroundColor: Colors.statusApproved.bg, borderColor: Colors.statusApproved.border },
+  pinWarn: { backgroundColor: Colors.statusPending.bg, borderColor: Colors.statusPending.border },
+  pinText: { flex: 1, minWidth: 160, fontSize: 13, fontWeight: '600' },
+  pinLink: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  pinLinkText: { fontSize: 13, fontWeight: '700', color: Colors.primary },
 });

@@ -19,6 +19,7 @@ import {
   useFormLayout,
   useUnsavedChangesGuard,
 } from '../components/settings/FormKit';
+import { KEYBOARD_BEHAVIOR } from '../utils/keyboard';
 
 /**
  * Platform settings (super admin).
@@ -82,7 +83,7 @@ export default function GlobalSettingsScreen() {
   };
 
   return (
-    <KeyboardAvoidingView style={formStyles.screen} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoidingView style={formStyles.screen} behavior={KEYBOARD_BEHAVIOR}>
       <ScreenHeader title="Platform settings" subtitle="Applies to the whole Krifoo platform" />
 
       {loading ? (

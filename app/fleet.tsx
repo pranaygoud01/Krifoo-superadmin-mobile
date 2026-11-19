@@ -1,5 +1,9 @@
 /**
  * Drivers — your own delivery riders.
+ * Drivers sign in to the Krifoo driver app with their EMAIL (the backend stores it as both
+ * username and email), so both "New driver" and "Has a Krifoo account" use the email.
+ * Backend: GET/POST /api/owner/delivery-partners, POST /delivery-partners/link,
+ * DELETE /delivery-partners/:id (removes from the team; the driver's account is kept).
  */
 import React, { useCallback, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, FlatList, RefreshControl, Alert, Linking, TouchableOpacity } from 'react-native';
@@ -37,9 +41,20 @@ const VEHICLES: { value: Vehicle; label: string }[] = [
   { value: 'motorcycle', label: 'Motorbike' },
   { value: 'car', label: 'Car' },
 ];
-const vehicleLabel = (v?: string) => VEHICLES.find((x) => x.value === v)?.label || (v ? v[0].toUpperCase() + v.slice(1) : 'Vehicle not set');
-const VehicleIcon = ({ type }: { type?: string }) =>
-  type === 'car' ? <Car size={14} color={Colors.textSubtle} /> : type === 'bicycle' || type === 'motorcycle' ? <Bike size={14} color={Colors.textSubtle} /> : <Truck size={14} color={Colors.textSubtle} />;
+const vehicleLabel = (v?: string) =>
+  VEHICLES.find((x) => x.value === v?.toLowerCase())?.label || (v ? v[0].toUpperCase() + v.slice(1).toLowerCase() : 'Vehicle not set');
+const VehicleIcon = ({ type }: { type?: string }) => {
+  const kind = type?.toLowerCase();
+  return kind === 'car' ? (
+    <Car size={14} color={Colors.textSubtle} />
+  ) : kind === 'bicycle' || kind === 'motorcycle' || kind === 'scooter' ? (
+    <Bike size={14} color={Colors.textSubtle} />
+  ) : (
+    <Truck size={14} color={Colors.textSubtle} />
+  );
+};
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /** UK mobile → +447…; returns null when it isn't a valid UK mobile number. */
 function normaliseUkMobile(raw: string): string | null {
@@ -51,7 +66,7 @@ function normaliseUkMobile(raw: string): string | null {
   return /^7\d{9}$/.test(digits) ? `+44${digits}` : null;
 }
 
-const emptyNew = { fullName: '', username: '', password: '', phone: '', vehicle: 'bicycle' as Vehicle, plate: '', licence: '' };
+const emptyNew = { fullName: '', email: '', password: '', phone: '', vehicle: 'bicycle' as Vehicle, plate: '', licence: '' };
 
 export default function FleetScreen() {
   const { showToast } = useToast();
@@ -126,13 +141,14 @@ export default function FleetScreen() {
 
   const linkExisting = async () => {
     const username = linkUsername.trim().toLowerCase();
-    if (!username) return setErrors({ linkUsername: 'Enter the driver’s Krifoo username.' });
+    if (!username) return setErrors({ linkUsername: 'Enter the email the driver signs in with.' });
+    if (!EMAIL_RE.test(username)) return setErrors({ linkUsername: 'Enter a valid email address, e.g. driver@example.com.' });
     if (drivers.some((d) => d.username?.toLowerCase() === username)) return setErrors({ linkUsername: 'This driver is already in your team.' });
     setSaving(true);
     try {
       const res = await restaurantOwnerService.linkDriver(username);
-      if (!res.success) throw new Error(res.message || 'No driver found with that username.');
-      showToast({ title: 'Driver added', message: `@${username} is now in your team.`, type: 'success' });
+      if (!res.success) throw new Error(res.message || 'No driver account found with this email.');
+      showToast({ title: 'Driver added', message: `${username} is now in your team.`, type: 'success' });
       setSheetOpen(false);
       load();
     } catch (e: any) {
@@ -145,8 +161,8 @@ export default function FleetScreen() {
   const registerNew = async () => {
     const e: Record<string, string> = {};
     if (!form.fullName.trim()) e.fullName = 'Enter the driver’s name.';
-    const username = form.username.trim().toLowerCase();
-    if (!/^[a-z0-9._]{3,30}$/.test(username)) e.username = '3–30 characters: letters, numbers, . or _';
+    const username = form.email.trim().toLowerCase();
+    if (!EMAIL_RE.test(username) || username.length > 100) e.email = 'Enter a valid email address — the driver signs in with it.';
     if (form.password.length < 8) e.password = 'At least 8 characters.';
     const phone = normaliseUkMobile(form.phone);
     if (!phone) e.phone = 'Enter a UK mobile number, e.g. 07123 456789.';
@@ -168,11 +184,14 @@ export default function FleetScreen() {
         },
       });
       if (!res.success) throw new Error(res.message || 'Couldn’t create the driver.');
-      showToast({ title: 'Driver created', message: `${form.fullName.trim()} can now sign in to the driver app as @${username}.`, type: 'success' });
+      showToast({ title: 'Driver created', message: `${form.fullName.trim()} can now sign in to the driver app with ${username}.`, type: 'success' });
       setSheetOpen(false);
       load();
     } catch (err: any) {
-      showToast({ title: 'Couldn’t create driver', message: err?.message || 'Please try again.', type: 'error' });
+      const msg: string = err?.message || 'Please try again.';
+      // "Already exists" belongs on the email field, where it can be fixed
+      if (/already exists/i.test(msg)) setErrors((prev) => ({ ...prev, email: msg }));
+      else showToast({ title: 'Couldn’t create driver', message: msg, type: 'error' });
     } finally {
       setSaving(false);
     }
@@ -219,7 +238,7 @@ export default function FleetScreen() {
             <Text style={listStyles.title} numberOfLines={1}>
               {d.fullName || 'Unnamed driver'}
             </Text>
-            <Text style={listStyles.sub}>@{d.username}</Text>
+            <Text style={listStyles.sub} numberOfLines={1}>{d.username}</Text>
           </View>
           <Badge label={d.isActive === false ? 'Account disabled' : online ? 'Online' : 'Offline'} tone={d.isActive === false ? 'danger' : online ? 'success' : 'neutral'} />
         </View>
@@ -264,7 +283,7 @@ export default function FleetScreen() {
 
       <View style={listStyles.toolbar}>
         <View style={[listStyles.frame, styles.toolbarInner]}>
-          <SearchBar value={query} onChangeText={setQuery} placeholder="Search name, username or phone" />
+          <SearchBar value={query} onChangeText={setQuery} placeholder="Search name, email or phone" />
           <FilterChips<Filter>
             options={[
               { value: 'all', label: 'All', count: counts.all },
@@ -293,7 +312,7 @@ export default function FleetScreen() {
               <EmptyState
                 icon={Truck}
                 title="No drivers yet"
-                message="Add your own riders to deliver your orders. They sign in to the Krifoo driver app with the username you give them."
+                message="Add your own riders to deliver your orders. They sign in to the Krifoo driver app with their email."
                 actionLabel="Add a driver"
                 onAction={openAdd}
               />
@@ -338,18 +357,19 @@ export default function FleetScreen() {
 
         {mode === 'existing' ? (
           <>
-            <Notice tone="info">Ask the driver for the username they use to sign in to the Krifoo driver app.</Notice>
+            <Notice tone="info">Ask the driver for the email they use to sign in to the Krifoo driver app.</Notice>
             <Field
-              label="Driver username"
+              label="Driver’s sign-in email"
               value={linkUsername}
               onChangeText={(v) => {
-                setLinkUsername(v);
+                setLinkUsername(v.replace(/\s/g, ''));
                 setErrors({});
               }}
-              placeholder="e.g. david.rider"
+              placeholder="driver@example.com"
               autoCapitalize="none"
               autoCorrect={false}
-              prefix="@"
+              keyboardType="email-address"
+              autoComplete="email"
               error={errors.linkUsername}
               onSubmitEditing={linkExisting}
               returnKeyType="done"
@@ -367,17 +387,19 @@ export default function FleetScreen() {
               keyboardType="phone-pad"
               error={errors.phone}
             />
+            <Field
+              label="Email (used to sign in)"
+              required
+              value={form.email}
+              onChangeText={(v) => setField('email', v.replace(/\s/g, ''))}
+              placeholder="driver@example.com"
+              keyboardType="email-address"
+              autoCapitalize="none"
+              autoCorrect={false}
+              autoComplete="off"
+              error={errors.email}
+            />
             <FieldRow>
-              <Field
-                label="Username"
-                required
-                value={form.username}
-                onChangeText={(v) => setField('username', v.toLowerCase().replace(/\s/g, ''))}
-                placeholder="david.rider"
-                autoCapitalize="none"
-                autoCorrect={false}
-                error={errors.username}
-              />
               <Field
                 label="Password"
                 required

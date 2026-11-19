@@ -11,12 +11,15 @@ import {
   Platform,
   ActivityIndicator,
   useWindowDimensions,
+  Linking,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { useAuth } from '../context/AuthContext';
 import { Colors } from '../constants/colors';
+import { AddressFinderSheet } from '../components/settings/AddressFinderSheet';
+import { locationService, AddressMatch } from '../services/location.service';
 import {
   ArrowLeft,
   ArrowRight,
@@ -36,6 +39,9 @@ import {
   FileCheck,
   Truck,
   CircleAlert,
+  Search,
+  ExternalLink,
+  TriangleAlert,
   Info,
   UtensilsCrossed,
   ShoppingBasket,
@@ -477,6 +483,53 @@ export default function RegisterScreen() {
 
   const [step, setStep] = useState(0);
   const [form, setForm] = useState<FormState>(INITIAL_FORM);
+
+  // Store map location — delivery distances and fees are calculated from it
+  const [pin, setPin] = useState<{ lat: number; lng: number; text: string } | null>(null);
+  const [finderOpen, setFinderOpen] = useState(false);
+  const [locating, setLocating] = useState(false);
+  const [pinError, setPinError] = useState<string | null>(null);
+  const addressKey = (f: FormState) => `${f.landmark}|${f.area}|${f.city}`.toLowerCase().replace(/\s+/g, ' ').trim();
+  const pinValid = Boolean(pin) && pin!.text === addressKey(form);
+
+  const applyMatch = (m: AddressMatch) => {
+    const next: FormState = {
+      ...form,
+      landmark: m.line1 || form.landmark,
+      area: m.postalCode ? formatPostcode(m.postalCode) : form.area,
+      city: m.city || form.city,
+    };
+    setForm(next);
+    setPin({ lat: m.lat, lng: m.lon, text: addressKey(next) });
+    setPinError(null);
+  };
+
+  /** Pins the store from the typed postcode + city when the owner didn't use "Find your address". */
+  const ensurePin = async (): Promise<boolean> => {
+    if (pinValid) return true;
+    const query = [form.landmark, form.area, form.city].map(s => s.trim()).filter(Boolean).join(', ');
+    if (!form.area.trim()) {
+      setPinError('Enter your postcode or use “Find your address” so we can pin your store.');
+      return false;
+    }
+    setLocating(true);
+    try {
+      const res = await locationService.searchAddress(query);
+      const best = res.success ? res.data[0] : undefined;
+      if (!best) {
+        setPinError('We couldn’t find this address on the map. Use “Find your address” to pick it.');
+        return false;
+      }
+      setPin({ lat: best.lat, lng: best.lon, text: addressKey(form) });
+      setPinError(null);
+      return true;
+    } catch {
+      setPinError('Address lookup is unavailable right now. Check your connection and try again.');
+      return false;
+    } finally {
+      setLocating(false);
+    }
+  };
   const [touched, setTouched] = useState<Partial<Record<FieldKey, boolean>>>({});
   const [attempted, setAttempted] = useState<Record<number, boolean>>({});
   const [showPassword, setShowPassword] = useState(false);
@@ -564,13 +617,17 @@ export default function RegisterScreen() {
     requestAnimationFrame(() => scrollRef.current?.scrollTo({ y: 0, animated: false }));
   };
 
-  const handleNext = () => {
+  const handleNext = async () => {
     const bad = stepErrors(step);
     touchFields(STEP_FIELDS[step]);
     if (bad.length) {
       setAttempted((prev) => ({ ...prev, [step]: true }));
       errorFeedback();
       focusFirstError(bad);
+      return;
+    }
+    if (step === 2 && !(await ensurePin())) {
+      errorFeedback();
       return;
     }
     goToStep(step + 1);
@@ -595,6 +652,12 @@ export default function RegisterScreen() {
       }
     }
 
+    if (!(await ensurePin())) {
+      errorFeedback();
+      goToStep(2);
+      return;
+    }
+
     setLoading(true);
     setSubmitError(null);
     try {
@@ -617,9 +680,10 @@ export default function RegisterScreen() {
           area: formatPostcode(form.area),
           city: t(form.city),
           landmark: t(form.landmark),
+          // Real map location of the store ([longitude, latitude]) — never a placeholder
           coordinates: {
             type: 'Point',
-            coordinates: [-0.1276, 51.5074], // Default to Central London coordinates
+            coordinates: [pin!.lng, pin!.lat],
           },
         })
       );
@@ -856,6 +920,21 @@ export default function RegisterScreen() {
         return (
           <>
             <SectionLabel icon={Building2}>Store address</SectionLabel>
+            <TouchableOpacity
+              style={styles.findBtn}
+              onPress={() => setFinderOpen(true)}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel="Find your address"
+            >
+              <View style={styles.findIcon}>
+                <Search size={18} color={Colors.primary} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.findTitle}>{pinValid ? 'Search again' : 'Find your address'}</Text>
+                <Text style={styles.findSub}>Search your postcode or street to fill this in and pin your store on the map</Text>
+              </View>
+            </TouchableOpacity>
             <Row>
               <Field label="Shop / Unit no." placeholder="Unit 1" {...bind('shopNo')} />
               <Field label="Floor" placeholder="Ground" {...bind('floor')} />
@@ -888,6 +967,39 @@ export default function RegisterScreen() {
                 {...bind('city')}
               />
             </Row>
+
+            {/* Map location status */}
+            {locating ? (
+              <View style={[styles.pinStatus, styles.pinNeutral]}>
+                <ActivityIndicator size="small" color={Colors.primary} />
+                <Text style={[styles.pinText, { color: Colors.textMuted }]}>Finding your store on the map…</Text>
+              </View>
+            ) : pinValid ? (
+              <View style={[styles.pinStatus, styles.pinOk]}>
+                <Check size={16} color={Colors.statusApproved.text} />
+                <Text style={[styles.pinText, { color: Colors.statusApproved.text }]}>Store pinned on the map</Text>
+                <TouchableOpacity
+                  onPress={() => Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${pin!.lat},${pin!.lng}`).catch(() => {})}
+                  style={styles.pinLink}
+                  accessibilityLabel="View on map"
+                >
+                  <Text style={styles.pinLinkText}>View on map</Text>
+                  <ExternalLink size={13} color={Colors.primary} />
+                </TouchableOpacity>
+              </View>
+            ) : pinError ? (
+              <TouchableOpacity style={[styles.pinStatus, styles.pinWarn]} onPress={() => setFinderOpen(true)} activeOpacity={0.8}>
+                <TriangleAlert size={16} color={Colors.statusPending.text} />
+                <Text style={[styles.pinText, { color: Colors.statusPending.text }]}>{pinError}</Text>
+              </TouchableOpacity>
+            ) : (
+              <View style={[styles.pinStatus, styles.pinNeutral]}>
+                <MapPin size={16} color={Colors.textMuted} />
+                <Text style={[styles.pinText, { color: Colors.textMuted }]}>
+                  {pin ? 'Address changed — we’ll update the map location when you continue.' : 'We’ll pin your store on the map from this address. Delivery distances are measured from it.'}
+                </Text>
+              </View>
+            )}
 
             <View style={styles.divider} />
 
@@ -1275,9 +1387,21 @@ export default function RegisterScreen() {
                     )}
                   </TouchableOpacity>
                 ) : (
-                  <TouchableOpacity style={styles.primaryBtn} onPress={handleNext} accessibilityRole="button">
-                    <Text style={styles.primaryBtnText}>Continue</Text>
-                    <ArrowRight size={18} color="#FFFFFF" />
+                  <TouchableOpacity
+                    style={[styles.primaryBtn, locating && { opacity: 0.7 }]}
+                    onPress={handleNext}
+                    disabled={locating}
+                    accessibilityRole="button"
+                    accessibilityState={{ busy: locating }}
+                  >
+                    {locating ? (
+                      <ActivityIndicator color="#FFFFFF" />
+                    ) : (
+                      <>
+                        <Text style={styles.primaryBtnText}>Continue</Text>
+                        <ArrowRight size={18} color="#FFFFFF" />
+                      </>
+                    )}
                   </TouchableOpacity>
                 )}
               </View>
@@ -1285,6 +1409,12 @@ export default function RegisterScreen() {
           </View>
         </View>
       </KeyboardAvoidingView>
+      <AddressFinderSheet
+        visible={finderOpen}
+        onClose={() => setFinderOpen(false)}
+        onPick={applyMatch}
+        initialQuery={form.area || form.landmark}
+      />
     </View>
   );
 }
@@ -1475,6 +1605,27 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
   },
   divider: { height: 1, backgroundColor: Colors.cardBorder, marginTop: 4, marginBottom: 22 },
+  findBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 12,
+    marginBottom: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.primary,
+    backgroundColor: Colors.primaryLight,
+  },
+  findIcon: { width: 36, height: 36, borderRadius: 18, backgroundColor: Colors.background, alignItems: 'center', justifyContent: 'center' },
+  findTitle: { fontSize: 15, fontWeight: '700', color: Colors.primaryDark },
+  findSub: { fontSize: 12, color: Colors.textMuted, marginTop: 2 },
+  pinStatus: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8, padding: 12, borderRadius: 12, borderWidth: 1, marginTop: 2, marginBottom: 18 },
+  pinOk: { backgroundColor: Colors.statusApproved.bg, borderColor: Colors.statusApproved.border },
+  pinWarn: { backgroundColor: Colors.statusPending.bg, borderColor: Colors.statusPending.border },
+  pinNeutral: { backgroundColor: Colors.cardSurface, borderColor: Colors.cardBorder },
+  pinText: { flex: 1, minWidth: 160, fontSize: 13, fontWeight: '600' },
+  pinLink: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  pinLinkText: { fontSize: 13, fontWeight: '700', color: Colors.primary },
 
   // Fields
   row: { flexDirection: 'row', gap: 12 },

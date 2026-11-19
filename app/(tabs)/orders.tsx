@@ -12,7 +12,6 @@ import {
   useWindowDimensions,
   DeviceEventEmitter,
   Modal,
-  Platform,
   AppState,
   NativeSyntheticEvent,
   NativeScrollEvent,
@@ -26,17 +25,22 @@ import { ConfirmModal } from '../../components/ConfirmModal';
 import { ErrorState } from '../../components/ErrorState';
 import { ApiErrorType } from '../../services/api';
 import { Colors } from '../../constants/colors';
-import { orderService } from '../../services/order.service';
+import { orderService, type ManualPaymentStatus } from '../../services/order.service';
 import { useToast } from '../../context/ToastContext';
 import { Order, OrderStatus } from '../../types';
 import { getItemOptionsList } from '../../services/receipt-customization.service';
 import { Skeleton } from '../../components/Skeleton';
+import { OrderCountdownBadge } from '../../components/OrderCountdownBadge';
+import { EditExpectedTimeModal } from '../../components/order/EditExpectedTimeModal';
+import { FilterSheet, FilterSection, FilterChips } from '../../components/filters/FilterSheet';
+import { getOrderFulfillmentType } from '../../utils/order-fulfillment';
+import { getOrderStatusColor, getOrderStatusSurface } from '../../utils/order-status';
+import { useAuth } from '../../context/AuthContext';
 import {
   Search,
   WifiOff,
   ChevronDown,
   ChevronUp,
-  Clock,
   Bike,
   ShoppingBag,
   CheckCircle2,
@@ -49,7 +53,6 @@ import {
   MapPin,
   UtensilsCrossed,
   Printer,
-  Globe,
   Calendar,
   CalendarDays,
   SlidersHorizontal,
@@ -57,12 +60,14 @@ import {
   CreditCard,
   Banknote,
   Sparkles,
-  Plus,
-  Minus,
-  Smartphone,
   ChefHat,
   CircleX,
   House,
+  Package,
+  Zap,
+  CalendarClock,
+  Smartphone,
+  Globe,
 } from 'lucide-react-native';
 import { printThermalReceipt, isAutoPrintEnabled, getLastPrintJobReport, getOrderScheduleInfo } from '../../services/thermal-print.service';
 import { getSanitizedOrderNotes } from '../../services/printer/receipt-document';
@@ -279,12 +284,24 @@ function getTotalAmount(order: Order) {
   return itemsSum + deliveryFee;
 }
 
-function formatDateTime(iso?: string) {
+/** "14:05" for today, "12 Nov, 14:05" otherwise — short enough for the card meta line. */
+function formatCardTime(iso?: string) {
   if (!iso) return '—';
   const d = new Date(iso);
   if (isNaN(d.getTime())) return '—';
-  return d.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+  const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  if (d.toDateString() === new Date().toDateString()) return time;
+  return `${d.toLocaleDateString([], { day: 'numeric', month: 'short' })}, ${time}`;
 }
+
+const CARD_TYPE_META = {
+  delivery: { label: 'Delivery', Icon: Bike, color: '#1D4ED8', bg: '#DBEAFE' },
+  pickup: { label: 'Pickup', Icon: ShoppingBag, color: '#C2410C', bg: '#FFEDD5' },
+  takeaway: { label: 'Takeaway', Icon: ShoppingBag, color: '#B45309', bg: '#FEF3C7' },
+  dine_in: { label: 'Dine-in', Icon: UtensilsCrossed, color: '#6D28D9', bg: '#EDE9FE' },
+} as const;
+
+export { getOrderStatusColor, getOrderStatusSurface };
 
 /** Statuses that are finished — everything else is an order still being worked on. */
 const FINAL_STATUSES = ['delivered', 'cancelled'];
@@ -335,93 +352,7 @@ function formatPaymentLabel(order: Order) {
   return `Payment : ${pType.charAt(0).toUpperCase() + pType.slice(1)}`;
 }
 
-export function getOrderStatusColor(status?: string): string {
-  const s = (status || '').toLowerCase().trim();
-  switch (s) {
-    case 'placed':
-      return '#F59E0B'; // Amber - New Orders / Awaiting Acceptance
-    case 'confirmed':
-    case 'preparing':
-      return '#3B82F6'; // Kitchen Blue - In Kitchen Cooking
-    case 'ready_for_pickup':
-      return '#FF5C39'; // Brand Coral - Ready for Pickup / Takeaway
-    case 'out_for_delivery':
-      return '#8B5CF6'; // Purple - Rider on the Way / Out for Delivery
-    case 'delivered':
-      return '#10B981'; // Emerald Green - Completed Successfully
-    case 'cancelled':
-      return '#EF4444'; // Red - Cancelled
-    default:
-      return '#94A3B8'; // Slate Gray fallback
-  }
-}
 
-
-function getOrderFulfillmentType(order: Order): 'delivery' | 'pickup' | 'takeaway' | 'dine_in' {
-  const oType = ((order.orderType || (order as any).deliveryType || '') as string).toLowerCase();
-  const domain = ((order.sourceDomain || '') as string).toLowerCase();
-  const notes = typeof order.notes === 'string' ? order.notes.toLowerCase() : '';
-  const addr1 = typeof (order.deliveryAddress as any)?.addressLine1 === 'string' ? (order.deliveryAddress as any).addressLine1.toLowerCase() : '';
-  const app = ((order as any).appName || '').toLowerCase();
-
-  if (
-    oType === 'dine_in' ||
-    oType === 'dinein' ||
-    oType === 'eatin' ||
-    oType === 'eat_in' ||
-    (order as any).tableNumber ||
-    notes.includes('eat-in') ||
-    notes.includes('dine-in') ||
-    notes.includes('dine in') ||
-    // Whole-word match only: "vegetable" / "comfortable" must not flag an order as dine-in.
-    /\btable\b/.test(notes) ||
-    addr1.startsWith('table')
-  ) {
-    return 'dine_in';
-  }
-
-  const custName = (order.customerDetails?.name || (order.customerId as any)?.fullName || '').toLowerCase();
-  const phone = (order.customerDetails?.phoneNumber || (order.customerId as any)?.phoneNumber || '').replace(/\D/g, '');
-
-  const isTakeawayApp =
-    oType === 'takeaway' ||
-    app.includes('takeaway') ||
-    notes.includes('takeaway') ||
-    custName.includes('takeaway');
-
-  if (oType === 'takeaway' || ((oType === 'pickup' || !oType) && isTakeawayApp)) {
-    return 'takeaway';
-  }
-
-  if (oType === 'pickup' || oType === 'collection') {
-    return 'pickup';
-  }
-  if (oType === 'delivery') {
-    return 'delivery';
-  }
-  const addr = order.deliveryAddress;
-  if (!addr) return isTakeawayApp ? 'takeaway' : 'pickup';
-  if (typeof addr === 'string') return addr.trim() ? 'delivery' : (isTakeawayApp ? 'takeaway' : 'pickup');
-  const hasAddrField = Boolean(
-    addr.formattedAddress ||
-    addr.addressLine1 ||
-    (addr as any).fullAddress ||
-    (addr as any).address ||
-    addr.street ||
-    addr.area ||
-    addr.city ||
-    addr.postalCode ||
-    addr.postcode
-  );
-  if (hasAddrField) {
-    const text = (addr.formattedAddress || addr.addressLine1 || (addr as any).fullAddress || '').toLowerCase();
-    if (text.includes('pickup') || text.includes('collection')) return 'pickup';
-    if (text.includes('takeaway')) return 'takeaway';
-    if (/\b(dine|dine-in|table)\b/.test(text)) return 'dine_in';
-    return 'delivery';
-  }
-  return isTakeawayApp ? 'takeaway' : 'pickup';
-}
 
 function isOrderPickup(order: Order): boolean {
   const f = getOrderFulfillmentType(order);
@@ -467,14 +398,6 @@ export const OrderCardSkeletonItem: React.FC = () => {
 
   return (
     <View style={[styles.kanbanCard, isTablet && styles.kanbanCardTablet, { opacity: 0.95 }]}>
-      {/* Top Status Accent Strip Placeholder */}
-      <View
-        style={[
-          styles.cardTopStatusStrip,
-          isTablet && styles.cardTopStatusStripTablet,
-          { backgroundColor: '#E2E8F0' },
-        ]}
-      />
 
       {/* Top Header: Order ID & Amount */}
       <View style={styles.kanbanCardTop}>
@@ -553,6 +476,8 @@ interface OrderCardProps {
   onEditDeliveryTime?: (o: Order) => void;
   /** True while a status change / rider assignment for this order is being sent. */
   isUpdating?: boolean;
+  /** Owner only: one-tap "Mark paid" for unpaid counter / cash orders. */
+  onMarkPaid?: (o: Order) => Promise<void>;
 }
 
 const OrderCardItem: React.FC<OrderCardProps> = ({
@@ -565,10 +490,14 @@ const OrderCardItem: React.FC<OrderCardProps> = ({
   compact = false,
   onEditDeliveryTime,
   isUpdating = false,
+  onMarkPaid,
 }) => {
   const { width: cardScreenWidth } = useWindowDimensions();
+  const [markingPaid, setMarkingPaid] = useState(false);
   const isTablet = cardScreenWidth >= TABLET_BREAKPOINT && !compact;
   const [expanded, setExpanded] = useState(false);
+  // Owners only see their own restaurant, so its name is noise on every card; super admins need it.
+  const showRestaurantName = useAuth().user?.userType === 'super_admin';
   const customerName = getCustomerName(order);
   const customerPhone = getCustomerPhone(order);
   const restaurantName = getRestaurantName(order);
@@ -971,7 +900,32 @@ const OrderCardItem: React.FC<OrderCardProps> = ({
     );
   };
 
+  const statusSurface = getOrderStatusSurface(order.status);
   const statusColor = getOrderStatusColor(order.status);
+  const sizeFactor = compact ? 0.86 : isTablet ? 1.12 : 1;
+  const fs = (n: number) => Math.round(n * sizeFactor * 2) / 2;
+  const typeMeta = CARD_TYPE_META[fulfillmentType];
+  const TypeIcon = typeMeta.Icon;
+  const tableLabel =
+    fulfillmentType === 'dine_in'
+      ? (order as any).tableNumber
+        ? `Table ${(order as any).tableNumber}`
+        : (order.deliveryAddress as any)?.addressLine1?.toLowerCase().startsWith('table')
+        ? (order.deliveryAddress as any).addressLine1
+        : null
+      : null;
+  const payment = isPaid
+    ? { label: 'Paid', color: '#047857', bg: '#D1FAE5' }
+    : isFailed
+    ? { label: 'Failed', color: '#B91C1C', bg: '#FEE2E2' }
+    : isRefunded
+    ? { label: 'Refunded', color: '#6D28D9', bg: '#EDE9FE' }
+    : { label: 'Unpaid', color: '#B45309', bg: '#FEF3C7' };
+  const paymentMethod = paymentLabel.replace(/^Payment\s*:\s*/i, '');
+  const sourceText = sourceDetails.isExternal ? sourceDetails.domainUrl : 'Krifoo App';
+  const orderNote = getSanitizedOrderNotes(order.notes);
+  const previewItems = orderItems.slice(0, 3).map((it: any) => `${Number(it.quantity || it.qty || 1)}× ${getItemName(it)}`);
+  const moreItems = Math.max(0, itemCount - previewItems.length);
 
   return (
     <TouchableOpacity
@@ -981,221 +935,159 @@ const OrderCardItem: React.FC<OrderCardProps> = ({
         styles.kanbanCard,
         isTablet && styles.kanbanCardTablet,
         compact && styles.kanbanCardCompact,
+        { backgroundColor: statusSurface.bg, borderColor: statusSurface.border },
       ]}
+      accessibilityRole="button"
+      accessibilityLabel={`Order ${orderNum}, ${statusLabel(order.status)}, ${typeMeta.label}, £${(totalAmount || 0).toFixed(2)}, ${payment.label}`}
     >
-      {/* Top Status Accent Strip */}
-      <View
-        style={[
-          styles.cardTopStatusStrip,
-          isTablet && styles.cardTopStatusStripTablet,
-          { backgroundColor: statusColor },
-        ]}
-      />
-
-      {/* Watermark Stamp Overlay for Completed (Success) & Cancelled Orders */}
-      {order.status === 'delivered' && (
-        <View style={styles.stampOverlay} pointerEvents="none">
-          <View style={[styles.stampBox, styles.stampSuccess]}>
-            <CheckCircle2 size={isTablet ? 15 : 13} color="#10B981" style={{ marginRight: 3 }} />
-            <Text style={[styles.stampText, styles.stampSuccessText, isTablet && { fontSize: 16 }]}>SUCCESS</Text>
+      {/* ── Header: order number + status · total ───────────────────── */}
+      <View style={styles.ocHeader}>
+        <View style={styles.ocHeaderLeft}>
+          <Text style={[styles.ocOrderId, { fontSize: fs(17) }]} numberOfLines={1}>#{orderNum}</Text>
+          <View style={[styles.ocStatusChip, { borderColor: statusSurface.border }]}>
+            <View style={[styles.ocStatusDot, { backgroundColor: statusColor }]} />
+            <Text style={[styles.ocStatusText, { color: statusSurface.text, fontSize: fs(11) }]} numberOfLines={1}>
+              {statusLabel(order.status)}
+            </Text>
           </View>
         </View>
-      )}
-
-      {order.status === 'cancelled' && (
-        <View style={styles.stampOverlay} pointerEvents="none">
-          <View style={[styles.stampBox, styles.stampCancelled]}>
-            <X size={isTablet ? 15 : 13} color="#EF4444" style={{ marginRight: 3 }} />
-            <Text style={[styles.stampText, styles.stampCancelledText, isTablet && { fontSize: 16 }]}>CANCELLED</Text>
-          </View>
-        </View>
-      )}
-
-      <View style={styles.kanbanCardTop}>
-        <View style={[styles.kanbanOrderIdCol, compact && { flex: 1, minWidth: 0, marginRight: 6 }]}>
-          <View style={styles.kanbanOrderIdRow}>
-            <Text style={[styles.kanbanOrderId, isTablet && styles.kanbanOrderIdTablet, compact && { fontSize: 12 }]} numberOfLines={1}>#{orderNum}</Text>
-            {isPaid ? (
-              <View style={[styles.paidBadge, compact && { paddingHorizontal: 4, paddingVertical: 1 }]}>
-                <Text style={[styles.paidBadgeText, isTablet && { fontSize: 10 }, compact && { fontSize: 8 }]}>PAID</Text>
-              </View>
-            ) : isFailed ? (
-              <View style={[styles.failedBadge, compact && { paddingHorizontal: 4, paddingVertical: 1 }]}>
-                <Text style={[styles.failedBadgeText, isTablet && { fontSize: 10 }, compact && { fontSize: 8 }]}>FAILED</Text>
-              </View>
-            ) : isRefunded ? (
-              <View style={[styles.refundedBadge, compact && { paddingHorizontal: 4, paddingVertical: 1 }]}>
-                <Text style={[styles.refundedBadgeText, isTablet && { fontSize: 10 }, compact && { fontSize: 8 }]}>REFUNDED</Text>
-              </View>
-            ) : (
-              <View style={[styles.pendingBadge, compact && { paddingHorizontal: 4, paddingVertical: 1 }]}>
-                <Text style={[styles.pendingBadgeText, isTablet && { fontSize: 10 }, compact && { fontSize: 8 }]}>UNPAID</Text>
-              </View>
-            )}
-          </View>
-          <Text style={[styles.kanbanPaymentBelowId, isTablet && styles.kanbanPaymentBelowIdTablet, compact && { fontSize: 10 }]} numberOfLines={1}>{paymentLabel}</Text>
-        </View>
-
-        <View style={[styles.kanbanAmountRow, compact && { flexShrink: 0, alignItems: 'flex-end' }]}>
-          <Text style={[styles.kanbanAmount, isTablet && styles.kanbanAmountTablet, compact && { fontSize: 13 }]}>£{(totalAmount || 0).toFixed(2)}</Text>
-          <View style={[styles.kanbanDateRow, { marginTop: 2 }]}>
-            <Clock size={isTablet ? 11 : compact ? 9 : 10} color="#9BA1A6" />
-            <Text style={[styles.kanbanDate, isTablet && { fontSize: 11 }, compact && { fontSize: 9.5 }]}>{formatDateTime(order.createdAt)}</Text>
-          </View>
-        </View>
+        <Text style={[styles.ocAmount, { fontSize: fs(17) }]}>£{(totalAmount || 0).toFixed(2)}</Text>
       </View>
 
-      <View style={styles.kanbanRestaurantRow}>
-        <Text style={[styles.kanbanRestaurant, isTablet && styles.kanbanRestaurantTablet, compact && { fontSize: 12 }, { flex: 1, marginRight: 8 }]} numberOfLines={1}>{restaurantName}</Text>
-        <Text style={[styles.kanbanItemCount, isTablet && styles.kanbanItemCountTablet, compact && { fontSize: 9.5 }, { flexShrink: 0 }]}>{itemCount} {itemCount === 1 ? 'item' : 'items'}</Text>
-      </View>
-
-      <View style={[styles.sourceBadgeContainer, isTablet && styles.sourceBadgeContainerTablet]}>
-        <View style={[sourceDetails.isExternal ? styles.sourceBadgeExternal : styles.sourceBadgeKrifoo, isTablet && (sourceDetails.isExternal ? styles.sourceBadgeExternalTablet : styles.sourceBadgeKrifooTablet), compact && { paddingHorizontal: 6, paddingVertical: 2.5, maxWidth: '100%' }]}>
-          {(() => {
-            const SourceIcon = !sourceDetails.isExternal
-              ? Smartphone
-              : sourceDetails.domainUrl.includes('Takeaway')
-              ? ShoppingBag
-              : Globe;
-            return (
-              <SourceIcon
-                size={isTablet ? 13 : 12}
-                color={sourceDetails.isExternal ? '#B45309' : '#2563EB'}
-                style={{ marginRight: 5 }}
-              />
-            );
-          })()}
-          <Text
-            style={[sourceDetails.isExternal ? styles.sourceBadgeTextExternal : styles.sourceBadgeTextKrifoo, isTablet && (sourceDetails.isExternal ? styles.sourceBadgeTextExternalTablet : styles.sourceBadgeTextKrifooTablet), compact && { fontSize: 11 }, { flexShrink: 1 }]}
-            numberOfLines={1}
-            ellipsizeMode="tail"
-          >
-            {sourceDetails.isExternal ? sourceDetails.domainUrl : 'Krifoo App'}
+      {/* ── Chips: fulfilment type · schedule · payment ─────────────── */}
+      <View style={styles.ocChips}>
+        <View style={[styles.ocChip, { backgroundColor: typeMeta.bg }]}>
+          <TypeIcon size={fs(12)} color={typeMeta.color} />
+          <Text style={[styles.ocChipText, { color: typeMeta.color, fontSize: fs(11.5) }]} numberOfLines={1}>
+            {tableLabel ? `${typeMeta.label} · ${tableLabel}` : typeMeta.label}
           </Text>
         </View>
+        {scheduleInfo.isScheduled && (
+          <View style={[styles.ocChip, styles.ocChipShrink, { backgroundColor: '#FEF3C7' }]}>
+            <Calendar size={fs(12)} color="#92400E" />
+            <Text style={[styles.ocChipText, { color: '#92400E', fontSize: fs(11.5) }]} numberOfLines={1}>
+              {scheduleInfo.scheduleTimeText}
+            </Text>
+          </View>
+        )}
+        <View style={[styles.ocChip, styles.ocChipShrink, { backgroundColor: payment.bg }]}>
+          <Text style={[styles.ocChipText, { color: payment.color, fontSize: fs(11.5) }]} numberOfLines={1}>
+            {payment.label} · {paymentMethod}
+          </Text>
+        </View>
+        {onMarkPaid && pStatus === 'pending' && !order.sessionId && order.status !== 'cancelled' ? (
+          <TouchableOpacity
+            onPress={async () => {
+              if (markingPaid) return;
+              setMarkingPaid(true);
+              try {
+                await onMarkPaid(order);
+              } finally {
+                setMarkingPaid(false);
+              }
+            }}
+            style={styles.ocMarkPaidBtn}
+            activeOpacity={0.7}
+            hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+            accessibilityRole="button"
+            accessibilityLabel={`Mark order ${orderNum} as paid`}
+          >
+            {markingPaid ? (
+              <ActivityIndicator size="small" color="#047857" />
+            ) : (
+              <>
+                <Check size={fs(13)} color="#047857" strokeWidth={3} />
+                <Text style={[styles.ocMarkPaidText, { fontSize: fs(11.5) }]}>Mark paid</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        ) : null}
       </View>
 
-      <View style={[styles.kanbanDivider, compact && { marginVertical: 6 }]} />
+      {/* ── Meta line ──────────────────────────────────────────────── */}
+      <Text style={[styles.ocMeta, { fontSize: fs(12) }]} numberOfLines={1}>
+        {formatCardTime(order.createdAt)} · {itemCount} {itemCount === 1 ? 'item' : 'items'} · via {sourceText}
+        {showRestaurantName ? ` · ${restaurantName}` : ''}
+      </Text>
 
-      <View style={[styles.kanbanCustomerRow, isTablet && styles.kanbanCustomerRowTablet, compact && { minWidth: 0, gap: 6, marginBottom: 4 }]}>
-        <View style={[styles.kanbanAvatar, isTablet && styles.kanbanAvatarTablet, compact && { width: 22, height: 22, borderRadius: 11 }]}>
-          <Text style={[styles.kanbanAvatarText, isTablet && styles.kanbanAvatarTextTablet, compact && { fontSize: 10 }]}>{customerName.charAt(0).toUpperCase()}</Text>
+      <View style={[styles.ocDivider, { backgroundColor: statusSurface.border }]} />
+
+      {/* ── Customer, address, rider ───────────────────────────────── */}
+      <View style={styles.ocCustomerRow}>
+        <View style={[styles.ocAvatar, { width: fs(30), height: fs(30), borderRadius: fs(15) }]}>
+          <Text style={[styles.ocAvatarText, { fontSize: fs(13) }]}>{customerName.charAt(0).toUpperCase()}</Text>
         </View>
-        <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={[styles.kanbanCustomerName, isTablet && styles.kanbanCustomerNameTablet, compact && { fontSize: 11.5, lineHeight: 15 }]} numberOfLines={1}>{customerName}</Text>
-          {customerPhone ? <Text style={[styles.kanbanCustomerPhone, isTablet && styles.kanbanCustomerPhoneTablet, compact && { fontSize: 10 }]} numberOfLines={1}>{customerPhone}</Text> : null}
+        <View style={styles.ocFlex}>
+          <Text style={[styles.ocCustomerName, { fontSize: fs(14) }]} numberOfLines={1}>{customerName}</Text>
+          {customerPhone ? (
+            <Text style={[styles.ocCustomerPhone, { fontSize: fs(12) }]} numberOfLines={1}>{customerPhone}</Text>
+          ) : null}
         </View>
       </View>
 
       {fulfillmentType === 'delivery' && deliveryAddressText ? (
-        <View style={[styles.kanbanAddressRow, isTablet && styles.kanbanAddressRowTablet, compact && { paddingHorizontal: 8, paddingVertical: 6, marginBottom: 6, gap: 6, minWidth: 0 }]}>
-          <MapPin size={isTablet ? 15 : compact ? 11 : 13} color="#2563EB" style={[styles.addressPinIcon, compact && { marginTop: 1 }]} />
-          <View style={{ flex: 1, minWidth: 0 }}>
-            <Text style={[styles.kanbanAddressHeader, isTablet && styles.kanbanAddressHeaderTablet, compact && { fontSize: 9, marginBottom: 0 }]}>DELIVERY ADDRESS:</Text>
-            <Text style={[styles.kanbanAddressText, isTablet && styles.kanbanAddressTextTablet, compact && { fontSize: 10, lineHeight: 13 }]} numberOfLines={2}>
-              {deliveryAddressText}
-            </Text>
-          </View>
+        <View style={styles.ocInfoRow}>
+          <MapPin size={fs(14)} color="#2563EB" style={styles.ocInfoIcon} />
+          <Text style={[styles.ocInfoText, { fontSize: fs(12.5) }]} numberOfLines={2}>{deliveryAddressText}</Text>
         </View>
       ) : null}
 
-      {isActiveOrder(order) && (
-      <View style={[styles.expectedDeliveryRow, isTablet && styles.expectedDeliveryRowTablet, compact && { marginBottom: 4 }]}>
-        <View style={[styles.expectedDeliveryBadge, isTablet && styles.expectedDeliveryBadgeTablet, compact && { paddingHorizontal: 6, paddingVertical: 2.5 }]}>
-          <Clock size={isTablet ? 12 : compact ? 10 : 11} color="#1D4ED8" />
-          <Text style={[styles.expectedDeliveryBadgeText, isTablet && { fontSize: 11 }, compact && { fontSize: 9.5 }]}>
-            Expected: {order.expectedDeliveryTime || order.deliveryTime || 30} mins
+      {deliveryPartnerName ? (
+        <View style={styles.ocInfoRow}>
+          <Bike size={fs(14)} color="#6B7280" style={styles.ocInfoIcon} />
+          <Text style={[styles.ocInfoText, { fontSize: fs(12.5) }]} numberOfLines={1}>
+            Rider · <Text style={styles.ocInfoStrong}>{deliveryPartnerName}</Text>
           </Text>
         </View>
-        {onEditDeliveryTime ? (
-          <TouchableOpacity
-            style={[styles.editDeliveryTimeBtn, isTablet && styles.editDeliveryTimeBtnTablet, compact && { paddingHorizontal: 6, paddingVertical: 2.5 }]}
-            onPress={(e: any) => {
-              e.stopPropagation?.();
-              onEditDeliveryTime(order);
-            }}
-            activeOpacity={0.7}
-            accessibilityRole="button"
-            accessibilityLabel="Edit expected time"
-          >
-            <Text style={[styles.editDeliveryTimeBtnText, isTablet && { fontSize: 10.5 }, compact && { fontSize: 9 }]}>
-              Edit
-            </Text>
-          </TouchableOpacity>
-        ) : null}
-      </View>
+      ) : null}
+
+      {/* ── Countdown (active orders) ──────────────────────────────── */}
+      {isActiveOrder(order) && (
+        <View style={styles.ocTimingRow}>
+          <OrderCountdownBadge
+            order={order}
+            style={[styles.expectedDeliveryBadge, isTablet && styles.expectedDeliveryBadgeTablet, compact && { paddingHorizontal: 6, paddingVertical: 2.5 }]}
+            textStyle={[styles.expectedDeliveryBadgeText, { fontSize: fs(11.5) }]}
+            iconSize={fs(12)}
+          />
+          {onEditDeliveryTime ? (
+            <TouchableOpacity
+              style={styles.ocEditBtn}
+              onPress={(e: any) => {
+                e.stopPropagation?.();
+                onEditDeliveryTime(order);
+              }}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Edit expected time"
+            >
+              <Text style={[styles.ocEditBtnText, { fontSize: fs(12) }]}>Edit time</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
       )}
 
-      <View style={[styles.kanbanTypeRow, isTablet && styles.kanbanTypeRowTablet, compact && { gap: 4, marginBottom: 5 }]}>
-        {scheduleInfo.isScheduled && (
-          <View style={[styles.scheduledTag, isTablet && { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 }, compact && { paddingHorizontal: 5, paddingVertical: 2.5, borderRadius: 6, maxWidth: '100%' }]}>
-            <Clock size={isTablet ? 13 : compact ? 10 : 11} color="#92400E" />
-            <Text style={[styles.scheduledTagText, isTablet && { fontSize: 11 }, compact && { fontSize: 9.5 }]} numberOfLines={1} ellipsizeMode="tail">
-              Scheduled: {scheduleInfo.scheduleTimeText}
-            </Text>
+      {/* ── Items preview (tap to expand) ──────────────────────────── */}
+      <TouchableOpacity
+        style={[styles.ocItemsToggle, { borderTopColor: statusSurface.border }]}
+        onPress={() => setExpanded(!expanded)}
+        activeOpacity={0.7}
+        accessibilityRole="button"
+        accessibilityState={{ expanded }}
+        accessibilityLabel={`${expanded ? 'Hide' : 'Show'} ${itemCount} items${orderNote ? ' and note' : ''}`}
+      >
+        <Text style={[styles.ocItemsPreview, { fontSize: fs(12.5) }]} numberOfLines={expanded ? 1 : 2}>
+          {expanded
+            ? `${itemCount} ${itemCount === 1 ? 'item' : 'items'}`
+            : `${previewItems.join(', ')}${moreItems ? `  +${moreItems} more` : ''}`}
+        </Text>
+        {orderNote ? (
+          <View style={styles.ocNoteFlag}>
+            <Text style={[styles.ocNoteFlagText, { fontSize: fs(10.5) }]}>NOTE</Text>
           </View>
-        )}
-        {fulfillmentType === 'delivery' ? (
-          <View style={[styles.deliveryTag, isTablet && { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 }, compact && { paddingHorizontal: 5, paddingVertical: 2.5, borderRadius: 6 }]}>
-            <Bike size={isTablet ? 14 : compact ? 11 : 12} color="#2563EB" />
-            <Text style={[styles.deliveryTagText, isTablet && { fontSize: 12 }, compact && { fontSize: 10 }]}>Delivery Order</Text>
-          </View>
-        ) : fulfillmentType === 'dine_in' ? (
-          <View style={[styles.dineInTag, isTablet && { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 }, compact && { paddingHorizontal: 5, paddingVertical: 2.5, borderRadius: 6, maxWidth: '100%' }]}>
-            <UtensilsCrossed size={isTablet ? 14 : compact ? 11 : 12} color="#7C3AED" />
-            <Text style={[styles.dineInTagText, isTablet && { fontSize: 12 }, compact && { fontSize: 10 }]} numberOfLines={1} ellipsizeMode="tail">
-                Dine In {
-                (order as any).tableNumber
-                  ? `• T${(order as any).tableNumber}`
-                  : (order.deliveryAddress as any)?.addressLine1?.toLowerCase().startsWith('table')
-                  ? `• ${(order.deliveryAddress as any).addressLine1}`
-                  : typeof order.notes === 'string' && order.notes.includes('Table')
-                  ? `• ${order.notes}`
-                  : ''
-              }
-            </Text>
-          </View>
-        ) : fulfillmentType === 'takeaway' ? (
-          <View style={[styles.takeawayTag, isTablet && { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 }, compact && { paddingHorizontal: 5, paddingVertical: 2.5, borderRadius: 6 }]}>
-            <ShoppingBag size={isTablet ? 14 : compact ? 11 : 12} color="#D97706" />
-            <Text style={[styles.takeawayTagText, isTablet && { fontSize: 12 }, compact && { fontSize: 10 }]} numberOfLines={1} ellipsizeMode="tail">
-              {order.status === 'delivered'
-                ? 'Takeaway (Collected)'
-                : order.status === 'ready_for_pickup'
-                ? 'Takeaway (Ready)'
-                : order.status === 'preparing' || order.status === 'confirmed'
-                ? 'Takeaway (Kitchen)'
-                : 'Takeaway Order'}
-            </Text>
-          </View>
-        ) : (
-          <View style={[styles.pickupTag, isTablet && { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 }, compact && { paddingHorizontal: 5, paddingVertical: 2.5, borderRadius: 6 }]}>
-            <ShoppingBag size={isTablet ? 14 : compact ? 11 : 12} color="#EA580C" />
-            <Text style={[styles.pickupTagText, isTablet && { fontSize: 12 }, compact && { fontSize: 10 }]} numberOfLines={1} ellipsizeMode="tail">
-              {order.status === 'delivered'
-                ? 'Pickup (Picked Up)'
-                : order.status === 'ready_for_pickup'
-                ? 'Pickup (Ready)'
-                : order.status === 'preparing' || order.status === 'confirmed'
-                ? 'Pickup (Kitchen)'
-                : 'Self Pickup'}
-            </Text>
-          </View>
-        )}
-        {deliveryPartnerName && (
-          <View style={[styles.riderBadge, isTablet && { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 }, compact && { paddingHorizontal: 5, paddingVertical: 2.5, borderRadius: 6 }]}>
-            <Bike size={isTablet ? 13 : compact ? 10 : 11} color="#6B7280" />
-            <Text style={[styles.riderText, isTablet && { fontSize: 11 }, compact && { fontSize: 9.5 }]} numberOfLines={1}>{deliveryPartnerName}</Text>
-          </View>
-        )}
-      </View>
-
-
-
-      <TouchableOpacity style={[styles.viewItemsBtn, isTablet && { marginTop: 12, paddingTop: 10 }, compact && { marginTop: 6, paddingTop: 6 }]} onPress={() => setExpanded(!expanded)} activeOpacity={0.7}>
-        <Text style={[styles.viewItemsBtnText, isTablet && { fontSize: 11 }, compact && { fontSize: 9.5 }]}>VIEW ITEMS & NOTES ({itemCount})</Text>
-        {expanded ? <ChevronUp size={isTablet ? 15 : compact ? 11 : 13} color="#9BA1A6" /> : <ChevronDown size={isTablet ? 15 : compact ? 11 : 13} color="#9BA1A6" />}
+        ) : null}
+        {expanded ? <ChevronUp size={fs(16)} color="#687076" /> : <ChevronDown size={fs(16)} color="#687076" />}
       </TouchableOpacity>
 
       {expanded && (
@@ -1220,15 +1112,12 @@ const OrderCardItem: React.FC<OrderCardProps> = ({
               </View>
             );
           })}
-          {(() => {
-            const cleanNote = getSanitizedOrderNotes(order.notes);
-            return cleanNote ? (
-              <View style={styles.noteRow}>
-                <Text style={[styles.noteLabel, isTablet && { fontSize: 12 }]}>Note: </Text>
-                <Text style={[styles.noteText, isTablet && { fontSize: 12 }]}>{cleanNote}</Text>
-              </View>
-            ) : null;
-          })()}
+          {orderNote ? (
+            <View style={styles.noteRow}>
+              <Text style={[styles.noteLabel, isTablet && { fontSize: 12 }]}>Note: </Text>
+              <Text style={[styles.noteText, isTablet && { fontSize: 12 }]}>{orderNote}</Text>
+            </View>
+          ) : null}
         </View>
       )}
 
@@ -1420,8 +1309,6 @@ export default function OrdersScreen() {
   const [orderToCancel, setOrderToCancel] = useState<Order | null>(null);
   const [deliveryTimeModalOpen, setDeliveryTimeModalOpen] = useState(false);
   const [deliveryTimeOrder, setDeliveryTimeOrder] = useState<Order | null>(null);
-  const [editingDeliveryTimeInput, setEditingDeliveryTimeInput] = useState('30');
-  const [savingDeliveryTime, setSavingDeliveryTime] = useState(false);
 
   const activeFilterCount = useMemo(() => {
     let count = 0;
@@ -1513,6 +1400,7 @@ export default function OrdersScreen() {
    */
   const pendingPatchesRef = useRef<Map<string, Partial<Order>>>(new Map());
   const recentMutationsRef = useRef<Map<string, number>>(new Map());
+  const isOwnerUser = useAuth().user?.userType !== 'super_admin';
   const [updatingIds, setUpdatingIds] = useState<Set<string>>(new Set());
   const isFocusedRef = useRef(false);
 
@@ -1788,6 +1676,8 @@ export default function OrdersScreen() {
       (!prevOrder?.acceptanceStatus || prevOrder.acceptanceStatus === 'pending')
     ) {
       (patch as any).acceptanceStatus = 'accepted';
+      // Start the expected-time countdown immediately; the server's acceptedAt replaces this on refresh.
+      if (!prevOrder?.acceptedAt) (patch as any).acceptedAt = new Date().toISOString();
     }
     const pType = String(prevOrder?.paymentType || (prevOrder as any)?.paymentMethod || '').toLowerCase();
     if (newStatus === 'delivered' && (pType === 'cash' || pType === 'cod')) {
@@ -1857,6 +1747,31 @@ export default function OrdersScreen() {
     }
   };
 
+  // Manual payment status (cash / pay at counter / POS card machine). Waits for the server so the
+  // badge never shows a state the server refused (e.g. orders paid online via Stripe).
+  const handleUpdatePaymentStatus = async (orderId: string, paymentStatus: ManualPaymentStatus) => {
+    const target = orders.find((o) => o._id === orderId) ?? (selectedOrder?._id === orderId ? selectedOrder : undefined);
+    const label = `#${target?.orderNumber || orderId.substring(0, 7).toUpperCase()}`;
+    try {
+      const res = await orderService.updatePaymentStatus(orderId, paymentStatus);
+      if (!res.success) {
+        showToast({ title: 'Payment not updated', message: res.message || 'Could not update the payment status.', type: 'error' });
+        return;
+      }
+      const patch: Partial<Order> = { paymentStatus: res.data?.paymentStatus ?? paymentStatus };
+      recentMutationsRef.current.set(orderId, Date.now());
+      setOrders((current) => current.map((o) => (o._id === orderId ? ({ ...o, ...patch } as Order) : o)));
+      setSelectedOrder((prev) => (prev && prev._id === orderId ? ({ ...prev, ...patch } as Order) : prev));
+      showToast({
+        title: 'Payment updated',
+        message: `${label} marked ${paymentStatus === 'pending' ? 'unpaid' : paymentStatus}.`,
+        type: 'success',
+      });
+    } catch (err: any) {
+      showToast({ title: 'Payment not updated', message: err?.message || 'Network error.', type: 'error' });
+    }
+  };
+
   const handleUpdateStatus = async (orderId: string, newStatus: string) => {
     if (newStatus === 'cancelled') {
       const target =
@@ -1911,45 +1826,7 @@ export default function OrdersScreen() {
 
   const handleOpenEditDeliveryTime = (order: Order) => {
     setDeliveryTimeOrder(order);
-    setEditingDeliveryTimeInput(String(order.expectedDeliveryTime || order.deliveryTime || 30));
     setDeliveryTimeModalOpen(true);
-  };
-
-  const handleSaveDeliveryTime = async (overrideMins?: number) => {
-    if (!deliveryTimeOrder) return;
-    const finalMins = overrideMins !== undefined ? overrideMins : parseInt(editingDeliveryTimeInput, 10);
-    if (isNaN(finalMins) || finalMins < 5 || finalMins > 300) {
-      showToast({ title: 'Invalid Time', message: 'Expected delivery time must be between 5 and 300 minutes.', type: 'error' });
-      return;
-    }
-
-    setSavingDeliveryTime(true);
-    try {
-      const res = await orderService.updateOrderDeliveryTime(deliveryTimeOrder._id, finalMins);
-      if (res.success) {
-        showToast({ title: 'Updated', message: `Expected delivery time set to ${finalMins} minutes.`, type: 'success' });
-        setOrders((prev) =>
-          prev.map((o) =>
-            o._id === deliveryTimeOrder._id
-              ? { ...o, deliveryTime: finalMins, expectedDeliveryTime: finalMins, ...(res.data || {}) }
-              : o
-          )
-        );
-        if (selectedOrder && selectedOrder._id === deliveryTimeOrder._id) {
-          setSelectedOrder((prev) =>
-            prev ? { ...prev, deliveryTime: finalMins, expectedDeliveryTime: finalMins, ...(res.data || {}) } : null
-          );
-        }
-        setDeliveryTimeModalOpen(false);
-        setDeliveryTimeOrder(null);
-      } else {
-        showToast({ title: 'Error', message: res.message || 'Failed to update expected delivery time.', type: 'error' });
-      }
-    } catch (err: any) {
-      showToast({ title: 'Error', message: err?.message || 'Error updating expected delivery time.', type: 'error' });
-    } finally {
-      setSavingDeliveryTime(false);
-    }
   };
 
   const handlePrintOrder = async (order: Order) => {
@@ -2123,6 +2000,18 @@ export default function OrdersScreen() {
               )}
             </TouchableOpacity>
           </View>
+
+          {/* Kitchen Mode — full-screen view for kitchen staff */}
+          <TouchableOpacity
+            style={[styles.kitchenModeBtn, isMobile && styles.kitchenModeBtnIconOnly]}
+            onPress={() => router.push('/kitchen')}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Open Kitchen Mode"
+          >
+            <ChefHat size={15} color="#FFFFFF" />
+            {!isMobile && <Text style={styles.kitchenModeBtnText}>Kitchen</Text>}
+          </TouchableOpacity>
         </View>
 
         {/* Active Filter Chips (if any filter is applied) */}
@@ -2229,315 +2118,97 @@ export default function OrdersScreen() {
     {/* Modals Layer */}
     <View pointerEvents="box-none" style={styles.modalsOverlayWrapper}>
 
-      {/* Comprehensive Filter Modal */}
-      <Modal
+      {/* Filter sheet (shared design with the Menu tab) */}
+      <FilterSheet
         visible={filterModalOpen}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setFilterModalOpen(false)}
+        onClose={() => setFilterModalOpen(false)}
+        title="Filter orders"
+        subtitle={`Showing ${filteredOrders.length} of ${orders.length} orders`}
+        activeCount={activeFilterCount}
+        onReset={resetAllFilters}
+        applyLabel={`Show ${filteredOrders.length} order${filteredOrders.length !== 1 ? 's' : ''}`}
       >
-        <View style={[styles.filterModalOverlay, isTablet && styles.modalOverlayTablet]}>
-          <TouchableOpacity
-            style={StyleSheet.absoluteFillObject}
-            activeOpacity={1}
-            onPress={() => setFilterModalOpen(false)}
+        <FilterSection title="Order status" hint="Kitchen & dispatch stage">
+          <FilterChips
+            accessibilityLabel="Order status"
+            value={activeTab}
+            onChange={setActiveTab}
+            options={STATUS_TABS.map((tab) => ({
+              value: tab.id,
+              label: tab.id === 'all' ? 'All' : tab.label,
+              count: tabCounts[tab.id] ?? 0,
+              accent: tab.id === 'all' ? undefined : tab.accentColor,
+            }))}
           />
+        </FilterSection>
 
-          <View style={[styles.filterModalContainer, isTablet && styles.filterModalContainerTablet]}>
-            {!isTablet && <View style={styles.filterDragHandle} />}
+        <FilterSection title="Order type" hint="How it's fulfilled">
+          <FilterChips
+            accessibilityLabel="Order type"
+            value={typeFilter}
+            onChange={setTypeFilter}
+            options={[
+              { value: 'all', label: 'All', count: filterCounts.total },
+              { value: 'delivery', label: 'Delivery', count: filterCounts.delivery, Icon: Bike },
+              { value: 'pickup', label: 'Self pickup', count: filterCounts.pickup, Icon: ShoppingBag },
+              { value: 'takeaway', label: 'Takeaway', count: filterCounts.takeaway, Icon: Package },
+              { value: 'dine_in', label: 'Dine-in', count: filterCounts.dineIn, Icon: UtensilsCrossed },
+            ]}
+          />
+        </FilterSection>
 
-            {/* Header */}
-            <View style={styles.filterModalHeader}>
-              <View style={styles.filterModalHeaderTitleRow}>
-                <View style={styles.filterModalIconCircle}>
-                  <SlidersHorizontal size={18} color="#FF5C39" />
-                </View>
-                <View>
-                  <Text style={styles.filterModalTitle}>Order Filters</Text>
-                  <Text style={styles.filterModalSubtitle}>
-                    Showing {filteredOrders.length} of {orders.length} orders
-                  </Text>
-                </View>
-              </View>
+        <FilterSection title="Timing" hint="ASAP or scheduled">
+          <FilterChips
+            accessibilityLabel="Timing"
+            value={scheduleFilter}
+            onChange={setScheduleFilter}
+            options={[
+              { value: 'all', label: 'All', count: filterCounts.total },
+              { value: 'asap', label: 'ASAP', count: filterCounts.asap, Icon: Zap },
+              { value: 'scheduled', label: 'Scheduled', count: filterCounts.scheduled, Icon: CalendarClock },
+            ]}
+          />
+        </FilterSection>
 
-              <View style={styles.filterModalHeaderActions}>
-                {activeFilterCount > 0 && (
-                  <TouchableOpacity
-                    style={styles.filterResetTextBtn}
-                    onPress={resetAllFilters}
-                    activeOpacity={0.7}
-                  >
-                    <RotateCcw size={12} color="#EF4444" />
-                    <Text style={styles.filterResetTextBtnLabel}>Reset</Text>
-                  </TouchableOpacity>
-                )}
-                <TouchableOpacity
-                  style={styles.filterModalCloseBtn}
-                  onPress={() => setFilterModalOpen(false)}
-                  activeOpacity={0.8}
-                >
-                  <X size={16} color="#64748B" />
-                </TouchableOpacity>
-              </View>
-            </View>
+        <FilterSection title="Sales channel" hint="Where it was placed">
+          <FilterChips
+            accessibilityLabel="Sales channel"
+            value={sourceFilter}
+            onChange={setSourceFilter}
+            options={[
+              { value: 'all', label: 'All', count: filterCounts.total },
+              { value: 'krifoo', label: 'Krifoo app', count: filterCounts.marketplace, Icon: Smartphone },
+              { value: 'external', label: 'Own website', count: filterCounts.external, Icon: Globe },
+            ]}
+          />
+        </FilterSection>
 
-            {/* Scrollable Filter Sections */}
-            <ScrollView
-              showsVerticalScrollIndicator={false}
-              contentContainerStyle={styles.filterModalBody}
-            >
-              {/* Section 1: Fulfillment Type */}
-              <View style={styles.filterSection}>
-                <View style={styles.filterSectionHeader}>
-                  <View style={styles.filterSectionTitleRow}>
-                    <Text style={styles.filterSectionTitle}>Fulfillment Type</Text>
-                  </View>
-                  <Text style={styles.filterSectionSubtitle}>Delivery, pickup, or eat-in</Text>
-                </View>
-                <View style={styles.filterGrid2}>
-                  {([
-                    { label: 'All Types', value: 'all', emoji: '📦', count: filterCounts.total, desc: 'Every order mode' },
-                    { label: 'Takeaway Order', value: 'takeaway', emoji: '🥡', count: filterCounts.takeaway, desc: 'Takeaway kiosk & app' },
-                    { label: 'Delivery', value: 'delivery', emoji: '🛵', count: filterCounts.delivery, desc: 'Rider doorstep delivery' },
-                    { label: 'Self Pickup', value: 'pickup', emoji: '🛍️', count: filterCounts.pickup, desc: 'Customer collection' },
-                    { label: 'Dine-In', value: 'dine_in', emoji: '🍽️', count: filterCounts.dineIn, desc: 'Table eat-in orders' },
-                  ] as const).map((opt) => {
-                    const isSelected = typeFilter === opt.value;
-                    return (
-                      <TouchableOpacity
-                        key={opt.value}
-                        style={[styles.filterOptionCard, isSelected && styles.filterOptionCardActive]}
-                        onPress={() => setTypeFilter(opt.value)}
-                        activeOpacity={0.75}
-                      >
-                        <Text style={styles.filterOptionCardEmoji}>{opt.emoji}</Text>
-                        <View style={{ flex: 1 }}>
-                          <Text style={[styles.filterOptionCardLabel, isSelected && styles.filterOptionCardLabelActive]}>
-                            {opt.label}
-                          </Text>
-                          <Text style={styles.filterOptionCardDesc} numberOfLines={1}>{opt.desc}</Text>
-                        </View>
-                        <View style={[styles.filterOptionCountBadge, isSelected && styles.filterOptionCountBadgeActive]}>
-                          <Text style={[styles.filterOptionCountText, isSelected && styles.filterOptionCountTextActive]}>
-                            {opt.count}
-                          </Text>
-                        </View>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              </View>
+        <FilterSection title="Payment method">
+          <FilterChips
+            accessibilityLabel="Payment method"
+            value={paymentFilter}
+            onChange={setPaymentFilter}
+            options={[
+              { value: 'all', label: 'All', count: filterCounts.total },
+              { value: 'cash', label: 'Cash', count: filterCounts.cash, Icon: Banknote },
+              { value: 'card', label: 'Card / online', count: filterCounts.card, Icon: CreditCard },
+            ]}
+          />
+        </FilterSection>
 
-              {/* Section 2: Order Timing (Scheduled vs ASAP) */}
-              <View style={styles.filterSection}>
-                <View style={styles.filterSectionHeader}>
-                  <View style={styles.filterSectionTitleRow}>
-                    <Text style={styles.filterSectionTitle}>Order Timing</Text>
-                  </View>
-                  <Text style={styles.filterSectionSubtitle}>Immediate vs scheduled slots</Text>
-                </View>
-                <View style={styles.filterGrid2}>
-                  {([
-                    { label: 'All Timings', value: 'all' as const, emoji: '⚡', count: filterCounts.total, desc: 'ASAP & scheduled' },
-                    { label: 'Scheduled Orders', value: 'scheduled' as const, emoji: '⏰', count: filterCounts.scheduled, desc: 'Future date/slot bookings' },
-                    { label: 'Immediate / ASAP', value: 'asap' as const, emoji: '🔥', count: filterCounts.asap, desc: 'Cook and dispatch now' },
-                  ]).map((opt) => {
-                    const isSelected = scheduleFilter === opt.value;
-                    return (
-                      <TouchableOpacity
-                        key={opt.value}
-                        style={[styles.filterOptionCard, isSelected && styles.filterOptionCardActive]}
-                        onPress={() => setScheduleFilter(opt.value)}
-                        activeOpacity={0.75}
-                      >
-                        <Text style={styles.filterOptionCardEmoji}>{opt.emoji}</Text>
-                        <View style={{ flex: 1 }}>
-                          <Text style={[styles.filterOptionCardLabel, isSelected && styles.filterOptionCardLabelActive]}>
-                            {opt.label}
-                          </Text>
-                          <Text style={styles.filterOptionCardDesc} numberOfLines={1}>{opt.desc}</Text>
-                        </View>
-                        <View style={[styles.filterOptionCountBadge, isSelected && styles.filterOptionCountBadgeActive]}>
-                          <Text style={[styles.filterOptionCountText, isSelected && styles.filterOptionCountTextActive]}>
-                            {opt.count}
-                          </Text>
-                        </View>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              </View>
-
-              {/* Section 3: Sales Channel */}
-              <View style={styles.filterSection}>
-                <View style={styles.filterSectionHeader}>
-                  <View style={styles.filterSectionTitleRow}>
-                    <Text style={styles.filterSectionTitle}>Sales Channel</Text>
-                  </View>
-                  <Text style={styles.filterSectionSubtitle}>Origin of order</Text>
-                </View>
-                <View style={styles.filterGrid2}>
-                  {([
-                    { label: 'All Channels', value: 'all' as const, emoji: '🌐', count: filterCounts.total, desc: 'All sources' },
-                    { label: 'Marketplace', value: 'krifoo' as const, emoji: '📱', count: filterCounts.marketplace, desc: 'krifoo.co.uk App' },
-                    { label: 'External Website', value: 'external' as const, emoji: '💻', count: filterCounts.external, desc: 'Branded website orders' },
-                  ]).map((opt) => {
-                    const isSelected = sourceFilter === opt.value;
-                    return (
-                      <TouchableOpacity
-                        key={opt.value}
-                        style={[styles.filterOptionCard, isSelected && styles.filterOptionCardActive]}
-                        onPress={() => setSourceFilter(opt.value)}
-                        activeOpacity={0.75}
-                      >
-                        <Text style={styles.filterOptionCardEmoji}>{opt.emoji}</Text>
-                        <View style={{ flex: 1 }}>
-                          <Text style={[styles.filterOptionCardLabel, isSelected && styles.filterOptionCardLabelActive]}>
-                            {opt.label}
-                          </Text>
-                          <Text style={styles.filterOptionCardDesc} numberOfLines={1}>{opt.desc}</Text>
-                        </View>
-                        <View style={[styles.filterOptionCountBadge, isSelected && styles.filterOptionCountBadgeActive]}>
-                          <Text style={[styles.filterOptionCountText, isSelected && styles.filterOptionCountTextActive]}>
-                            {opt.count}
-                          </Text>
-                        </View>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              </View>
-
-              {/* Section 4: Payment Method */}
-              <View style={styles.filterSection}>
-                <View style={styles.filterSectionHeader}>
-                  <View style={styles.filterSectionTitleRow}>
-                    <Text style={styles.filterSectionTitle}>Payment Method</Text>
-                  </View>
-                  <Text style={styles.filterSectionSubtitle}>Cash vs Card/Online</Text>
-                </View>
-                <View style={styles.filterGrid2}>
-                  {([
-                    { label: 'All Methods', value: 'all' as const, emoji: '💰', count: filterCounts.total, desc: 'Cash and Card' },
-                    { label: 'Cash / COD', value: 'cash' as const, emoji: '💵', count: filterCounts.cash, desc: 'Pay on delivery/counter' },
-                    { label: 'Card / Online', value: 'card' as const, emoji: '💳', count: filterCounts.card, desc: 'Stripe or digital cards' },
-                  ]).map((opt) => {
-                    const isSelected = paymentFilter === opt.value;
-                    return (
-                      <TouchableOpacity
-                        key={opt.value}
-                        style={[styles.filterOptionCard, isSelected && styles.filterOptionCardActive]}
-                        onPress={() => setPaymentFilter(opt.value)}
-                        activeOpacity={0.75}
-                      >
-                        <Text style={styles.filterOptionCardEmoji}>{opt.emoji}</Text>
-                        <View style={{ flex: 1 }}>
-                          <Text style={[styles.filterOptionCardLabel, isSelected && styles.filterOptionCardLabelActive]}>
-                            {opt.label}
-                          </Text>
-                          <Text style={styles.filterOptionCardDesc} numberOfLines={1}>{opt.desc}</Text>
-                        </View>
-                        <View style={[styles.filterOptionCountBadge, isSelected && styles.filterOptionCountBadgeActive]}>
-                          <Text style={[styles.filterOptionCountText, isSelected && styles.filterOptionCountTextActive]}>
-                            {opt.count}
-                          </Text>
-                        </View>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              </View>
-
-              {/* Section 5: Payment Status */}
-              <View style={styles.filterSection}>
-                <View style={styles.filterSectionHeader}>
-                  <View style={styles.filterSectionTitleRow}>
-                    <Text style={styles.filterSectionTitle}>Payment Status</Text>
-                  </View>
-                  <Text style={styles.filterSectionSubtitle}>Settlement status</Text>
-                </View>
-                <View style={styles.filterChipsWrap}>
-                  {([
-                    { label: 'All Statuses', value: 'all' as const },
-                    { label: 'Paid ✅', value: 'paid' as const },
-                    { label: 'Pending ⏳', value: 'pending' as const },
-                  ]).map((opt) => {
-                    const isSelected = paymentStatusFilter === opt.value;
-                    return (
-                      <TouchableOpacity
-                        key={opt.value}
-                        style={[styles.filterChip, isSelected && styles.filterChipActive]}
-                        onPress={() => setPaymentStatusFilter(opt.value)}
-                        activeOpacity={0.75}
-                      >
-                        <Text style={[styles.filterChipText, isSelected && styles.filterChipTextActive]}>
-                          {opt.label}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              </View>
-
-              {/* Section 6: Order Status */}
-              <View style={styles.filterSection}>
-                <View style={styles.filterSectionHeader}>
-                  <View style={styles.filterSectionTitleRow}>
-                    <Text style={styles.filterSectionTitle}>Order Status</Text>
-                  </View>
-                  <Text style={styles.filterSectionSubtitle}>Stage in kitchen / dispatch workflow</Text>
-                </View>
-                <View style={styles.filterChipsWrap}>
-                  {STATUS_TABS.map((tab) => {
-                    const isSelected = activeTab === tab.id;
-                    const count = tabCounts[tab.id] ?? 0;
-                    return (
-                      <TouchableOpacity
-                        key={tab.id}
-                        style={[
-                          styles.filterChip,
-                          isSelected && { borderColor: tab.accentColor, backgroundColor: `${tab.accentColor}12` },
-                        ]}
-                        onPress={() => setActiveTab(tab.id)}
-                        activeOpacity={0.75}
-                      >
-                        <Text
-                          style={[
-                            styles.filterChipText,
-                            isSelected && { color: tab.accentColor, fontWeight: '800' },
-                          ]}
-                        >
-                          {tab.label} ({count})
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              </View>
-            </ScrollView>
-
-            {/* Sticky Action Footer */}
-            <View style={styles.filterModalFooter}>
-              <TouchableOpacity
-                style={styles.filterFooterResetBtn}
-                onPress={resetAllFilters}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.filterFooterResetBtnText}>Reset All</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.filterFooterApplyBtn}
-                onPress={() => setFilterModalOpen(false)}
-                activeOpacity={0.85}
-              >
-                <Text style={styles.filterFooterApplyBtnText}>
-                  Show {filteredOrders.length} Order{filteredOrders.length !== 1 ? 's' : ''}
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
+        <FilterSection title="Payment status">
+          <FilterChips
+            accessibilityLabel="Payment status"
+            value={paymentStatusFilter}
+            onChange={setPaymentStatusFilter}
+            options={[
+              { value: 'all', label: 'All' },
+              { value: 'paid', label: 'Paid', dotColor: '#16A34A' },
+              { value: 'pending', label: 'Unpaid', dotColor: '#F59E0B' },
+            ]}
+          />
+        </FilterSection>
+      </FilterSheet>
 
       {/* Dateframe Selection Modal */}
       <Modal
@@ -3059,6 +2730,7 @@ export default function OrdersScreen() {
                   onPress={(o) => { setSelectedOrder(o); setDetailModalVisible(true); }}
                   onAssignDelivery={(o) => { setSelectedOrder(o); setAssignModalVisible(true); }}
                   onUpdateStatus={handleUpdateStatus}
+                  onMarkPaid={isOwnerUser ? (o) => handleUpdatePaymentStatus(o._id, 'paid') : undefined}
                   onPrint={handlePrintOrder}
                   onEditDeliveryTime={handleOpenEditDeliveryTime}
                   paperRollSize={paperRollSize}
@@ -3177,6 +2849,7 @@ export default function OrdersScreen() {
                         onPress={(o) => { setSelectedOrder(o); setDetailModalVisible(true); }}
                         onAssignDelivery={(o) => { setSelectedOrder(o); setAssignModalVisible(true); }}
                         onUpdateStatus={handleUpdateStatus}
+                        onMarkPaid={isOwnerUser ? (o) => handleUpdatePaymentStatus(o._id, 'paid') : undefined}
                         onPrint={handlePrintOrder}
                         onEditDeliveryTime={handleOpenEditDeliveryTime}
                         paperRollSize={paperRollSize}
@@ -3199,6 +2872,7 @@ export default function OrdersScreen() {
         onClose={() => setDetailModalVisible(false)}
         onAssignDelivery={(o) => { setSelectedOrder(o); setAssignModalVisible(true); }}
         onUpdateStatus={handleUpdateStatus}
+        onUpdatePaymentStatus={isOwnerUser ? handleUpdatePaymentStatus : undefined}
         onCancelOrder={async (orderId) => {
           await executeUpdateStatus(orderId, 'cancelled');
         }}
@@ -3236,150 +2910,19 @@ export default function OrdersScreen() {
         }}
       />
 
-      {/* Edit Expected Delivery Time Modal */}
-      <Modal
+      {/* Edit Expected Time (shared with the order details screen) */}
+      <EditExpectedTimeModal
         visible={deliveryTimeModalOpen}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => {
-          if (!savingDeliveryTime) {
-            setDeliveryTimeModalOpen(false);
-            setDeliveryTimeOrder(null);
-          }
+        order={deliveryTimeOrder}
+        onClose={() => {
+          setDeliveryTimeModalOpen(false);
+          setDeliveryTimeOrder(null);
         }}
-      >
-        <TouchableOpacity
-          style={[styles.dropdownOverlay, isTablet && styles.modalOverlayTablet]}
-          activeOpacity={1}
-          onPress={() => {
-            if (!savingDeliveryTime) {
-              setDeliveryTimeModalOpen(false);
-              setDeliveryTimeOrder(null);
-            }
-          }}
-        >
-          <TouchableOpacity
-            activeOpacity={1}
-            style={[styles.dtModalContainer, isTablet && styles.dtModalContainerTablet]}
-          >
-            {/* Header */}
-            <View style={styles.dtModalHeader}>
-              <View style={{ flex: 1 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  <Clock size={18} color="#2563EB" />
-                  <Text style={styles.dtModalTitle}>Expected Delivery Time</Text>
-                </View>
-                {deliveryTimeOrder && (
-                  <Text style={styles.dtModalSubtitle} numberOfLines={1}>
-                    Order #{deliveryTimeOrder.orderNumber || deliveryTimeOrder._id?.substring(0, 7).toUpperCase()} • {getCustomerName(deliveryTimeOrder)}
-                  </Text>
-                )}
-              </View>
-              <TouchableOpacity
-                onPress={() => {
-                  if (!savingDeliveryTime) {
-                    setDeliveryTimeModalOpen(false);
-                    setDeliveryTimeOrder(null);
-                  }
-                }}
-                style={styles.dtModalCloseBtn}
-                disabled={savingDeliveryTime}
-              >
-                <X size={18} color="#64748B" />
-              </TouchableOpacity>
-            </View>
-
-            {/* Body */}
-            <View style={styles.dtModalBody}>
-              <Text style={styles.dtSectionLabel}>Set Delivery Time (Minutes)</Text>
-
-              {/* Number Input with Stepper */}
-              <View style={styles.dtInputRow}>
-                <TouchableOpacity
-                  style={styles.dtStepperBtn}
-                  onPress={() => {
-                    const current = parseInt(editingDeliveryTimeInput, 10) || 30;
-                    setEditingDeliveryTimeInput(String(Math.max(5, current - 5)));
-                  }}
-                  disabled={savingDeliveryTime}
-                >
-                  <Minus size={18} color="#1E293B" />
-                </TouchableOpacity>
-
-                <View style={styles.dtInputWrapper}>
-                  <TextInput
-                    style={styles.dtNumberInput}
-                    keyboardType="numeric"
-                    value={editingDeliveryTimeInput}
-                    onChangeText={setEditingDeliveryTimeInput}
-                    editable={!savingDeliveryTime}
-                    selectTextOnFocus
-                  />
-                  <Text style={styles.dtInputSuffix}>mins</Text>
-                </View>
-
-                <TouchableOpacity
-                  style={styles.dtStepperBtn}
-                  onPress={() => {
-                    const current = parseInt(editingDeliveryTimeInput, 10) || 30;
-                    setEditingDeliveryTimeInput(String(Math.min(300, current + 5)));
-                  }}
-                  disabled={savingDeliveryTime}
-                >
-                  <Plus size={18} color="#1E293B" />
-                </TouchableOpacity>
-              </View>
-
-              {/* Quick Presets */}
-              <Text style={[styles.dtSectionLabel, { marginTop: 14 }]}>Quick Presets</Text>
-              <View style={styles.dtPresetsRow}>
-                {[15, 20, 30, 45, 60].map((mins) => {
-                  const isSelected = editingDeliveryTimeInput === String(mins);
-                  return (
-                    <TouchableOpacity
-                      key={mins}
-                      style={[styles.dtPresetPill, isSelected && styles.dtPresetPillActive]}
-                      onPress={() => setEditingDeliveryTimeInput(String(mins))}
-                      disabled={savingDeliveryTime}
-                    >
-                      <Text style={[styles.dtPresetPillText, isSelected && styles.dtPresetPillTextActive]}>
-                        {mins}m
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-
-            </View>
-
-            {/* Footer */}
-            <View style={styles.dtModalFooter}>
-              <TouchableOpacity
-                style={styles.dtCancelBtn}
-                onPress={() => {
-                  setDeliveryTimeModalOpen(false);
-                  setDeliveryTimeOrder(null);
-                }}
-                disabled={savingDeliveryTime}
-              >
-                <Text style={styles.dtCancelBtnText}>Cancel</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.dtSaveBtn, savingDeliveryTime && { opacity: 0.7 }]}
-                onPress={() => handleSaveDeliveryTime()}
-                disabled={savingDeliveryTime}
-              >
-                {savingDeliveryTime ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
-                ) : (
-                  <Text style={styles.dtSaveBtnText}>Save Time</Text>
-                )}
-              </TouchableOpacity>
-            </View>
-          </TouchableOpacity>
-        </TouchableOpacity>
-      </Modal>
+        onSaved={(orderId, patch) => {
+          setOrders((prev) => prev.map((o) => (o._id === orderId ? ({ ...o, ...patch } as Order) : o)));
+          setSelectedOrder((prev) => (prev && prev._id === orderId ? ({ ...prev, ...patch } as Order) : prev));
+        }}
+      />
     </SafeAreaView>
   );
 }
@@ -3435,193 +2978,6 @@ const styles = StyleSheet.create({
     fontSize: 10.5,
     fontWeight: '700',
     color: '#334155',
-  },
-  dtModalContainer: {
-    width: '100%',
-    backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    borderBottomLeftRadius: 0,
-    borderBottomRightRadius: 0,
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 16,
-    elevation: 10,
-    paddingBottom: Platform.OS === 'ios' ? 24 : 10,
-  },
-  dtModalContainerTablet: {
-    width: '90%',
-    maxWidth: 460,
-    borderRadius: 16,
-    alignSelf: 'center',
-    marginBottom: 'auto',
-    marginTop: 'auto',
-    paddingBottom: 0,
-  },
-  dtModalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 18,
-    paddingTop: 16,
-    paddingBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
-  },
-  dtModalTitle: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: '#0F172A',
-  },
-  dtModalSubtitle: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: '#64748B',
-    marginTop: 2,
-  },
-  dtModalCloseBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#F1F5F9',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  dtModalBody: {
-    padding: 18,
-  },
-  dtSectionLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#64748B',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginBottom: 8,
-  },
-  dtInputRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 12,
-    marginVertical: 4,
-  },
-  dtStepperBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 10,
-    backgroundColor: '#F1F5F9',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  dtInputWrapper: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F8FAFC',
-    borderWidth: 1.5,
-    borderColor: '#CBD5E1',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    height: 48,
-    minWidth: 130,
-    justifyContent: 'center',
-  },
-  dtNumberInput: {
-    fontSize: 22,
-    fontWeight: '800',
-    color: '#0F172A',
-    textAlign: 'center',
-    padding: 0,
-    minWidth: 45,
-  },
-  dtInputSuffix: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#64748B',
-    marginLeft: 6,
-  },
-  dtPresetsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    width: '100%',
-  },
-  dtPresetPill: {
-    flex: 1,
-    paddingVertical: 10,
-    borderRadius: 8,
-    backgroundColor: '#F1F5F9',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  dtPresetPillActive: {
-    backgroundColor: '#2563EB',
-    borderColor: '#2563EB',
-  },
-  dtPresetPillText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#334155',
-  },
-  dtPresetPillTextActive: {
-    color: '#FFFFFF',
-    fontWeight: '800',
-  },
-  dtAdjustPill: {
-    flex: 1,
-    paddingVertical: 9,
-    borderRadius: 8,
-    backgroundColor: '#EFF6FF',
-    borderWidth: 1,
-    borderColor: '#BFDBFE',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  dtAdjustPillText: {
-    fontSize: 12.5,
-    fontWeight: '700',
-    color: '#1D4ED8',
-  },
-  dtModalFooter: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-    gap: 10,
-    paddingHorizontal: 18,
-    paddingVertical: 14,
-    borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
-    backgroundColor: '#F8FAFC',
-  },
-  dtCancelBtn: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 10,
-    backgroundColor: '#E2E8F0',
-  },
-  dtCancelBtnText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#475569',
-  },
-  dtSaveBtn: {
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 10,
-    backgroundColor: '#2563EB',
-    minWidth: 100,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  dtSaveBtnText: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#FFFFFF',
   },
   stickySearchWrapper: {
     zIndex: 20,
@@ -3682,6 +3038,18 @@ const styles = StyleSheet.create({
   liveText: { fontSize: 11, fontWeight: '700', color: '#065F46' },
   pageSubtitle: { fontSize: 12, color: '#9BA1A6', marginTop: 2 },
   headerRightControls: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  kitchenModeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#11181C',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    minHeight: 44,
+  },
+  kitchenModeBtnIconOnly: { width: 44, paddingHorizontal: 0 },
+  kitchenModeBtnText: { color: '#FFFFFF', fontSize: 13, fontWeight: '700' },
   viewToggleContainer: {
     flexDirection: 'row', backgroundColor: '#F1F3F5', borderRadius: 12, padding: 4, gap: 2,
     borderWidth: 1, borderColor: '#EEEEEE',
@@ -3872,222 +3240,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#EF4444',
   },
-  filterModalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'flex-end',
-  },
-  filterModalContainer: {
-    backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    maxHeight: '88%',
-    display: 'flex',
-    flexDirection: 'column',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.16,
-    shadowRadius: 16,
-    elevation: 16,
-  },
-  filterModalContainerTablet: {
-    borderRadius: 24,
-    maxWidth: 620,
-    alignSelf: 'center',
-    maxHeight: '85%',
-    width: '100%',
-  },
-  filterDragHandle: {
-    width: 36,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: '#E2E8F0',
-    alignSelf: 'center',
-    marginTop: 10,
-    marginBottom: 4,
-  },
-  filterModalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingTop: 12,
-    paddingBottom: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
-  },
-  filterModalHeaderTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    flex: 1,
-  },
-  filterModalIconCircle: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#FFF4F2',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  filterModalTitle: {
-    fontSize: 17,
-    fontWeight: '800',
-    color: '#0F172A',
-    letterSpacing: -0.3,
-  },
-  filterModalSubtitle: {
-    fontSize: 11.5,
-    color: '#64748B',
-    marginTop: 1,
-    fontWeight: '500',
-  },
-  filterModalHeaderActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  filterResetTextBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 5,
-    borderRadius: 6,
-    backgroundColor: '#FEF2F2',
-  },
-  filterResetTextBtnLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#EF4444',
-  },
-  filterModalCloseBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#F1F5F9',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  filterModalBody: {
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 20,
-  },
-  filterSection: {
-    marginBottom: 20,
-  },
-  filterSectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 10,
-  },
-  filterSectionTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  filterSectionTitle: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#1E293B',
-    textTransform: 'uppercase',
-    letterSpacing: 0.4,
-  },
-  filterSectionSubtitle: {
-    fontSize: 11,
-    color: '#94A3B8',
-    fontWeight: '500',
-  },
-  filterGrid2: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  filterOptionCard: {
-    flex: 1,
-    minWidth: '47%',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 12,
-    borderWidth: 1.5,
-    borderColor: '#E2E8F0',
-    backgroundColor: '#F8FAFC',
-  },
-  filterOptionCardActive: {
-    borderColor: '#FF5C39',
-    backgroundColor: '#FFF4F2',
-  },
-  filterOptionCardEmoji: {
-    fontSize: 16,
-  },
-  filterOptionCardLabel: {
-    fontSize: 12.5,
-    fontWeight: '700',
-    color: '#1E293B',
-  },
-  filterOptionCardLabelActive: {
-    color: '#FF5C39',
-    fontWeight: '800',
-  },
-  filterOptionCardDesc: {
-    fontSize: 10,
-    color: '#94A3B8',
-    marginTop: 1,
-  },
-  filterOptionCountBadge: {
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-    borderRadius: 8,
-    backgroundColor: '#E2E8F0',
-    minWidth: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  filterOptionCountBadgeActive: {
-    backgroundColor: '#FED7AA',
-  },
-  filterOptionCountText: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#64748B',
-  },
-  filterOptionCountTextActive: {
-    color: '#C2410C',
-  },
-  filterChipsWrap: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 7,
-  },
-  filterChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 20,
-    borderWidth: 1.5,
-    borderColor: '#E2E8F0',
-    backgroundColor: '#F8FAFC',
-  },
-  filterChipActive: {
-    borderColor: '#FF5C39',
-    backgroundColor: '#FFF4F2',
-  },
-  filterChipText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#475569',
-  },
-  filterChipTextActive: {
-    color: '#FF5C39',
-    fontWeight: '800',
-  },
   inlineCustomDateBox: {
     marginTop: 10,
     padding: 12,
@@ -4099,51 +3251,6 @@ const styles = StyleSheet.create({
   inlineDateRow: {
     flexDirection: 'row',
     gap: 10,
-  },
-  filterModalFooter: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingHorizontal: 20,
-    paddingTop: 12,
-    paddingBottom: Platform.OS === 'ios' ? 28 : 16,
-    borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
-    backgroundColor: '#FFFFFF',
-  },
-  filterFooterResetBtn: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 12,
-    borderWidth: 1.5,
-    borderColor: '#E2E8F0',
-    backgroundColor: '#F8FAFC',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  filterFooterResetBtnText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#64748B',
-  },
-  filterFooterApplyBtn: {
-    flex: 1,
-    paddingVertical: 13,
-    borderRadius: 12,
-    backgroundColor: '#FF5C39',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#FF5C39',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  filterFooterApplyBtnText: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#FFFFFF',
-    letterSpacing: 0.2,
   },
   dropdownOverlay: {
     flex: 1,
@@ -4427,13 +3534,81 @@ const styles = StyleSheet.create({
   emptyColumnText: { fontSize: 12, color: '#C4C9CE', textAlign: 'center', marginTop: 4 },
   kanbanCardList: { padding: 10, gap: 10 },
 
+  /* ── Order card (redesign) ─────────────────────────────── */
+  ocHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  ocHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 },
+  ocOrderId: { fontWeight: '800', color: '#11181C', letterSpacing: -0.3, flexShrink: 1 },
+  ocStatusChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    borderWidth: 1,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    flexShrink: 1,
+  },
+  ocStatusDot: { width: 7, height: 7, borderRadius: 4 },
+  ocStatusText: { fontWeight: '700' },
+  ocAmount: { fontWeight: '800', color: '#11181C', fontVariant: ['tabular-nums'] },
+  ocChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 },
+  ocChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    maxWidth: '100%',
+  },
+  ocChipShrink: { flexShrink: 1 },
+  ocMarkPaidBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    minHeight: 28,
+    paddingHorizontal: 9,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#6EE7B7',
+    backgroundColor: '#FFFFFF',
+  },
+  ocMarkPaidText: { fontWeight: '800', color: '#047857' },
+  ocChipText: { fontWeight: '700', flexShrink: 1 },
+  ocMeta: { color: '#687076', fontWeight: '500', marginTop: 8 },
+  ocDivider: { height: 1, marginVertical: 12 },
+  ocCustomerRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  ocAvatar: { backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#E5E7EB' },
+  ocAvatarText: { color: '#FF5C39', fontWeight: '800' },
+  ocFlex: { flex: 1, minWidth: 0 },
+  ocCustomerName: { color: '#11181C', fontWeight: '700' },
+  ocCustomerPhone: { color: '#687076', fontWeight: '500', marginTop: 1 },
+  ocInfoRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginTop: 8 },
+  ocInfoIcon: { marginTop: 1 },
+  ocInfoText: { flex: 1, color: '#374151', fontWeight: '500', lineHeight: 18 },
+  ocInfoStrong: { color: '#11181C', fontWeight: '700' },
+  ocTimingRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 12 },
+  ocEditBtn: { paddingHorizontal: 4, paddingVertical: 2 },
+  ocEditBtnText: { color: '#FF5C39', fontWeight: '700' },
+  ocItemsToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 12,
+    paddingTop: 10,
+    borderTopWidth: 1,
+  },
+  ocItemsPreview: { flex: 1, color: '#11181C', fontWeight: '600', lineHeight: 18 },
+  ocNoteFlag: { backgroundColor: '#FEF3C7', borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 },
+  ocNoteFlagText: { color: '#92400E', fontWeight: '800', letterSpacing: 0.5 },
+
   kanbanCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 16,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: '#EEEEEE',
     padding: 14,
-    paddingTop: 18,
     shadowColor: '#000',
     shadowOpacity: 0.05,
     shadowRadius: 10,
@@ -4441,17 +3616,6 @@ const styles = StyleSheet.create({
     elevation: 1,
     position: 'relative',
     overflow: 'hidden',
-  },
-  cardTopStatusStrip: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    height: 5,
-    zIndex: 1,
-  },
-  cardTopStatusStripTablet: {
-    height: 6,
   },
   kanbanCardTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
   kanbanOrderIdCol: { gap: 2 },
@@ -4484,7 +3648,7 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     gap: 8,
     borderRadius: 10,
-    backgroundColor: '#F8FAFF',
+    backgroundColor: '#FFFFFF',
   },
   addressPinIcon: {
     marginTop: 2,
@@ -4559,7 +3723,7 @@ const styles = StyleSheet.create({
   orderTypeText: { fontSize: 10, fontWeight: '800', letterSpacing: 0.4 },
   viewItemsBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 4, paddingVertical: 10, borderTopWidth: 1, borderTopColor: '#F0F0F0' },
   viewItemsBtnText: { fontSize: 11, fontWeight: '800', color: '#687076', letterSpacing: 0.4 },
-  itemsList: { marginTop: 2, marginBottom: 4, gap: 8, padding: 12, borderRadius: 12, backgroundColor: '#F8F9FA' },
+  itemsList: { marginTop: 2, marginBottom: 4, gap: 8, padding: 12, borderRadius: 12, backgroundColor: '#FFFFFF' },
   itemRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
   itemQty: { fontSize: 13, fontWeight: '800', color: '#FF5C39', width: 26 },
   itemName: { flex: 1, fontSize: 13, fontWeight: '600', color: '#11181C' },
@@ -4707,8 +3871,7 @@ const styles = StyleSheet.create({
   },
   kanbanCardTablet: {
     padding: 18,
-    paddingTop: 22,
-    borderRadius: 18,
+    borderRadius: 8,
   },
   kanbanOrderIdTablet: {
     fontSize: 18,
@@ -5411,8 +4574,7 @@ const styles = StyleSheet.create({
   },
   kanbanCardCompact: {
     padding: 7,
-    paddingTop: 10,
-    borderRadius: 8,
+    borderRadius: 4,
     overflow: 'hidden',
   },
 

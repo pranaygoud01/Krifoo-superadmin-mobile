@@ -319,9 +319,9 @@ export function generateThermalReceiptHtml(
     ${totals.tax > 0 ? row(content.showItemTaxBreakdown && (content.taxPercentage ?? 20) > 0 ? `Tax / VAT (${content.taxPercentage ?? 20}%)` : 'Tax / VAT', formatMoney(totals.tax)) : ''}
     ${totals.tip > 0 ? row('Tip', formatMoney(totals.tip)) : ''}
     ${content.showDiscountLine && totals.discount > 0 ? row('Discount', formatMoney(-totals.discount)) : ''}
-    <div class="divider-double"></div>
+    ${content.showTotal !== false ? `<div class="divider-double"></div>
     <div class="total-row"><span>TOTAL</span><span>${esc(formatMoney(totals.total))}</span></div>
-    ${totals.includedVat ? row(totals.includedVat.label, formatMoney(totals.includedVat.amount)) : ''}
+    ${totals.includedVat ? row(totals.includedVat.label, formatMoney(totals.includedVat.amount)) : ''}` : ''}
     <div class="divider-double"></div>
     ${content.showPaymentMethod ? `<div class="center" style="font-weight:700;margin:4px 0;">PAYMENT: ${esc(payment.label)}</div>` : ''}
   </div>

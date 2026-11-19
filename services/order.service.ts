@@ -3,6 +3,8 @@ import { apiRequest } from './api';
 import { STORAGE_KEYS } from '../constants/config';
 import { Order } from '../types';
 
+export type ManualPaymentStatus = 'pending' | 'paid' | 'failed' | 'refunded';
+
 async function getUserContext(): Promise<{ isOwner: boolean; restaurantId: string | null }> {
   try {
     const userStr = await AsyncStorage.getItem(STORAGE_KEYS.ADMIN_USER);
@@ -190,9 +192,20 @@ export const orderService = {
   },
 
   /**
-   * GET restaurant dashboard stats.
-   * Restaurant Owner only.
+   * Manually set an order's payment status (cash, pay at counter, POS card machine).
+   * Restaurant Owner only. The server refuses orders paid online via Stripe.
+   * PATCH /api/orders/:orderId/payment-status  (body: { paymentStatus })
    */
+  async updatePaymentStatus(
+    orderId: string,
+    paymentStatus: ManualPaymentStatus
+  ): Promise<{ success: boolean; message?: string; data?: Order }> {
+    return apiRequest(`/api/orders/${orderId}/payment-status`, {
+      method: 'PATCH',
+      body: { paymentStatus },
+    });
+  },
+
   /**
    * Update expected delivery time for an order.
    * If Super Admin: calls PATCH /api/admin/orders/:orderId/delivery-time

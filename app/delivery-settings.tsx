@@ -20,6 +20,7 @@ import {
   useFormLayout,
   useUnsavedChangesGuard,
 } from '../components/settings/FormKit';
+import { KEYBOARD_BEHAVIOR } from '../utils/keyboard';
 
 /**
  * Standard (Krifoo platform) delivery settings for a restaurant owner.
@@ -160,7 +161,7 @@ export default function DeliverySettingsScreen() {
   }, [canPreview, free, max, rate]);
 
   return (
-    <KeyboardAvoidingView style={formStyles.screen} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoidingView style={formStyles.screen} behavior={KEYBOARD_BEHAVIOR}>
       <ScreenHeader title="Delivery settings" subtitle="Krifoo app delivery area and fees" />
 
       {loading ? (

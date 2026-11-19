@@ -17,6 +17,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { X } from 'lucide-react-native';
 import { Colors } from '../../constants/colors';
+import { KEYBOARD_BEHAVIOR } from '../../utils/keyboard';
 
 export function BottomSheet({
   visible,
@@ -39,7 +40,7 @@ export function BottomSheet({
 
   return (
     <Modal visible={visible} transparent animationType={isTablet ? 'fade' : 'slide'} onRequestClose={onClose} statusBarTranslucent>
-      <KeyboardAvoidingView style={[styles.backdrop, isTablet && styles.backdropTablet]} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+      <KeyboardAvoidingView style={[styles.backdrop, isTablet && styles.backdropTablet, { paddingTop: insets.top + 8 }]} behavior={KEYBOARD_BEHAVIOR}>
         <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={onClose} accessibilityLabel="Close" />
         <View style={[styles.sheet, isTablet && styles.sheetTablet, { maxHeight: height * (isTablet ? 0.88 : 0.92) }]}>
           {!isTablet && <View style={styles.handle} />}
@@ -66,14 +67,15 @@ const styles = StyleSheet.create({
   flex: { flex: 1, minWidth: 0 },
   backdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(15, 23, 42, 0.45)' },
   backdropTablet: { justifyContent: 'center', alignItems: 'center', padding: 24 },
-  sheet: { backgroundColor: Colors.background, borderTopLeftRadius: 22, borderTopRightRadius: 22, overflow: 'hidden' },
+  // flexShrink: when the keyboard lifts the sheet, it shrinks (body scrolls) instead of running off the top.
+  sheet: { flexShrink: 1, backgroundColor: Colors.background, borderTopLeftRadius: 22, borderTopRightRadius: 22, overflow: 'hidden' },
   sheetTablet: { width: 560, maxWidth: '100%', borderRadius: 20 },
   handle: { alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: Colors.cardBorder, marginTop: 10 },
   header: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, paddingHorizontal: 20, paddingTop: 14, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: Colors.cardBorder },
   title: { fontSize: 18, fontWeight: '800', color: Colors.text, letterSpacing: -0.2 },
   subtitle: { fontSize: 13, color: Colors.textMuted, marginTop: 2 },
   close: { width: 34, height: 34, borderRadius: 17, backgroundColor: Colors.cardSurface, alignItems: 'center', justifyContent: 'center' },
-  body: { flexGrow: 0 },
+  body: { flexGrow: 0, flexShrink: 1 },
   bodyContent: { padding: 20 },
   footer: { flexDirection: 'row', gap: 10, paddingHorizontal: 20, paddingTop: 12, borderTopWidth: 1, borderTopColor: Colors.cardBorder },
 });

@@ -431,12 +431,16 @@ export function Notice({
   children?: React.ReactNode;
 }) {
   const t = NOTICE_TONES[tone];
+  // Text mixed with values ({count} items…) arrives as an array of strings/numbers, not one
+  // string. Wrap any all-text body in <Text> — raw strings inside a View crash on native.
+  const parts = React.Children.toArray(children);
+  const isTextOnly = parts.length > 0 && parts.every((c) => typeof c === 'string' || typeof c === 'number');
   return (
     <View style={[styles.notice, { backgroundColor: t.bg, borderColor: t.border }]}>
       {Icon ? <Icon size={16} color={t.text} /> : null}
       <View style={styles.flex}>
         {title ? <Text style={[styles.noticeTitle, { color: t.text }]}>{title}</Text> : null}
-        {typeof children === 'string' ? <Text style={[styles.noticeText, { color: t.text }]}>{children}</Text> : children}
+        {isTextOnly ? <Text style={[styles.noticeText, { color: t.text }]}>{parts.join('')}</Text> : children}
       </View>
     </View>
   );

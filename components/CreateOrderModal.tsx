@@ -13,7 +13,7 @@ import {
   KeyboardAvoidingView,
   StatusBar,
 } from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import {
   X,
   Plus,
@@ -24,13 +24,27 @@ import {
   Search,
   Check,
   Printer,
-  Sparkles,
   CreditCard,
   Banknote,
   ArrowRight,
   ArrowLeft,
+  ShoppingCart,
+  Hash,
+  User,
+  Phone,
+  MessageSquare,
+  LogOut,
+  Bike,
+  MapPin,
 } from 'lucide-react-native';
+import { Image } from 'expo-image';
+import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
+import { useNow } from '../utils/order-timing';
+import { DietMark as SharedDietMark } from './DietMark';
+import { locationService, type AddressMatch } from '../services/location.service';
+import { ConfirmModal } from './ConfirmModal';
 import { Colors } from '../constants/colors';
+import { resolveMediaImageSource } from '../services/image.helper';
 import { menuService } from '../services/menu.service';
 import { orderService } from '../services/order.service';
 import { printThermalReceipt } from '../services/thermal-print.service';
@@ -39,6 +53,7 @@ import { useAuth } from '../context/AuthContext';
 import { getCachedStoreProfile, setCachedStoreProfile, getItemOptionsList } from '../services/receipt-customization.service';
 import { restaurantOwnerService } from '../services/restaurant-owner.service';
 import { restaurantService } from '../services/restaurant.service';
+import { KEYBOARD_BEHAVIOR } from '../utils/keyboard';
 
 
 /**
@@ -89,15 +104,61 @@ export interface CartEntry {
   unitPrice: number;
 }
 
+export type PosChannel = 'dine_in' | 'takeaway' | 'delivery';
+
 interface CreateOrderModalProps {
   visible: boolean;
   onClose: () => void;
   onOrderCreated: () => void;
   /** In-store order types only — delivery orders are not created from the POS. */
-  initialChannel?: 'dine_in' | 'takeaway';
+  initialChannel?: PosChannel;
   restaurantId?: string;
   restaurantName?: string;
   restaurantPhone?: string;
+}
+
+const OTHER_CATEGORY = 'Other';
+const KEEP_AWAKE_TAG = 'pos-terminal';
+
+function PosClock() {
+  const now = new Date(useNow());
+  const text = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  return <Text style={styles.posClock}>{text}</Text>;
+}
+
+/** Food-type mark colour: veg green, non-veg red, egg yellow (null when not set). */
+function getDietColor(item: any): string | null {
+  const diet = String(item?.itemType || '').toLowerCase().replace('-', '_');
+  if (diet === 'veg') return '#16A34A';
+  if (diet === 'non_veg') return '#DC2626';
+  if (diet === 'egg') return '#EAB308';
+  return null;
+}
+
+const DIET_LABEL: Record<string, string> = { '#16A34A': 'Veg', '#DC2626': 'Non-veg', '#EAB308': 'Contains egg' };
+
+/** Food-type mark (shared component) from the colour used across the POS. */
+function DietMark({ color, size = 14 }: { color: string; size?: number }) {
+  const type = color === '#DC2626' ? 'non-veg' : color === '#EAB308' ? 'egg' : 'veg';
+  return <SharedDietMark type={type} size={size} />;
+}
+
+/** All category names for a menu item. Items can belong to several categories. */
+function getItemCategoryNames(item: any): string[] {
+  const names: string[] = [];
+  if (Array.isArray(item?.categories)) {
+    item.categories.forEach((c: any) => {
+      const n = typeof c === 'string' ? c : c?.categoryName || c?.name;
+      if (n && typeof n === 'string' && n.trim()) names.push(n.trim());
+    });
+  }
+  if (names.length === 0) {
+    const raw: any = item?.category || item?.categoryId;
+    const n = typeof raw === 'object' ? raw?.categoryName || raw?.name : raw;
+    // A bare ObjectId string is not a readable name.
+    if (n && typeof n === 'string' && n.trim() && !/^[a-f0-9]{24}$/i.test(n.trim())) names.push(n.trim());
+  }
+  return names.length ? Array.from(new Set(names)) : [OTHER_CATEGORY];
 }
 
 export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
@@ -112,16 +173,27 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
   const { user } = useAuth();
   const [storePhone, setStorePhone] = useState<string>('');
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
-  const insets = useSafeAreaInsets();
   const isTablet = windowWidth >= 768;
   const isWideTablet = windowWidth >= 1024;
 
   const [mobileTab, setMobileTab] = useState<'menu' | 'cart'>('menu');
-  const [channel, setChannel] = useState<'dine_in' | 'takeaway'>(initialChannel);
+  const [channel, setChannel] = useState<PosChannel>(initialChannel);
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [tableNumber, setTableNumber] = useState('');
+  // Delivery details (POS delivery orders)
+  const [addressQuery, setAddressQuery] = useState('');
+  const [addressResults, setAddressResults] = useState<AddressMatch[]>([]);
+  const [addressSearching, setAddressSearching] = useState(false);
+  const [addressSearchError, setAddressSearchError] = useState<string | null>(null);
+  const [deliveryAddress, setDeliveryAddress] = useState<AddressMatch | null>(null);
+  const [doorNumber, setDoorNumber] = useState('');
   const [notes, setNotes] = useState('');
+  const [showNotes, setShowNotes] = useState(false);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [showPlaceConfirm, setShowPlaceConfirm] = useState(false);
+  const [showExitConfirm, setShowExitConfirm] = useState(false);
+  const [banner, setBanner] = useState<{ text: string; tone: 'info' | 'success' } | null>(null);
   const [paymentType, setPaymentType] = useState<'cash' | 'card'>('cash');
   const [autoPrint, setAutoPrint] = useState(true);
 
@@ -192,6 +264,46 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
     }
   }, [visible, initialChannel]);
 
+  // Full-screen POS mode: keep the screen on while it's open.
+  useEffect(() => {
+    if (!visible) return;
+    activateKeepAwakeAsync(KEEP_AWAKE_TAG).catch(() => {});
+    return () => {
+      deactivateKeepAwake(KEEP_AWAKE_TAG).catch(() => {});
+    };
+  }, [visible]);
+
+  // Short-lived banner under the top bar (app toasts render beneath this full-screen modal).
+  useEffect(() => {
+    if (!banner) return;
+    const t = setTimeout(() => setBanner(null), 3500);
+    return () => clearTimeout(t);
+  }, [banner]);
+
+  const exitHint = () => setBanner({ text: 'Press and hold “Exit” to leave the POS.', tone: 'info' });
+
+  // Closing the confirm dialog and the full-screen POS window in the same instant can leave a
+  // blank window over the app (React Native can't dismiss a modal and its parent together).
+  // So close the dialog first, then leave the POS once its fade-out has finished.
+  const exitTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (exitTimerRef.current) clearTimeout(exitTimerRef.current);
+  }, []);
+  const discardAndExit = () => {
+    setShowExitConfirm(false);
+    setCart({});
+    if (exitTimerRef.current) clearTimeout(exitTimerRef.current);
+    exitTimerRef.current = setTimeout(() => {
+      exitTimerRef.current = null;
+      onClose();
+    }, 350);
+  };
+
+  const requestExit = () => {
+    if (Object.keys(cart).length > 0) setShowExitConfirm(true);
+    else onClose();
+  };
+
   const loadMenu = async () => {
     setLoadingMenu(true);
     try {
@@ -211,15 +323,20 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
     }
   };
 
-  // Categories list
+  // Categories list (same source as the Menu tab: `categories[].categoryName`, with older fallbacks)
   const categories = useMemo(() => {
     const set = new Set<string>();
-    menuItems.forEach((item) => {
-      const rawCat: any = item.category || (item as any).categoryId;
-      const cat = typeof rawCat === 'object' ? rawCat?.name : rawCat;
-      if (cat) set.add(cat);
-    });
-    return ['all', ...Array.from(set)];
+    menuItems.forEach((item) => getItemCategoryNames(item).forEach((c) => set.add(c)));
+    const names = Array.from(set);
+    // Keep "Other" (uncategorised) last.
+    names.sort((a, b) => (a === OTHER_CATEGORY ? 1 : b === OTHER_CATEGORY ? -1 : 0));
+    return ['all', ...names];
+  }, [menuItems]);
+
+  const categoryCounts = useMemo(() => {
+    const counts: Record<string, number> = { all: menuItems.length };
+    menuItems.forEach((item) => getItemCategoryNames(item).forEach((c) => (counts[c] = (counts[c] || 0) + 1)));
+    return counts;
   }, [menuItems]);
 
   // Filtered menu items
@@ -227,14 +344,13 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
     return menuItems.filter((item) => {
       const name = (item.name || item.itemName || '').toLowerCase();
       const matchSearch = !searchQuery || name.includes(searchQuery.toLowerCase().trim());
-      const rawCat: any = item.category || (item as any).categoryId;
-      const cat = typeof rawCat === 'object' ? rawCat?.name : rawCat;
-      const matchCat = selectedCategory === 'all' || cat === selectedCategory;
+      const matchCat = selectedCategory === 'all' || getItemCategoryNames(item).includes(selectedCategory);
       return matchSearch && matchCat;
     });
   }, [menuItems, searchQuery, selectedCategory]);
 
-  const getItemBasePrice = (item: MenuItem, channelType: 'dine_in' | 'takeaway'): number => {
+  // Delivery uses the item's normal (online) price; collection / eat-in prices only apply in store.
+  const getItemBasePrice = (item: MenuItem, channelType: PosChannel): number => {
     let p = Number(item.price ?? item.basePrice ?? 0);
     if (channelType === 'takeaway' && item.collectionPrice != null && !isNaN(Number(item.collectionPrice))) {
       p = Number(item.collectionPrice);
@@ -242,6 +358,22 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
       p = Number(item.eatInPrice);
     }
     return p;
+  };
+
+  /** Unit price of a cart line for a channel (same rules as when the item was added). */
+  const priceCartEntry = (e: CartEntry, ch: PosChannel): number => {
+    let base = getItemBasePrice(e.item, ch);
+    const wv: any = e.selectedWeightVariant;
+    if (wv) {
+      if (ch === 'takeaway' && wv.collectionPrice != null && !isNaN(Number(wv.collectionPrice))) base = Number(wv.collectionPrice);
+      else if (ch === 'dine_in' && wv.eatInPrice != null && !isNaN(Number(wv.eatInPrice))) base = Number(wv.eatInPrice);
+      else base = Number(wv.price || 0);
+    }
+    const variantsAdd = (e.selectedVariants || []).reduce((sum, v) => sum + Number(v.additionalPrice || 0), 0);
+    const addonsAdd = (e.selectedAddons || []).reduce((sum, a) => sum + Number(a.price || 0), 0);
+    let total = base + variantsAdd + addonsAdd;
+    if (e.item.discountPercentage && e.item.discountPercentage > 0) total = total * (1 - e.item.discountPercentage / 100);
+    return Math.max(0, total);
   };
 
   const hasCustomizations = (item: MenuItem): boolean => {
@@ -526,12 +658,66 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
     });
   };
 
-  const removeCartItem = (cartKey: string) => {
+  // Address lookup (debounced) while typing a delivery address
+  useEffect(() => {
+    if (channel !== 'delivery' || deliveryAddress) return;
+    const q = addressQuery.trim();
+    if (q.length < 3) {
+      setAddressResults([]);
+      setAddressSearchError(null);
+      return;
+    }
+    let cancelled = false;
+    setAddressSearching(true);
+    const t = setTimeout(() => {
+      locationService
+        .searchAddress(q)
+        .then((res) => {
+          if (cancelled) return;
+          setAddressResults(res.data);
+          setAddressSearchError(res.success ? (res.data.length ? null : 'No matching address. Try the postcode.') : res.message || 'Address search failed.');
+        })
+        .catch(() => !cancelled && setAddressSearchError('Address search failed. Check the connection.'))
+        .finally(() => !cancelled && setAddressSearching(false));
+    }, 400);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [addressQuery, channel, deliveryAddress]);
+
+  // Switching Dine-in / Takeaway / Delivery reprices what's already in the cart, so the total
+  // shown matches what the server charges for that channel.
+  useEffect(() => {
     setCart((prev) => {
-      const next = { ...prev };
-      delete next[cartKey];
-      return next;
+      let changed = false;
+      const next: typeof prev = {};
+      for (const [key, e] of Object.entries(prev)) {
+        const unitPrice = priceCartEntry(e, channel);
+        if (Math.abs(unitPrice - e.unitPrice) > 0.0001) changed = true;
+        next[key] = { ...e, unitPrice };
+      }
+      return changed ? next : prev;
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [channel]);
+
+  const resetDeliveryDetails = () => {
+    setAddressQuery('');
+    setAddressResults([]);
+    setAddressSearchError(null);
+    setDeliveryAddress(null);
+    setDoorNumber('');
+  };
+
+  /** What's missing before a delivery order can be placed (null = ready). */
+  const getDeliveryError = (): string | null => {
+    if (channel !== 'delivery') return null;
+    if (!customerName.trim()) return 'Enter the customer’s name for the rider.';
+    if (!customerPhone.trim()) return 'Enter the customer’s phone number so the rider can call.';
+    if (!normalizeUKPhone(customerPhone.trim())) return 'Enter a valid UK phone number (e.g. 07123 456789).';
+    if (!deliveryAddress) return 'Search and select the delivery address.';
+    return null;
   };
 
   // Calculations
@@ -544,6 +730,12 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
   const handleSubmit = async () => {
     if (cartEntries.length === 0) {
       setErrorMsg('Please select at least 1 menu item to create an order.');
+      return;
+    }
+
+    const deliveryError = getDeliveryError();
+    if (deliveryError) {
+      setErrorMsg(deliveryError);
       return;
     }
 
@@ -580,6 +772,18 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
         orderType: channel,
         phoneNumber: finalPhone,
         customerName: customerName.trim() || (channel === 'dine_in' ? `Table ${tableNumber || 'Guest'}` : 'Counter Customer'),
+        ...(channel === 'delivery' && deliveryAddress
+          ? {
+              deliveryAddress: {
+                fullAddress: [doorNumber.trim(), deliveryAddress.label].filter(Boolean).join(', '),
+                addressLine1: [doorNumber.trim(), deliveryAddress.line1].filter(Boolean).join(', '),
+                city: deliveryAddress.city || '',
+                postalCode: deliveryAddress.postalCode || '',
+                landmark: '',
+                coordinates: { type: 'Point', coordinates: [deliveryAddress.lon, deliveryAddress.lat] },
+              },
+            }
+          : {}),
         customerEmail: 'pos-counter@krifoo.co.uk',
         notes: [
           channel === 'dine_in' && tableNumber ? `Table: ${tableNumber}` : null,
@@ -614,7 +818,22 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
           }
         }
         onOrderCreated();
-        onClose();
+        // Full-screen POS: stay open and get ready for the next order.
+        setCart({});
+        setCustomerName('');
+        setCustomerPhone('');
+        setTableNumber('');
+        resetDeliveryDetails();
+        setNotes('');
+        setShowNotes(false);
+        setMobileTab('menu');
+        const placedTotal = Number(res.data?.pricing?.totalAmount);
+        setBanner({
+          text: `${channel === 'delivery' ? 'Delivery order' : 'Order'} ${res.data?.orderNumber ? `#${res.data.orderNumber} ` : ''}placed${
+            channel === 'delivery' && Number.isFinite(placedTotal) ? ` · £${placedTotal.toFixed(2)} incl. delivery` : ''
+          }${autoPrint ? ' · printing receipt' : ''}.`,
+          tone: 'success',
+        });
       } else {
         setErrorMsg(res.message || 'Failed to place order. Please verify input.');
       }
@@ -630,53 +849,73 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
       visible={visible}
       animationType="slide"
       presentationStyle="fullScreen"
-      onRequestClose={onClose}
+      onRequestClose={exitHint}
     >
+      {/* Own provider: a Modal is a separate native window, so it must measure its own safe areas
+          (otherwise the top inset can come through as 0 and content slides under the status bar). */}
+      <SafeAreaProvider>
       <SafeAreaView style={styles.safeArea} edges={['top', 'bottom', 'left', 'right']}>
         <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
         <KeyboardAvoidingView
           style={styles.fullScreenContainer}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          behavior={KEYBOARD_BEHAVIOR}
         >
-          {/* Header */}
-          <View style={[styles.modalHeader, isTablet && styles.modalHeaderTablet]}>
-            <View style={styles.headerLeftGroup}>
-              <View style={styles.titleRow}>
-                <Sparkles size={18} color="#FF5C39" />
-                <Text style={[styles.modalTitle, isTablet && styles.modalTitleTablet]} numberOfLines={1}>
-                  POS Order Terminal
-                </Text>
-                <View style={styles.quickLiveBadge}>
-                  <Text style={styles.quickLiveBadgeText}>LIVE</Text>
-                </View>
+          {/* Top bar — full-screen POS mode (exit is press-and-hold, like Kitchen Mode) */}
+          <View style={styles.posTopBar}>
+            <View style={styles.posBrand}>
+              <View style={styles.posBrandIcon}>
+                <ShoppingCart size={20} color="#FF5C39" />
               </View>
-              <Text style={styles.modalSub} numberOfLines={1}>
-                {restaurantName ? `${restaurantName} • Punch & Dispatch Order` : 'Punch In-Store or Takeaway Order'}
-              </Text>
+              <View style={styles.posBrandTextCol}>
+                <View style={styles.posBrandRow}>
+                  <Text style={styles.posBrandText}>POS</Text>
+                  <View style={styles.posLive}>
+                    <View style={styles.posLiveDot} />
+                    <Text style={styles.posLiveText}>LIVE</Text>
+                  </View>
+                </View>
+                {restaurantName ? (
+                  <Text style={styles.posSub} numberOfLines={1}>{restaurantName}</Text>
+                ) : null}
+              </View>
+              <PosClock />
             </View>
 
-            <View style={styles.headerRightGroup}>
+            <View style={styles.posControls}>
               {cartEntries.length > 0 && (
                 <TouchableOpacity
-                  onPress={() => setCart({})}
-                  style={isTablet ? styles.headerClearBtn : styles.headerClearIconBtn}
+                  onPress={() => setShowClearConfirm(true)}
+                  style={styles.posClearBtn}
                   activeOpacity={0.7}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Clear order"
                 >
-                  <Trash2 size={14} color="#EF4444" />
-                  {isTablet && <Text style={styles.headerClearText}>Clear Order</Text>}
+                  <Trash2 size={18} color="#DC2626" />
+                  {isTablet && <Text style={styles.posClearText}>Clear order</Text>}
                 </TouchableOpacity>
               )}
               <TouchableOpacity
-                onPress={onClose}
-                style={styles.closeBtn}
-                activeOpacity={0.7}
-                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                onPress={exitHint}
+                onLongPress={requestExit}
+                delayLongPress={700}
+                style={styles.posExitBtn}
+                activeOpacity={0.6}
+                accessibilityRole="button"
+                accessibilityLabel="Exit POS"
+                accessibilityHint="Press and hold to exit"
               >
-                <X size={20} color="#475569" />
+                <LogOut size={18} color="#0F172A" />
+                {isTablet && <Text style={styles.posExitText}>Hold to exit</Text>}
               </TouchableOpacity>
             </View>
           </View>
+
+          {banner ? (
+            <View style={[styles.posBanner, banner.tone === 'success' ? styles.posBannerSuccess : styles.posBannerInfo]}>
+              {banner.tone === 'success' ? <Check size={16} color="#047857" strokeWidth={3} /> : null}
+              <Text style={[styles.posBannerText, { color: banner.tone === 'success' ? '#065F46' : '#1E3A8A' }]}>{banner.text}</Text>
+            </View>
+          ) : null}
 
           {/* Mobile View Switcher Tabs (Menu vs Ticket) */}
           {!isTablet && (
@@ -718,6 +957,35 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
 
           {/* Main Body */}
           <View style={[styles.modalBody, isTablet && styles.modalBodyTablet]}>
+            {/* Category rail (tablet / POS): single column on the far left */}
+            {isTablet && categories.length > 1 && (
+              <View style={[styles.categoryRail, isWideTablet && styles.categoryRailWide]}>
+                <ScrollView contentContainerStyle={styles.categoryRailContent} showsVerticalScrollIndicator={false}>
+                  {categories.map((cat) => {
+                    const active = selectedCategory === cat;
+                    return (
+                      <TouchableOpacity
+                        key={cat}
+                        style={[styles.railTile, active && styles.railTileActive]}
+                        onPress={() => setSelectedCategory(cat)}
+                        activeOpacity={0.8}
+                        accessibilityRole="tab"
+                        accessibilityState={{ selected: active }}
+                        accessibilityLabel={`${cat === 'all' ? 'All dishes' : cat}, ${categoryCounts[cat] || 0} items`}
+                      >
+                        <Text style={styles.railTileText} numberOfLines={2}>
+                          {cat === 'all' ? 'All Dishes' : cat}
+                        </Text>
+                        <Text style={[styles.railTileCount, active && styles.railTileCountActive]}>
+                          {categoryCounts[cat] || 0}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+            )}
+
             {/* Left Column: Menu Items Browser (Shown on Tablet OR Mobile 'menu' tab) */}
             {(isTablet || mobileTab === 'menu') && (
               <View style={[styles.leftColumn, isTablet && styles.leftColumnTablet]}>
@@ -751,6 +1019,19 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                     </Text>
                   </TouchableOpacity>
 
+                  <TouchableOpacity
+                    style={[styles.channelChip, channel === 'delivery' && styles.channelChipDeliveryActive]}
+                    onPress={() => setChannel('delivery')}
+                    activeOpacity={0.8}
+                  >
+                    <Bike size={14} color={channel === 'delivery' ? '#1D4ED8' : '#64748B'} />
+                    <Text
+                      style={[styles.channelChipText, channel === 'delivery' && styles.channelChipTextDeliveryActive]}
+                      numberOfLines={1}
+                    >
+                      Delivery
+                    </Text>
+                  </TouchableOpacity>
                 </View>
 
               {/* Menu Search & Categories */}
@@ -771,7 +1052,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
               </View>
 
               {/* Category Pills */}
-              {categories.length > 1 && (
+              {!isTablet && categories.length > 1 && (
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.categoryScroll}>
                   {categories.map((cat) => (
                     <TouchableOpacity
@@ -786,6 +1067,17 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                     </TouchableOpacity>
                   ))}
                 </ScrollView>
+              )}
+
+              {isTablet && categories.length > 1 && (
+                <View style={styles.categoryHeading}>
+                  <Text style={styles.categoryHeadingText} numberOfLines={1}>
+                    {selectedCategory === 'all' ? 'All Dishes' : selectedCategory}
+                  </Text>
+                  <Text style={styles.categoryHeadingCount}>
+                    {filteredItems.length} {filteredItems.length === 1 ? 'item' : 'items'}
+                  </Text>
+                </View>
               )}
 
               {/* Menu Items List */}
@@ -803,7 +1095,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                   style={styles.itemsScrollView}
                   contentContainerStyle={[
                     styles.itemsScrollContent,
-                    !isTablet && { paddingBottom: Math.max(insets.bottom, 12) + 80 },
+                    !isTablet && { paddingBottom: 92 },
                   ]}
                   showsVerticalScrollIndicator={true}
                 >
@@ -813,6 +1105,8 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                       const cartCount = getItemCartCount(id);
                       const price = getItemBasePrice(item, channel);
                       const isCustomizable = hasCustomizations(item);
+                      const imageSource = resolveMediaImageSource((item as any).displayImageUrl || (item as any).displayImage || (item as any).imageUrl);
+                      const dietColor = getDietColor(item);
 
                       return (
                         <TouchableOpacity
@@ -823,31 +1117,58 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                             cartCount > 0 && styles.itemCardSelected,
                           ]}
                           onPress={() => handleItemPress(item)}
-                          activeOpacity={0.7}
+                          activeOpacity={0.8}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Add ${item.name || item.itemName}, £${price.toFixed(2)}${cartCount > 0 ? `, ${cartCount} in order` : ''}`}
                         >
-                          <View style={styles.itemContent}>
-                            <View style={styles.itemTitleRow}>
-                              <Text style={styles.itemTitle} numberOfLines={1}>
-                                {item.name || item.itemName}
-                              </Text>
-                              {isCustomizable ? (
-                                <View style={styles.customBadge}>
-                                  <Text style={styles.customBadgeText}>Options</Text>
-                                </View>
-                              ) : null}
-                            </View>
-                            <Text style={styles.itemPriceText}>£{price.toFixed(2)}</Text>
+                          {/* Dish photo */}
+                          <View style={[styles.itemImageBox, isTablet && styles.itemImageBoxTablet]}>
+                            {imageSource ? (
+                              <Image
+                                source={imageSource}
+                                style={styles.itemImage}
+                                contentFit="cover"
+                                transition={150}
+                                cachePolicy="memory-disk"
+                                recyclingKey={id}
+                              />
+                            ) : (
+                              <View style={styles.itemImagePlaceholder}>
+                                <UtensilsCrossed size={isTablet ? 28 : 22} color="#CBD5E1" />
+                              </View>
+                            )}
+
+                            {dietColor ? (
+                              <View style={styles.itemDietBadge}>
+                                <DietMark color={dietColor} size={14} />
+                              </View>
+                            ) : null}
+
+                            {cartCount > 0 ? (
+                              <View style={styles.itemQtyBadge}>
+                                <Text style={styles.itemQtyBadgeText}>{cartCount}</Text>
+                              </View>
+                            ) : null}
+
+                            {isCustomizable ? (
+                              <View style={styles.customBadge}>
+                                <Text style={styles.customBadgeText}>Options</Text>
+                              </View>
+                            ) : null}
                           </View>
 
-                          {cartCount > 0 ? (
-                            <View style={styles.itemQtyBadge}>
-                              <Text style={styles.itemQtyBadgeText}>{cartCount}</Text>
+                          {/* Name + price */}
+                          <View style={styles.itemContent}>
+                            <Text style={[styles.itemTitle, isTablet && styles.itemTitleTablet]} numberOfLines={2}>
+                              {item.name || item.itemName}
+                            </Text>
+                            <View style={styles.itemPriceRow}>
+                              <Text style={[styles.itemPriceText, isTablet && styles.itemPriceTextTablet]}>£{price.toFixed(2)}</Text>
+                              <View style={[styles.itemAddIcon, cartCount > 0 && styles.itemAddIconActive]}>
+                                <Plus size={16} color={cartCount > 0 ? '#FFFFFF' : '#FF5C39'} strokeWidth={2.6} />
+                              </View>
                             </View>
-                          ) : (
-                            <View style={styles.itemAddIcon}>
-                              <Plus size={14} color="#FF5C39" />
-                            </View>
-                          )}
+                          </View>
                         </TouchableOpacity>
                       );
                     })}
@@ -860,7 +1181,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                 <View
                   style={[
                     styles.mobileFloatingBar,
-                    { paddingBottom: Math.max(insets.bottom, 12) + 4 },
+                    { paddingBottom: 16 },
                   ]}
                 >
                   <View style={styles.mobileFloatingInfo}>
@@ -901,217 +1222,334 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                   <Text style={styles.mobileBackBtnText}>Back to Menu (Add More)</Text>
                 </TouchableOpacity>
               )}
-              <ScrollView showsVerticalScrollIndicator={false}>
-                {/* Channel Specific Fields */}
-                <View style={styles.formSection}>
-                  <Text style={styles.formSectionTitle}>
-                    {channel === 'dine_in' ? 'Dine-In Details' : 'Takeaway Details'}
-                  </Text>
-
-                  {channel === 'dine_in' && (
-                    <View style={styles.fieldRow}>
-                      <TextInput
-                        style={[styles.inputField, { flex: 1 }]}
-                        placeholder="Table No. (e.g. T4)"
-                        placeholderTextColor="#94A3B8"
-                        value={tableNumber}
-                        onChangeText={setTableNumber}
-                      />
-                      <TextInput
-                        style={[styles.inputField, { flex: 1.5 }]}
-                        placeholder="Guest Name (Optional)"
-                        placeholderTextColor="#94A3B8"
-                        value={customerName}
-                        onChangeText={setCustomerName}
-                      />
+              {/* ── Order header + details ─────────────────────────── */}
+              <View style={styles.ctTop}>
+                <View style={styles.ctTitleRow}>
+                  <Text style={styles.ctTitle}>Current order</Text>
+                  {totalItemCount > 0 && (
+                    <View style={styles.ctCountBadge}>
+                      <Text style={styles.ctCountText}>{totalItemCount}</Text>
                     </View>
                   )}
-
-                  {channel === 'takeaway' && (
-                    <View style={styles.fieldRow}>
-                      <TextInput
-                        style={[styles.inputField, { flex: 1.2 }]}
-                        placeholder="Customer Name"
-                        placeholderTextColor="#94A3B8"
-                        value={customerName}
-                        onChangeText={(t) => {
-                          setCustomerName(t);
-                          if (errorMsg) setErrorMsg(null);
-                        }}
-                      />
-                      <TextInput
-                        style={[styles.inputField, { flex: 1.2 }]}
-                        placeholder="Phone No. (Optional)"
-                        placeholderTextColor="#94A3B8"
-                        keyboardType="phone-pad"
-                        value={customerPhone}
-                        onChangeText={(t) => {
-                          setCustomerPhone(t);
-                          if (errorMsg) setErrorMsg(null);
-                        }}
-                      />
-                    </View>
-                  )}
-
-                  {/* Notes / Instructions */}
-                  <TextInput
-                    style={[styles.inputField, { marginTop: 8 }]}
-                    placeholder="Kitchen instructions / allergy notes..."
-                    placeholderTextColor="#94A3B8"
-                    value={notes}
-                    onChangeText={setNotes}
-                  />
+                  <View style={styles.ctFlex} />
+                  <View
+                    style={[
+                      styles.ctChannelTag,
+                      channel === 'dine_in' ? styles.ctChannelDineIn : channel === 'delivery' ? styles.ctChannelDelivery : styles.ctChannelTakeaway,
+                    ]}
+                  >
+                    {channel === 'dine_in' ? (
+                      <UtensilsCrossed size={13} color="#6D28D9" />
+                    ) : channel === 'delivery' ? (
+                      <Bike size={13} color="#1D4ED8" />
+                    ) : (
+                      <ShoppingBag size={13} color="#C2410C" />
+                    )}
+                    <Text style={[styles.ctChannelText, { color: channel === 'dine_in' ? '#6D28D9' : channel === 'delivery' ? '#1D4ED8' : '#C2410C' }]}>
+                      {channel === 'dine_in' ? 'Dine-in' : channel === 'delivery' ? 'Delivery' : 'Takeaway'}
+                    </Text>
+                  </View>
                 </View>
 
-                {/* Cart Items Section */}
-                <View style={styles.cartSection}>
-                  <View style={styles.cartHeaderRow}>
-                    <Text style={styles.cartHeaderTitle}>Ordered Items ({totalItemCount})</Text>
-                    {cartEntries.length > 0 && (
-                      <TouchableOpacity onPress={() => setCart({})}>
-                        <Text style={styles.clearCartText}>Clear</Text>
-                      </TouchableOpacity>
+                <View style={styles.ctFieldRow}>
+                  {channel === 'dine_in' ? (
+                    <>
+                      <View style={[styles.ctField, styles.ctFieldTable]}>
+                        <Hash size={15} color="#94A3B8" />
+                        <TextInput
+                          style={styles.ctInput}
+                          placeholder="Table"
+                          placeholderTextColor="#94A3B8"
+                          value={tableNumber}
+                          onChangeText={setTableNumber}
+                          autoCapitalize="characters"
+                          accessibilityLabel="Table number"
+                        />
+                      </View>
+                      <View style={[styles.ctField, styles.ctFlex]}>
+                        <User size={15} color="#94A3B8" />
+                        <TextInput
+                          style={styles.ctInput}
+                          placeholder="Guest name (optional)"
+                          placeholderTextColor="#94A3B8"
+                          value={customerName}
+                          onChangeText={setCustomerName}
+                          accessibilityLabel="Guest name"
+                        />
+                      </View>
+                    </>
+                  ) : (
+                    <>
+                      <View style={[styles.ctField, styles.ctFlex]}>
+                        <User size={15} color="#94A3B8" />
+                        <TextInput
+                          style={styles.ctInput}
+                          placeholder={channel === 'delivery' ? 'Customer name *' : 'Customer name'}
+                          placeholderTextColor="#94A3B8"
+                          value={customerName}
+                          onChangeText={(t) => {
+                            setCustomerName(t);
+                            if (errorMsg) setErrorMsg(null);
+                          }}
+                          accessibilityLabel="Customer name"
+                        />
+                      </View>
+                      <View style={[styles.ctField, styles.ctFlex]}>
+                        <Phone size={15} color="#94A3B8" />
+                        <TextInput
+                          style={styles.ctInput}
+                          placeholder={channel === 'delivery' ? 'Phone *' : 'Phone (optional)'}
+                          placeholderTextColor="#94A3B8"
+                          keyboardType="phone-pad"
+                          value={customerPhone}
+                          onChangeText={(t) => {
+                            setCustomerPhone(t);
+                            if (errorMsg) setErrorMsg(null);
+                          }}
+                          accessibilityLabel="Customer phone"
+                        />
+                      </View>
+                    </>
+                  )}
+                </View>
+
+                {channel === 'delivery' && (
+                  <View style={styles.dlBox}>
+                    {deliveryAddress ? (
+                      <>
+                        <View style={styles.dlChosen}>
+                          <MapPin size={16} color="#1D4ED8" />
+                          <View style={styles.ctFlex}>
+                            <Text style={styles.dlChosenLine} numberOfLines={1}>{deliveryAddress.line1}</Text>
+                            <Text style={styles.dlChosenSub} numberOfLines={1}>
+                              {[deliveryAddress.city, deliveryAddress.postalCode].filter(Boolean).join(' · ') || deliveryAddress.label}
+                            </Text>
+                          </View>
+                          <TouchableOpacity onPress={resetDeliveryDetails} style={styles.dlChange} accessibilityRole="button" accessibilityLabel="Change delivery address">
+                            <Text style={styles.dlChangeText}>Change</Text>
+                          </TouchableOpacity>
+                        </View>
+                        <View style={styles.ctField}>
+                          <Hash size={15} color="#94A3B8" />
+                          <TextInput
+                            style={styles.ctInput}
+                            placeholder="Flat / house no. (optional)"
+                            placeholderTextColor="#94A3B8"
+                            value={doorNumber}
+                            onChangeText={setDoorNumber}
+                            accessibilityLabel="Flat or house number"
+                          />
+                        </View>
+                      </>
+                    ) : (
+                      <>
+                        <View style={styles.ctField}>
+                          <MapPin size={15} color="#94A3B8" />
+                          <TextInput
+                            style={styles.ctInput}
+                            placeholder="Delivery address or postcode *"
+                            placeholderTextColor="#94A3B8"
+                            value={addressQuery}
+                            onChangeText={(t) => {
+                              setAddressQuery(t);
+                              if (errorMsg) setErrorMsg(null);
+                            }}
+                            autoCorrect={false}
+                            accessibilityLabel="Search delivery address"
+                          />
+                          {addressSearching ? <ActivityIndicator size="small" color="#1D4ED8" /> : null}
+                        </View>
+                        {addressResults.map((a) => (
+                          <TouchableOpacity
+                            key={a.placeId}
+                            style={styles.dlResult}
+                            onPress={() => {
+                              setDeliveryAddress(a);
+                              setAddressResults([]);
+                              if (errorMsg) setErrorMsg(null);
+                            }}
+                            activeOpacity={0.7}
+                            accessibilityRole="button"
+                          >
+                            <MapPin size={14} color="#64748B" />
+                            <Text style={styles.dlResultText} numberOfLines={2}>{a.label}</Text>
+                          </TouchableOpacity>
+                        ))}
+                        {addressSearchError && !addressSearching ? <Text style={styles.dlHint}>{addressSearchError}</Text> : null}
+                        {!addressQuery.trim() ? <Text style={styles.dlHint}>Type a postcode or street, then pick the address.</Text> : null}
+                      </>
                     )}
                   </View>
+                )}
 
-                  {cartEntries.length === 0 ? (
-                    <View style={styles.emptyCartBox}>
-                      <Text style={styles.emptyCartText}>No items added yet.</Text>
-                      <Text style={styles.emptyCartSub}>Tap items on the left to add.</Text>
-                    </View>
-                  ) : (
-                    <View style={styles.cartList}>
-                      {cartEntries.map((entry) => {
-                        const options = getItemOptionsList(entry);
-
-                        return (
-                          <View key={entry.cartKey} style={styles.cartItemRow}>
-                            <View style={styles.cartItemInfo}>
-                              <Text style={styles.cartItemName} numberOfLines={1}>
-                                {entry.item.name || entry.item.itemName}
-                              </Text>
-
-                              {options.length > 0 ? (
-                                <View style={styles.cartItemOptionsList}>
-                                  {options.map((opt, idx) => (
-                                    <Text key={idx} style={styles.cartItemOptionPill}>
-                                      • {opt}
-                                    </Text>
-                                  ))}
-                                </View>
-                              ) : null}
-
-                              {entry.instructions ? (
-                                <Text style={styles.cartItemInstructions} numberOfLines={1}>
-                                  Note: {entry.instructions}
-                                </Text>
-                              ) : null}
-
-                              <Text style={styles.cartItemPrice}>
-                                £{(entry.unitPrice * entry.quantity).toFixed(2)}
-                                {entry.quantity > 1 ? ` (£${entry.unitPrice.toFixed(2)} ea)` : ''}
-                              </Text>
-                            </View>
-
-                            <View style={styles.qtyControlRow}>
-                              <TouchableOpacity
-                                style={styles.qtyBtn}
-                                onPress={() => decrementCartItem(entry.cartKey)}
-                                activeOpacity={0.7}
-                              >
-                                <Minus size={13} color="#64748B" />
-                              </TouchableOpacity>
-                              <Text style={styles.qtyNumber}>{entry.quantity}</Text>
-                              <TouchableOpacity
-                                style={styles.qtyBtn}
-                                onPress={() => incrementCartItem(entry.cartKey)}
-                                activeOpacity={0.7}
-                              >
-                                <Plus size={13} color="#64748B" />
-                              </TouchableOpacity>
-                              <TouchableOpacity
-                                style={styles.deleteBtn}
-                                onPress={() => removeCartItem(entry.cartKey)}
-                                activeOpacity={0.7}
-                              >
-                                <Trash2 size={13} color="#EF4444" />
-                              </TouchableOpacity>
-                            </View>
-                          </View>
-                        );
-                      })}
-                    </View>
-                  )}
-                </View>
-
-                {/* Payment Option & Auto-print */}
-                <View style={styles.paymentSection}>
-                  <Text style={styles.formSectionTitle}>Payment Method</Text>
-                  <View style={styles.paymentRow}>
-                    <TouchableOpacity
-                      style={[styles.paymentBtn, paymentType === 'cash' && styles.paymentBtnCashActive]}
-                      onPress={() => setPaymentType('cash')}
-                      activeOpacity={0.8}
-                    >
-                      <Banknote size={15} color={paymentType === 'cash' ? '#059669' : '#64748B'} />
-                      <Text style={[styles.paymentBtnText, paymentType === 'cash' && styles.paymentBtnTextCashActive]}>
-                        Cash (Counter)
-                      </Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      style={[styles.paymentBtn, paymentType === 'card' && styles.paymentBtnCardActive]}
-                      onPress={() => setPaymentType('card')}
-                      activeOpacity={0.8}
-                    >
-                      <CreditCard size={15} color={paymentType === 'card' ? '#2563EB' : '#64748B'} />
-                      <Text style={[styles.paymentBtnText, paymentType === 'card' && styles.paymentBtnTextCardActive]}>
-                        Card / Terminal
-                      </Text>
-                    </TouchableOpacity>
+                {showNotes || notes ? (
+                  <View style={[styles.ctField, styles.ctNoteField]}>
+                    <MessageSquare size={15} color="#B45309" />
+                    <TextInput
+                      style={styles.ctInput}
+                      placeholder="Kitchen instructions / allergy notes"
+                      placeholderTextColor="#B4925A"
+                      value={notes}
+                      onChangeText={setNotes}
+                      autoFocus={showNotes && !notes}
+                      accessibilityLabel="Kitchen note"
+                    />
+                    {notes ? (
+                      <TouchableOpacity onPress={() => { setNotes(''); setShowNotes(false); }} hitSlop={8} accessibilityLabel="Remove note">
+                        <X size={15} color="#B45309" />
+                      </TouchableOpacity>
+                    ) : null}
                   </View>
-
-                  <TouchableOpacity
-                    style={styles.autoPrintRow}
-                    onPress={() => setAutoPrint(!autoPrint)}
-                    activeOpacity={0.8}
-                  >
-                    <View style={[styles.checkbox, autoPrint && styles.checkboxActive]}>
-                      {autoPrint && <Check size={12} color="#FFFFFF" />}
-                    </View>
-                    <Printer size={15} color="#64748B" />
-                    <Text style={styles.autoPrintText}>Auto-print kitchen & customer receipt</Text>
+                ) : (
+                  <TouchableOpacity style={styles.ctAddNote} onPress={() => setShowNotes(true)} activeOpacity={0.7}>
+                    <Plus size={14} color="#FF5C39" />
+                    <Text style={styles.ctAddNoteText}>Add kitchen note</Text>
                   </TouchableOpacity>
-                </View>
+                )}
+              </View>
 
-                {/* Error Banner */}
-                {Boolean(errorMsg) ? (
-                  <View style={styles.errorBox}>
-                    <Text style={styles.errorText}>{errorMsg}</Text>
+              {/* ── Items ──────────────────────────────────────────── */}
+              {cartEntries.length === 0 ? (
+                <View style={styles.ctEmpty}>
+                  <View style={styles.ctEmptyIcon}>
+                    <ShoppingCart size={26} color="#94A3B8" />
                   </View>
-                ) : null}
-              </ScrollView>
+                  <Text style={styles.ctEmptyTitle}>No items yet</Text>
+                  <Text style={styles.ctEmptyText}>{isTablet ? 'Tap a dish on the left to add it.' : 'Go back to the menu to add dishes.'}</Text>
+                </View>
+              ) : (
+                <ScrollView style={styles.ctItems} contentContainerStyle={styles.ctItemsContent} showsVerticalScrollIndicator={false}>
+                  {cartEntries.map((entry, idx) => {
+                    const options = getItemOptionsList(entry);
+                    const lineTotal = entry.unitPrice * entry.quantity;
+                    const name = entry.item.name || entry.item.itemName;
+                    const entryDiet = getDietColor(entry.item);
+                    return (
+                      <View key={entry.cartKey} style={[styles.ctRow, idx > 0 && styles.ctRowDivider]}>
+                        <View style={styles.ctRowTop}>
+                          {entryDiet ? (
+                            <View style={styles.ctDietWrap}>
+                              <DietMark color={entryDiet} />
+                            </View>
+                          ) : null}
+                          <Text style={styles.ctItemName} numberOfLines={2}>{name}</Text>
+                          <Text style={styles.ctLineTotal}>£{lineTotal.toFixed(2)}</Text>
+                        </View>
 
-              {/* Total Summary & Confirm Button */}
-              <View style={[styles.footerCheckout, !isTablet && { paddingBottom: Math.max(insets.bottom, 12) + 6 }]}>
-                <View style={styles.summaryRow}>
-                  <Text style={styles.summaryLabel}>Total Due</Text>
-                  <Text style={styles.summaryValue}>£{subtotal.toFixed(2)}</Text>
+                        {options.length > 0 ? (
+                          <Text style={styles.ctOptions} numberOfLines={3}>{options.join(' · ')}</Text>
+                        ) : null}
+                        {entry.instructions ? (
+                          <Text style={styles.ctItemNote} numberOfLines={2}>“{entry.instructions}”</Text>
+                        ) : null}
+
+                        <View style={styles.ctRowBottom}>
+                          <View style={styles.ctStepper}>
+                            <TouchableOpacity
+                              style={styles.ctStepBtn}
+                              onPress={() => decrementCartItem(entry.cartKey)}
+                              activeOpacity={0.7}
+                              accessibilityRole="button"
+                              accessibilityLabel={entry.quantity === 1 ? `Remove ${name}` : `Decrease ${name}`}
+                            >
+                              {entry.quantity === 1 ? <Trash2 size={16} color="#DC2626" /> : <Minus size={16} color="#0F172A" />}
+                            </TouchableOpacity>
+                            <Text style={styles.ctQty}>{entry.quantity}</Text>
+                            <TouchableOpacity
+                              style={styles.ctStepBtn}
+                              onPress={() => incrementCartItem(entry.cartKey)}
+                              activeOpacity={0.7}
+                              accessibilityRole="button"
+                              accessibilityLabel={`Increase ${name}`}
+                            >
+                              <Plus size={16} color="#0F172A" />
+                            </TouchableOpacity>
+                          </View>
+                          <Text style={styles.ctEach}>£{entry.unitPrice.toFixed(2)} each</Text>
+                        </View>
+                      </View>
+                    );
+                  })}
+                </ScrollView>
+              )}
+
+              {/* ── Checkout ───────────────────────────────────────── */}
+              <View style={[styles.ctFooter, !isTablet && { paddingBottom: 18 }]}>
+                <View style={styles.ctPaySegment} accessibilityRole="radiogroup" accessibilityLabel="Payment method">
+                  {([
+                    { key: 'cash', label: 'Cash', Icon: Banknote, color: '#047857' },
+                    { key: 'card', label: 'Card', Icon: CreditCard, color: '#1D4ED8' },
+                  ] as const).map(({ key, label, Icon, color }) => {
+                    const active = paymentType === key;
+                    return (
+                      <TouchableOpacity
+                        key={key}
+                        style={[styles.ctPayBtn, active && styles.ctPayBtnActive]}
+                        onPress={() => setPaymentType(key)}
+                        activeOpacity={0.8}
+                        accessibilityRole="radio"
+                        accessibilityState={{ selected: active }}
+                      >
+                        <Icon size={17} color={active ? color : '#64748B'} />
+                        <Text style={[styles.ctPayText, active && { color, fontWeight: '800' }]}>{label}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
                 </View>
 
                 <TouchableOpacity
-                  style={[styles.submitOrderBtn, (submitting || cartEntries.length === 0) && styles.submitBtnDisabled]}
-                  onPress={handleSubmit}
+                  style={styles.ctPrintRow}
+                  onPress={() => setAutoPrint(!autoPrint)}
+                  activeOpacity={0.8}
+                  accessibilityRole="switch"
+                  accessibilityState={{ checked: autoPrint }}
+                >
+                  <Printer size={15} color="#64748B" />
+                  <Text style={styles.ctPrintText}>Print kitchen & customer receipt</Text>
+                  <View style={[styles.ctSwitch, autoPrint && styles.ctSwitchOn]}>
+                    <View style={[styles.ctSwitchKnob, autoPrint && styles.ctSwitchKnobOn]} />
+                  </View>
+                </TouchableOpacity>
+
+                {Boolean(errorMsg) ? (
+                  <View style={styles.ctError}>
+                    <Text style={styles.ctErrorText}>{errorMsg}</Text>
+                  </View>
+                ) : null}
+
+                <View style={styles.ctTotalRow}>
+                  <View>
+                    <Text style={styles.ctTotalLabel}>Total</Text>
+                    <Text style={styles.ctTotalSub}>
+                      {totalItemCount} {totalItemCount === 1 ? 'item' : 'items'} · {paymentType === 'cash' ? 'Cash' : 'Card'}
+                      {channel === 'delivery' ? ' · + delivery fee' : ''}
+                    </Text>
+                  </View>
+                  <Text style={styles.ctTotalValue}>£{subtotal.toFixed(2)}</Text>
+                </View>
+
+                <TouchableOpacity
+                  style={[styles.ctPlaceBtn, (submitting || cartEntries.length === 0) && styles.ctPlaceBtnDisabled]}
+                  onPress={() => {
+                    const deliveryError = getDeliveryError();
+                    if (deliveryError) {
+                      setErrorMsg(deliveryError);
+                      return;
+                    }
+                    setErrorMsg(null);
+                    setShowPlaceConfirm(true);
+                  }}
                   disabled={submitting || cartEntries.length === 0}
                   activeOpacity={0.85}
+                  accessibilityRole="button"
                 >
                   {submitting ? (
                     <ActivityIndicator size="small" color="#FFFFFF" />
                   ) : (
                     <>
-                      <Sparkles size={16} color="#FFFFFF" />
-                      <Text style={styles.submitOrderBtnText}>
-                        Place & Dispatch Order (£{subtotal.toFixed(2)})
+                      <Check size={19} color="#FFFFFF" strokeWidth={2.8} />
+                      <Text style={styles.ctPlaceText}>
+                        {cartEntries.length === 0 ? 'Add items to place order' : `Place order · £${subtotal.toFixed(2)}`}
                       </Text>
                     </>
                   )}
@@ -1121,6 +1559,126 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
           )}
         </View>
       </KeyboardAvoidingView>
+
+        {/* Exit with an unfinished order */}
+        <ConfirmModal
+          visible={showExitConfirm}
+          title="Leave the POS?"
+          message={`The current order (${totalItemCount} ${totalItemCount === 1 ? 'item' : 'items'}) hasn't been placed and will be discarded.`}
+          confirmText="Discard & exit"
+          cancelText="Stay"
+          isDestructive
+          onConfirm={discardAndExit}
+          onClose={() => setShowExitConfirm(false)}
+        />
+
+        {/* Clear order confirmation */}
+        <ConfirmModal
+          visible={showClearConfirm}
+          title="Clear this order?"
+          message={`This removes all ${totalItemCount} ${totalItemCount === 1 ? 'item' : 'items'} from the current order. This can't be undone.`}
+          confirmText="Clear order"
+          cancelText="Keep order"
+          isDestructive
+          onConfirm={() => {
+            setCart({});
+            setShowClearConfirm(false);
+          }}
+          onClose={() => setShowClearConfirm(false)}
+        />
+
+        {/* Place order review */}
+        <Modal visible={showPlaceConfirm} transparent animationType="fade" onRequestClose={() => setShowPlaceConfirm(false)}>
+          <View style={styles.pcOverlay}>
+            <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setShowPlaceConfirm(false)} accessibilityLabel="Close" />
+            <View style={styles.pcBox}>
+              <View style={styles.pcHeader}>
+                <View style={styles.ctFlex}>
+                  <Text style={styles.pcTitle}>Confirm order</Text>
+                  <Text style={styles.pcSub} numberOfLines={1}>
+                    {channel === 'dine_in'
+                      ? `Dine-in${tableNumber.trim() ? ` · Table ${tableNumber.trim()}` : ''}${customerName.trim() ? ` · ${customerName.trim()}` : ''}`
+                      : channel === 'delivery'
+                      ? `Delivery · ${customerName.trim()}${deliveryAddress ? ` · ${[doorNumber.trim(), deliveryAddress.line1].filter(Boolean).join(', ')}${deliveryAddress.postalCode ? `, ${deliveryAddress.postalCode}` : ''}` : ''}`
+                      : `Takeaway${customerName.trim() ? ` · ${customerName.trim()}` : ''}${customerPhone.trim() ? ` · ${customerPhone.trim()}` : ''}`}
+                  </Text>
+                </View>
+                <TouchableOpacity onPress={() => setShowPlaceConfirm(false)} style={styles.pcClose} accessibilityRole="button" accessibilityLabel="Close">
+                  <X size={18} color="#64748B" />
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView style={styles.pcList} contentContainerStyle={styles.pcListContent}>
+                {cartEntries.map((entry) => {
+                  const dc = getDietColor(entry.item);
+                  const opts = getItemOptionsList(entry);
+                  return (
+                    <View key={entry.cartKey} style={styles.pcRow}>
+                      <Text style={styles.pcQty}>{entry.quantity}×</Text>
+                      {dc ? (
+                        <View style={styles.ctDietWrap}>
+                          <DietMark color={dc} size={13} />
+                        </View>
+                      ) : null}
+                      <View style={styles.ctFlex}>
+                        <Text style={styles.pcName}>{entry.item.name || entry.item.itemName}</Text>
+                        {opts.length > 0 ? <Text style={styles.pcOpts}>{opts.join(' · ')}</Text> : null}
+                        {entry.instructions ? <Text style={styles.ctItemNote}>“{entry.instructions}”</Text> : null}
+                      </View>
+                      <Text style={styles.pcPrice}>£{(entry.unitPrice * entry.quantity).toFixed(2)}</Text>
+                    </View>
+                  );
+                })}
+                {notes.trim() ? (
+                  <View style={styles.pcNote}>
+                    <MessageSquare size={14} color="#B45309" />
+                    <Text style={styles.pcNoteText}>{notes.trim()}</Text>
+                  </View>
+                ) : null}
+              </ScrollView>
+
+              <View style={styles.pcSummary}>
+                <View style={styles.pcSummaryRow}>
+                  <Text style={styles.pcSummaryLabel}>Payment</Text>
+                  <View style={styles.pcPayTag}>
+                    {paymentType === 'cash' ? <Banknote size={15} color="#047857" /> : <CreditCard size={15} color="#1D4ED8" />}
+                    <Text style={[styles.pcPayText, { color: paymentType === 'cash' ? '#047857' : '#1D4ED8' }]}>
+                      {paymentType === 'cash' ? 'Cash' : 'Card'}
+                    </Text>
+                  </View>
+                </View>
+                <View style={styles.pcSummaryRow}>
+                  <Text style={styles.pcSummaryLabel}>Receipts</Text>
+                  <Text style={styles.pcSummaryValue}>{autoPrint ? 'Print kitchen & customer' : 'Don’t print'}</Text>
+                </View>
+                <View style={[styles.pcSummaryRow, styles.pcTotalRow]}>
+                  <Text style={styles.pcTotalLabel}>
+                    Total · {totalItemCount} {totalItemCount === 1 ? 'item' : 'items'}
+                  </Text>
+                  <Text style={styles.pcTotalValue}>£{subtotal.toFixed(2)}</Text>
+                </View>
+              </View>
+
+              <View style={styles.pcButtons}>
+                <TouchableOpacity style={styles.pcBackBtn} onPress={() => setShowPlaceConfirm(false)} activeOpacity={0.75}>
+                  <Text style={styles.pcBackText}>Back</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.pcConfirmBtn, submitting && { opacity: 0.7 }]}
+                  onPress={() => {
+                    setShowPlaceConfirm(false);
+                    handleSubmit();
+                  }}
+                  disabled={submitting}
+                  activeOpacity={0.85}
+                >
+                  <Check size={18} color="#FFFFFF" strokeWidth={2.8} />
+                  <Text style={styles.pcConfirmText}>Place order · £{subtotal.toFixed(2)}</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
 
         {/* Item Customization Sub-Modal */}
         {customizingItem ? (
@@ -1385,6 +1943,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
           </Modal>
         ) : null}
     </SafeAreaView>
+      </SafeAreaProvider>
   </Modal>
   );
 };
@@ -1397,98 +1956,6 @@ const styles = StyleSheet.create({
   fullScreenContainer: {
     flex: 1,
     backgroundColor: '#FFFFFF',
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 13,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
-    backgroundColor: '#FFFFFF',
-  },
-  modalHeaderTablet: {
-    paddingHorizontal: 24,
-    paddingVertical: 16,
-  },
-  headerLeftGroup: {
-    flex: 1,
-    marginRight: 8,
-  },
-  titleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  modalTitle: {
-    fontSize: 17,
-    fontWeight: '800',
-    color: '#0F172A',
-    letterSpacing: -0.3,
-  },
-  modalTitleTablet: {
-    fontSize: 19,
-  },
-  quickLiveBadge: {
-    backgroundColor: '#ECFDF5',
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#A7F3D0',
-  },
-  quickLiveBadgeText: {
-    fontSize: 9.5,
-    fontWeight: '800',
-    color: '#059669',
-  },
-  modalSub: {
-    fontSize: 11.5,
-    color: '#64748B',
-    marginTop: 2,
-    fontWeight: '500',
-  },
-  headerRightGroup: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  headerClearBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: '#FEF2F2',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#FECACA',
-  },
-  headerClearIconBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 12,
-    backgroundColor: '#FEF2F2',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#FECACA',
-  },
-  headerClearText: {
-    fontSize: 11.5,
-    fontWeight: '700',
-    color: '#EF4444',
-  },
-  closeBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 12,
-    backgroundColor: '#F8FAFC',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
   },
   modalBody: {
     flex: 1,
@@ -1547,6 +2014,13 @@ const styles = StyleSheet.create({
   channelChipTextTakeawayActive: {
     color: '#EA580C',
   },
+  channelChipDeliveryActive: {
+    backgroundColor: '#EFF6FF',
+    borderColor: '#BFDBFE',
+  },
+  channelChipTextDeliveryActive: {
+    color: '#1D4ED8',
+  },
   searchRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1564,6 +2038,66 @@ const styles = StyleSheet.create({
     fontSize: 12.5,
     color: '#0F172A',
     fontWeight: '500',
+  },
+  categoryRail: {
+    width: 128,
+    backgroundColor: '#F1F5F9',
+    borderRightWidth: 1,
+    borderRightColor: '#E2E8F0',
+  },
+  categoryRailWide: {
+    width: 150,
+  },
+  categoryRailContent: {
+    padding: 10,
+    gap: 8,
+  },
+  railTile: {
+    minHeight: 68,
+    borderRadius: 8,
+    backgroundColor: '#1E293B',
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 4,
+  },
+  railTileActive: {
+    backgroundColor: '#FF5C39',
+  },
+  railTileText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
+    textAlign: 'center',
+    lineHeight: 18,
+  },
+  railTileCount: {
+    color: '#94A3B8',
+    fontSize: 11.5,
+    fontWeight: '700',
+  },
+  railTileCountActive: {
+    color: '#FFE4DC',
+  },
+  categoryHeading: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    gap: 8,
+    marginBottom: 10,
+  },
+  categoryHeadingText: {
+    flex: 1,
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#0F172A',
+    letterSpacing: -0.3,
+  },
+  categoryHeadingCount: {
+    fontSize: 12.5,
+    fontWeight: '600',
+    color: '#64748B',
   },
   categoryScroll: {
     flexGrow: 0,
@@ -1599,61 +2133,105 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   itemCard: {
-    flexBasis: '48.5%',
+    flexBasis: '48%',
     flexGrow: 1,
     maxWidth: '49%',
     backgroundColor: '#FFFFFF',
     borderRadius: 12,
     borderWidth: 1.5,
     borderColor: '#E2E8F0',
-    padding: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    minHeight: 52,
+    overflow: 'hidden',
   },
   itemCardWide: {
     flexBasis: '31.5%',
     maxWidth: '32.5%',
+  },
+  itemImageBox: {
+    width: '100%',
+    aspectRatio: 4 / 3,
+    backgroundColor: '#F1F5F9',
+  },
+  itemImageBoxTablet: {
+    aspectRatio: 16 / 11,
+  },
+  itemImage: {
+    width: '100%',
+    height: '100%',
+  },
+  itemImagePlaceholder: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  itemDietBadge: {
+    position: 'absolute',
+    top: 8,
+    left: 8,
+  },
+  itemTitleTablet: {
+    fontSize: 14,
+    lineHeight: 18,
+    minHeight: 36,
+  },
+  itemPriceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  itemPriceTextTablet: {
+    fontSize: 15,
+  },
+  itemAddIconActive: {
+    backgroundColor: '#FF5C39',
   },
   itemCardSelected: {
     borderColor: '#FF5C39',
     backgroundColor: '#FFF9F7',
   },
   itemContent: {
-    flex: 1,
-    marginRight: 6,
+    paddingHorizontal: 10,
+    paddingTop: 8,
+    paddingBottom: 10,
+    gap: 6,
   },
   itemTitle: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '700',
     color: '#1E293B',
+    lineHeight: 17,
+    minHeight: 34,
   },
   itemPriceText: {
-    fontSize: 11.5,
+    fontSize: 14,
     fontWeight: '800',
-    color: '#059669',
-    marginTop: 2,
+    color: '#0F172A',
+    fontVariant: ['tabular-nums'],
   },
   itemAddIcon: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
     backgroundColor: '#FFF0EC',
     alignItems: 'center',
     justifyContent: 'center',
   },
   itemQtyBadge: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
     backgroundColor: '#FF5C39',
-    borderRadius: 12,
-    width: 24,
-    height: 24,
+    borderRadius: 14,
+    minWidth: 28,
+    height: 28,
+    paddingHorizontal: 6,
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
   },
   itemQtyBadgeText: {
     color: '#FFFFFF',
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: '800',
   },
   menuLoadingBox: {
@@ -1677,6 +2255,224 @@ const styles = StyleSheet.create({
     color: '#94A3B8',
     fontWeight: '600',
   },
+  /* ── Order / cart panel ─────────────────────────────────── */
+  ctFlex: { flex: 1, minWidth: 0 },
+  ctTop: {
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+    gap: 10,
+  },
+  ctTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  ctTitle: { fontSize: 18, fontWeight: '800', color: '#0F172A', letterSpacing: -0.3 },
+  ctCountBadge: { minWidth: 24, height: 22, borderRadius: 11, backgroundColor: '#FF5C39', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 7 },
+  ctCountText: { color: '#FFFFFF', fontSize: 12, fontWeight: '800' },
+  ctChannelTag: { flexDirection: 'row', alignItems: 'center', gap: 5, borderRadius: 6, paddingHorizontal: 9, paddingVertical: 4 },
+  ctChannelDineIn: { backgroundColor: '#EDE9FE' },
+  ctChannelTakeaway: { backgroundColor: '#FFEDD5' },
+  ctChannelDelivery: { backgroundColor: '#DBEAFE' },
+  dlBox: { gap: 8, marginTop: 8 },
+  dlChosen: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    backgroundColor: '#EFF6FF',
+  },
+  dlChosenLine: { fontSize: 14.5, fontWeight: '700', color: '#0F172A' },
+  dlChosenSub: { fontSize: 12.5, color: '#475569', marginTop: 1 },
+  dlChange: { minHeight: 36, paddingHorizontal: 10, justifyContent: 'center' },
+  dlChangeText: { fontSize: 13.5, fontWeight: '700', color: '#1D4ED8' },
+  dlResult: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    minHeight: 44,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
+  },
+  dlResultText: { flex: 1, fontSize: 13.5, color: '#0F172A' },
+  dlHint: { fontSize: 12.5, color: '#64748B' },
+  ctChannelText: { fontSize: 12.5, fontWeight: '700' },
+  ctFieldRow: { flexDirection: 'row', gap: 8 },
+  ctField: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    minHeight: 44,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F8FAFC',
+  },
+  ctFieldTable: { width: 112 },
+  ctInput: { flex: 1, fontSize: 14.5, color: '#0F172A', paddingVertical: 8, fontWeight: '600' },
+  ctNoteField: { backgroundColor: '#FFFBEB', borderColor: '#FDE68A' },
+  ctAddNote: { flexDirection: 'row', alignItems: 'center', gap: 5, alignSelf: 'flex-start', minHeight: 32 },
+  ctAddNoteText: { color: '#FF5C39', fontSize: 13.5, fontWeight: '700' },
+
+  ctItems: { flex: 1 },
+  ctItemsContent: { paddingHorizontal: 16, paddingVertical: 4 },
+  ctRow: { paddingVertical: 12, gap: 4 },
+  ctRowDivider: { borderTopWidth: 1, borderTopColor: '#E9EDF2' },
+  ctRowTop: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
+  ctItemName: { flex: 1, fontSize: 15, fontWeight: '700', color: '#0F172A', lineHeight: 20 },
+  ctLineTotal: { fontSize: 15, fontWeight: '800', color: '#0F172A', fontVariant: ['tabular-nums'] },
+  ctOptions: { fontSize: 12.5, color: '#64748B', lineHeight: 17 },
+  ctItemNote: { fontSize: 12.5, color: '#B45309', fontStyle: 'italic', fontWeight: '600' },
+  ctRowBottom: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 6 },
+  ctStepper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 10,
+    overflow: 'hidden',
+  },
+  ctStepBtn: { width: 40, height: 38, alignItems: 'center', justifyContent: 'center' },
+  ctQty: { minWidth: 32, textAlign: 'center', fontSize: 15, fontWeight: '800', color: '#0F172A', fontVariant: ['tabular-nums'] },
+  ctEach: { fontSize: 12.5, color: '#94A3B8', fontWeight: '600' },
+
+  ctEmpty: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, minHeight: 180 },
+  ctEmptyIcon: { width: 60, height: 60, borderRadius: 30, backgroundColor: '#EEF2F6', alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
+  ctEmptyTitle: { fontSize: 16, fontWeight: '800', color: '#0F172A' },
+  ctEmptyText: { fontSize: 13.5, color: '#64748B', marginTop: 4, textAlign: 'center' },
+
+  ctFooter: {
+    backgroundColor: '#FFFFFF',
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 14,
+    gap: 10,
+  },
+  ctPaySegment: { flexDirection: 'row', backgroundColor: '#F1F5F9', borderRadius: 10, padding: 3 },
+  ctPayBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, minHeight: 40, borderRadius: 8 },
+  ctPayBtnActive: {
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#000',
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 1,
+  },
+  ctPayText: { fontSize: 14.5, fontWeight: '700', color: '#64748B' },
+  ctPrintRow: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 32 },
+  ctPrintText: { flex: 1, fontSize: 13.5, color: '#475569', fontWeight: '600' },
+  ctSwitch: { width: 40, height: 24, borderRadius: 12, backgroundColor: '#CBD5E1', padding: 2, justifyContent: 'center' },
+  ctSwitchOn: { backgroundColor: '#FF5C39' },
+  ctSwitchKnob: { width: 20, height: 20, borderRadius: 10, backgroundColor: '#FFFFFF' },
+  ctSwitchKnobOn: { alignSelf: 'flex-end' },
+  ctError: { backgroundColor: '#FEF2F2', borderWidth: 1, borderColor: '#FECACA', borderRadius: 8, padding: 10 },
+  ctErrorText: { color: '#B91C1C', fontSize: 13, fontWeight: '600' },
+  ctTotalRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: 2 },
+  ctTotalLabel: { fontSize: 15, fontWeight: '800', color: '#0F172A' },
+  ctTotalSub: { fontSize: 12.5, color: '#64748B', marginTop: 1, fontWeight: '500' },
+  ctTotalValue: { fontSize: 28, fontWeight: '800', color: '#0F172A', letterSpacing: -0.5, fontVariant: ['tabular-nums'] },
+  ctPlaceBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, minHeight: 56, borderRadius: 12, backgroundColor: '#FF5C39' },
+  ctPlaceBtnDisabled: { backgroundColor: '#CBD5E1' },
+  ctPlaceText: { color: '#FFFFFF', fontSize: 17, fontWeight: '800', letterSpacing: 0.2 },
+
+  ctDietWrap: { paddingTop: 3 },
+  pcOverlay: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.55)', justifyContent: 'center', alignItems: 'center', padding: 20 },
+  pcBox: { width: '100%', maxWidth: 480, maxHeight: '88%', backgroundColor: '#FFFFFF', borderRadius: 16, overflow: 'hidden' },
+  pcHeader: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 18, paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: '#E2E8F0' },
+  pcTitle: { fontSize: 19, fontWeight: '800', color: '#0F172A' },
+  pcSub: { fontSize: 13.5, color: '#64748B', marginTop: 2, fontWeight: '600' },
+  pcClose: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#F1F5F9', alignItems: 'center', justifyContent: 'center' },
+  pcList: { flexGrow: 0 },
+  pcListContent: { paddingHorizontal: 18, paddingVertical: 8 },
+  pcRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, paddingVertical: 8 },
+  pcQty: { minWidth: 28, fontSize: 14.5, fontWeight: '800', color: '#FF5C39' },
+  pcName: { fontSize: 14.5, fontWeight: '700', color: '#0F172A' },
+  pcOpts: { fontSize: 12.5, color: '#64748B', marginTop: 2 },
+  pcPrice: { fontSize: 14.5, fontWeight: '700', color: '#0F172A', fontVariant: ['tabular-nums'] },
+  pcNote: { flexDirection: 'row', gap: 8, backgroundColor: '#FFFBEB', borderRadius: 8, padding: 10, marginTop: 6, marginBottom: 4 },
+  pcNoteText: { flex: 1, fontSize: 13, color: '#92400E', fontWeight: '600' },
+  pcSummary: { paddingHorizontal: 18, paddingVertical: 12, gap: 8, backgroundColor: '#F8FAFC', borderTopWidth: 1, borderTopColor: '#E2E8F0' },
+  pcSummaryRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  pcSummaryLabel: { fontSize: 14, color: '#64748B', fontWeight: '600' },
+  pcSummaryValue: { fontSize: 14, color: '#0F172A', fontWeight: '700' },
+  pcPayTag: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  pcPayText: { fontSize: 14, fontWeight: '800' },
+  pcTotalRow: { marginTop: 4, paddingTop: 10, borderTopWidth: 1, borderTopColor: '#E2E8F0' },
+  pcTotalLabel: { fontSize: 15.5, fontWeight: '800', color: '#0F172A' },
+  pcTotalValue: { fontSize: 24, fontWeight: '800', color: '#0F172A', fontVariant: ['tabular-nums'] },
+  pcButtons: { flexDirection: 'row', gap: 10, padding: 16, borderTopWidth: 1, borderTopColor: '#E2E8F0' },
+  pcBackBtn: { minHeight: 52, paddingHorizontal: 22, borderRadius: 12, borderWidth: 1, borderColor: '#CBD5E1', alignItems: 'center', justifyContent: 'center' },
+  pcBackText: { fontSize: 15.5, fontWeight: '700', color: '#0F172A' },
+  pcConfirmBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, minHeight: 52, borderRadius: 12, backgroundColor: '#FF5C39' },
+  pcConfirmText: { color: '#FFFFFF', fontSize: 16, fontWeight: '800' },
+
+  /* ── POS top bar ────────────────────────────────────────── */
+  posTopBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+  },
+  posBrand: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 },
+  posBrandIcon: { width: 40, height: 40, borderRadius: 10, backgroundColor: '#FFF0EC', alignItems: 'center', justifyContent: 'center' },
+  posBrandTextCol: { flexShrink: 1, minWidth: 0 },
+  posBrandRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  posBrandText: { fontSize: 20, fontWeight: '900', color: '#0F172A', letterSpacing: 2 },
+  posLive: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#ECFDF5', borderRadius: 999, paddingHorizontal: 7, paddingVertical: 2 },
+  posLiveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#10B981' },
+  posLiveText: { fontSize: 10.5, fontWeight: '800', color: '#047857', letterSpacing: 0.6 },
+  posSub: { fontSize: 12.5, color: '#64748B', fontWeight: '600', marginTop: 1 },
+  posClock: { fontSize: 20, fontWeight: '800', color: '#64748B', fontVariant: ['tabular-nums'], marginLeft: 6 },
+  posControls: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  posClearBtn: {
+    height: 44,
+    minWidth: 44,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    backgroundColor: '#FEF2F2',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  posClearText: { fontSize: 14, fontWeight: '700', color: '#DC2626' },
+  posExitBtn: {
+    height: 44,
+    minWidth: 44,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  posExitText: { fontSize: 14, fontWeight: '700', color: '#0F172A' },
+  posBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 9, borderBottomWidth: 1 },
+  posBannerInfo: { backgroundColor: '#EFF6FF', borderBottomColor: '#BFDBFE' },
+  posBannerSuccess: { backgroundColor: '#ECFDF5', borderBottomColor: '#A7F3D0' },
+  posBannerText: { flex: 1, fontSize: 13.5, fontWeight: '700' },
+
   rightColumn: {
     flex: 1,
     backgroundColor: '#F8FAFC',
@@ -1686,271 +2482,6 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#F8FAFC',
     maxHeight: '100%',
-  },
-  formSection: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    padding: 12,
-    marginBottom: 10,
-    marginHorizontal: 16,
-    marginTop: 12,
-  },
-  formSectionTitle: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#475569',
-    textTransform: 'uppercase',
-    letterSpacing: 0.4,
-    marginBottom: 8,
-  },
-  fieldRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  inputField: {
-    backgroundColor: '#F8FAFC',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    fontSize: 12,
-    color: '#0F172A',
-  },
-  cartSection: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    padding: 12,
-    marginBottom: 10,
-    marginHorizontal: 16,
-  },
-  cartHeaderRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  cartHeaderTitle: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#475569',
-    textTransform: 'uppercase',
-    letterSpacing: 0.4,
-  },
-  clearCartText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#EF4444',
-  },
-  emptyCartBox: {
-    backgroundColor: '#F8FAFC',
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    borderStyle: 'dashed',
-    paddingVertical: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  emptyCartText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#64748B',
-  },
-  emptyCartSub: {
-    fontSize: 10.5,
-    color: '#94A3B8',
-    marginTop: 2,
-  },
-  cartList: {
-    gap: 6,
-  },
-  cartItemRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#F8FAFC',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-  },
-  cartItemInfo: {
-    flex: 1,
-    marginRight: 8,
-  },
-  cartItemName: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#1E293B',
-  },
-  cartItemPrice: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#059669',
-    marginTop: 1,
-  },
-  qtyControlRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  qtyBtn: {
-    width: 24,
-    height: 24,
-    borderRadius: 6,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  qtyNumber: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#0F172A',
-    minWidth: 18,
-    textAlign: 'center',
-  },
-  deleteBtn: {
-    padding: 5,
-    marginLeft: 2,
-  },
-  paymentSection: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    padding: 12,
-    marginBottom: 10,
-    marginHorizontal: 16,
-  },
-  paymentRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 10,
-  },
-  paymentBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 6,
-    borderRadius: 10,
-    backgroundColor: '#F8FAFC',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  paymentBtnCashActive: {
-    backgroundColor: '#ECFDF5',
-    borderColor: '#A7F3D0',
-  },
-  paymentBtnCardActive: {
-    backgroundColor: '#EFF6FF',
-    borderColor: '#BFDBFE',
-  },
-  paymentBtnText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#64748B',
-  },
-  paymentBtnTextCashActive: {
-    color: '#059669',
-  },
-  paymentBtnTextCardActive: {
-    color: '#2563EB',
-  },
-  autoPrintRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  checkbox: {
-    width: 18,
-    height: 18,
-    borderRadius: 5,
-    borderWidth: 1.5,
-    borderColor: '#CBD5E1',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#FFFFFF',
-  },
-  checkboxActive: {
-    backgroundColor: '#FF5C39',
-    borderColor: '#FF5C39',
-  },
-  autoPrintText: {
-    fontSize: 11.5,
-    fontWeight: '600',
-    color: '#475569',
-  },
-  errorBox: {
-    backgroundColor: '#FEF2F2',
-    borderWidth: 1,
-    borderColor: '#FCA5A5',
-    borderRadius: 10,
-    padding: 10,
-    marginBottom: 10,
-    marginHorizontal: 16,
-  },
-  errorText: {
-    fontSize: 11.5,
-    color: '#DC2626',
-    fontWeight: '600',
-  },
-  footerCheckout: {
-    backgroundColor: '#FFFFFF',
-    borderTopWidth: 1,
-    borderTopColor: '#E2E8F0',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  summaryRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  summaryLabel: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#64748B',
-  },
-  summaryValue: {
-    fontSize: 18,
-    fontWeight: '800',
-    color: '#059669',
-  },
-  submitOrderBtn: {
-    backgroundColor: '#FF5C39',
-    borderRadius: 12,
-    paddingVertical: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    shadowColor: '#FF5C39',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.25,
-    shadowRadius: 6,
-    elevation: 3,
-  },
-  submitBtnDisabled: {
-    backgroundColor: '#CBD5E1',
-    shadowOpacity: 0,
-    elevation: 0,
-  },
-  submitOrderBtnText: {
-    color: '#FFFFFF',
-    fontSize: 13.5,
-    fontWeight: '800',
   },
   // Mobile Specific Bar & Tab Styles
   mobileSegmentBar: {
@@ -2075,16 +2606,13 @@ const styles = StyleSheet.create({
     color: '#FF5C39',
   },
 
-  itemTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    flexWrap: 'wrap',
-  },
   customBadge: {
-    backgroundColor: '#EFF6FF',
-    paddingHorizontal: 6,
-    paddingVertical: 1.5,
+    position: 'absolute',
+    left: 8,
+    bottom: 8,
+    backgroundColor: 'rgba(255,255,255,0.95)',
+    paddingHorizontal: 7,
+    paddingVertical: 2.5,
     borderRadius: 6,
     borderWidth: 1,
     borderColor: '#BFDBFE',
@@ -2094,23 +2622,6 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#2563EB',
     textTransform: 'uppercase',
-  },
-  cartItemOptionsList: {
-    marginTop: 2,
-    marginBottom: 2,
-    gap: 1,
-  },
-  cartItemOptionPill: {
-    fontSize: 10.5,
-    color: '#64748B',
-    fontWeight: '600',
-    lineHeight: 14,
-  },
-  cartItemInstructions: {
-    fontSize: 10,
-    fontStyle: 'italic',
-    color: '#D97706',
-    marginTop: 1,
   },
   // Customization sub-modal styles
   customModalOverlay: {

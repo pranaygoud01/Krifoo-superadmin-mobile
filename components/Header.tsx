@@ -22,6 +22,7 @@ import { restaurantOwnerService, STORE_STATUS_CHANGED_EVENT } from '../services/
 import { useAuth } from '../context/AuthContext';
 import { useFontSize } from '../context/FontSizeContext';
 import { computeUnreadCount, NOTIFICATIONS_BADGE_EVENT } from '../services/notification-tracker.service';
+import { KRIFOO_UPDATE_EVENT } from '../utils/notification-kind';
 
 /** Compact Online / Offline pill shown beside the store name on the Home header. */
 const StoreStatusPill: React.FC<{ isActive: boolean; isTablet: boolean; onPress: () => void }> = ({
@@ -207,15 +208,19 @@ export const Header: React.FC<HeaderProps> = ({
     let isMounted = true;
     const fetchBadgeCount = async () => {
       try {
-        const [orderRes, restRes] = await Promise.all([
+        const isOwnerUser = user?.userType !== 'super_admin';
+        const [orderRes, restRes, updatesRes] = await Promise.all([
           orderService.fetchAllOrders({ status: 'placed,preparing' }).catch(() => ({ success: false, data: [] })),
           restaurantService.getRestaurants({ limit: 1000 }).catch(() => ({ success: false, data: [] })),
+          // Unread Krifoo service updates (restaurant owners only)
+          isOwnerUser ? restaurantOwnerService.getUpdates().catch(() => null) : Promise.resolve(null),
         ]);
 
-        const count = await computeUnreadCount(
-          orderRes.success && Array.isArray(orderRes.data) ? orderRes.data : [],
-          restRes.success && Array.isArray(restRes.data) ? restRes.data : []
-        );
+        const count =
+          (await computeUnreadCount(
+            orderRes.success && Array.isArray(orderRes.data) ? orderRes.data : [],
+            restRes.success && Array.isArray(restRes.data) ? restRes.data : []
+          )) + (updatesRes?.success ? updatesRes.unreadCount || 0 : 0);
 
         if (isMounted) {
           setUnreadCount(count);
@@ -236,9 +241,13 @@ export const Header: React.FC<HeaderProps> = ({
       }
     });
 
+    // A Krifoo update arrived while the app is open → refresh the count.
+    const updateSub = DeviceEventEmitter.addListener(KRIFOO_UPDATE_EVENT, fetchBadgeCount);
+
     return () => {
       isMounted = false;
       badgeSub.remove();
+      updateSub.remove();
     };
   }, []);
 

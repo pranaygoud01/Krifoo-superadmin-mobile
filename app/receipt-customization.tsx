@@ -81,6 +81,7 @@ import { printTestReceiptTemplate, getLastPrintJobReport } from '../services/the
 import { getPosPrinterConfig } from '../services/pos-config.service';
 import { restaurantService } from '../services/restaurant.service';
 import { restaurantOwnerService } from '../services/restaurant-owner.service';
+import { KEYBOARD_BEHAVIOR } from '../utils/keyboard';
 
 const SPLIT_BREAKPOINT = 900;
 
@@ -571,6 +572,12 @@ export default function ReceiptCustomizationScreen() {
       <FormSection icon={ShoppingBasket} title="Items & totals" description="Add-ons and sizes always print under each item.">
         <ToggleRow title="Customer notes on items" description="e.g. “No onions”" value={c.showItemNotes} onChange={(v) => setContent('showItemNotes', v)} />
         <ToggleRow title="Discount line" value={c.showDiscountLine} onChange={(v) => setContent('showDiscountLine', v)} />
+        <ToggleRow
+          title="Total"
+          description="The TOTAL amount line. Turn off for kitchen copies or gift receipts."
+          value={c.showTotal !== false}
+          onChange={(v) => setContent('showTotal', v)}
+        />
         <ToggleRow title="Payment status" description="e.g. “PAID - CARD” or “CASH DUE”" value={c.showPaymentMethod} onChange={(v) => setContent('showPaymentMethod', v)} />
         <ToggleRow title="VAT breakdown" description="Shows the VAT included in the total" value={c.showItemTaxBreakdown} onChange={(v) => setContent('showItemTaxBreakdown', v)} last={!c.showItemTaxBreakdown} />
         {c.showItemTaxBreakdown ? (
@@ -721,7 +728,7 @@ export default function ReceiptCustomizationScreen() {
   /* ── Screen ──────────────────────────────────────────────────────────── */
 
   return (
-    <KeyboardAvoidingView style={formStyles.screen} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoidingView style={formStyles.screen} behavior={KEYBOARD_BEHAVIOR}>
       {mode === 'list' ? (
         <ScreenHeader title="Receipt design" subtitle="Choose what your receipts show" />
       ) : (

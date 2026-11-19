@@ -1,15 +1,15 @@
 /**
  * Marketing — announcements and promo-code offers shown to customers in the Krifoo app.
+ * New posts are written on the full-screen page `app/create-post.tsx`.
  */
 import React, { useCallback, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, FlatList, RefreshControl, Switch, Alert } from 'react-native';
-import { useFocusEffect } from 'expo-router';
-import { Plus, Megaphone, Tag, Trash2, CalendarClock, Heart, Send } from 'lucide-react-native';
+import { Redirect, useFocusEffect, useRouter } from 'expo-router';
+import { useAuth } from '../context/AuthContext';
+import { Plus, Megaphone, Tag, Trash2, CalendarClock, Heart } from 'lucide-react-native';
 import { Colors } from '../constants/colors';
 import { useToast } from '../context/ToastContext';
 import { ScreenHeader } from '../components/ScreenHeader';
-import { BottomSheet } from '../components/ui/BottomSheet';
-import { Field, FieldRow, Segmented, Notice, PrimaryButton, sanitizeDecimal } from '../components/settings/FormKit';
 import { FilterChips, Card, Badge, BadgeTone, IconAction, EmptyState, LoadError, Fab, FAB_SPACE, formatGBP, listStyles } from '../components/ui/ListKit';
 import { restaurantOwnerService } from '../services/restaurant-owner.service';
 
@@ -23,62 +23,70 @@ interface Campaign {
   createdAt?: string;
   offerDetails?: {
     promoCode: string;
-    discountType: 'percentage' | 'flat';
+    /** Server stores PERCENTAGE / FLAT / FREE_DELIVERY; older records may be lower case. */
+    discountType: string;
     discountValue: number;
     minOrderValue: number;
+    validFrom?: string | null;
     validUntil: string;
+    applicableTo?: ApplyTo;
+    applicableCategories?: Array<{ _id: string; categoryName?: string } | string>;
+    applicableItems?: Array<{ _id: string; itemName?: string } | string>;
   };
   reactions?: Record<string, number | undefined>;
 }
 
-type Filter = 'all' | 'live' | 'paused' | 'expired';
-type State = 'live' | 'paused' | 'expired';
+type Filter = 'all' | 'live' | 'scheduled' | 'paused' | 'expired';
+type State = 'live' | 'scheduled' | 'paused' | 'expired';
+type ApplyTo = 'ALL' | 'CATEGORY' | 'ITEMS';
 
 const isExpired = (c: Campaign) => {
   const until = c.offerDetails?.validUntil;
   return c.announcementType === 'offer' && !!until && new Date(until).getTime() < Date.now();
 };
-const stateOf = (c: Campaign): State => (isExpired(c) ? 'expired' : c.isActive ? 'live' : 'paused');
+const isScheduled = (c: Campaign) => {
+  const from = c.offerDetails?.validFrom;
+  return c.announcementType === 'offer' && !!from && new Date(from).getTime() > Date.now();
+};
+const stateOf = (c: Campaign): State =>
+  isExpired(c) ? 'expired' : !c.isActive ? 'paused' : isScheduled(c) ? 'scheduled' : 'live';
 const STATE_BADGE: Record<State, { label: string; tone: BadgeTone }> = {
   live: { label: 'Live', tone: 'success' },
+  scheduled: { label: 'Scheduled', tone: 'info' },
   paused: { label: 'Paused', tone: 'neutral' },
   expired: { label: 'Expired', tone: 'danger' },
 };
 
 const reactionTotal = (c: Campaign) => Object.values(c.reactions || {}).reduce<number>((sum, v) => sum + (Number(v) || 0), 0);
 
-const discountText = (type: 'percentage' | 'flat', value: unknown) =>
-  type === 'percentage' ? `${Number(value) || 0}% off` : `${formatGBP(value)} off`;
+const discountText = (type: string, value: unknown) => {
+  const t = String(type || '').toLowerCase();
+  if (t === 'free_delivery') return 'Free delivery';
+  return t === 'percentage' ? `${Number(value) || 0}% off` : `${formatGBP(value)} off`;
+};
+
+/** "All dishes" / "Brunch, Biryani" / "Sandwich + 2 more" for an offer card. */
+const appliesToText = (o: NonNullable<Campaign['offerDetails']>) => {
+  const kind = String(o.applicableTo || 'ALL').toUpperCase();
+  const names = (list: any[] | undefined, key: string) =>
+    (list || []).map((x) => (typeof x === 'object' ? x?.[key] : null)).filter(Boolean) as string[];
+  const summarise = (arr: string[], fallback: string) =>
+    arr.length === 0 ? fallback : arr.length <= 2 ? arr.join(', ') : `${arr.slice(0, 2).join(', ')} + ${arr.length - 2} more`;
+  if (kind === 'CATEGORY') return `Categories: ${summarise(names(o.applicableCategories, 'categoryName'), `${o.applicableCategories?.length || 0} selected`)}`;
+  if (kind === 'ITEMS') return `Dishes: ${summarise(names(o.applicableItems, 'itemName'), `${o.applicableItems?.length || 0} selected`)}`;
+  return 'All dishes';
+};
 
 const fmtDate = (iso: string) => new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 
-/** End of the given local day, as an ISO timestamp (offers stay valid all day). */
-const endOfDayIso = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59).toISOString();
-const daysFromNow = (n: number) => {
-  const d = new Date();
-  d.setDate(d.getDate() + n);
-  return d;
-};
-
-const DURATIONS = [
-  { value: '7', label: '1 week' },
-  { value: '14', label: '2 weeks' },
-  { value: '30', label: '1 month' },
-  { value: '90', label: '3 months' },
-];
-
-const emptyForm = {
-  type: 'text' as 'text' | 'offer',
-  title: '',
-  content: '',
-  promoCode: '',
-  discountType: 'percentage' as 'percentage' | 'flat',
-  discountValue: '',
-  minOrderValue: '',
-  duration: '30',
-};
-
 export default function MarketingScreen() {
+  // Marketing is the restaurant owner's offers screen; super admins use Restaurant updates.
+  const { user } = useAuth();
+  if (user?.userType === 'super_admin') return <Redirect href="/broadcast" />;
+  return <OwnerMarketingScreen />;
+}
+
+function OwnerMarketingScreen() {
   const { showToast } = useToast();
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(true);
@@ -87,10 +95,7 @@ export default function MarketingScreen() {
   const [filter, setFilter] = useState<Filter>('all');
   const [busyId, setBusyId] = useState<string | null>(null);
 
-  const [sheetOpen, setSheetOpen] = useState(false);
-  const [form, setForm] = useState(emptyForm);
-  const [errors, setErrors] = useState<Record<string, string | undefined>>({});
-  const [saving, setSaving] = useState(false);
+  const router = useRouter();
 
   const load = useCallback(async () => {
     try {
@@ -125,7 +130,7 @@ export default function MarketingScreen() {
     [campaigns]
   );
   const counts = useMemo(() => {
-    const c: Record<Filter, number> = { all: campaigns.length, live: 0, paused: 0, expired: 0 };
+    const c: Record<Filter, number> = { all: campaigns.length, live: 0, scheduled: 0, paused: 0, expired: 0 };
     campaigns.forEach((x) => c[stateOf(x)]++);
     return c;
   }, [campaigns]);
@@ -135,72 +140,13 @@ export default function MarketingScreen() {
       campaigns
         .filter((c) => filter === 'all' || stateOf(c) === filter)
         .sort((a, b) => {
-          const order = { live: 0, paused: 1, expired: 2 };
+          const order = { live: 0, scheduled: 1, paused: 2, expired: 3 };
           return order[stateOf(a)] - order[stateOf(b)] || String(b.createdAt || '').localeCompare(String(a.createdAt || ''));
         }),
     [campaigns, filter]
   );
 
-  /* ── Create ────────────────────────────────────────────────────────── */
-
-  const set = (key: keyof typeof emptyForm, value: string) => {
-    setForm((f) => ({ ...f, [key]: value }));
-    setErrors((e) => ({ ...e, [key]: undefined }));
-  };
-
-  const openCreate = () => {
-    setForm(emptyForm);
-    setErrors({});
-    setSheetOpen(true);
-  };
-
-  const create = async () => {
-    const e: Record<string, string> = {};
-    if (!form.title.trim()) e.title = 'Give it a short headline.';
-    if (!form.content.trim()) e.content = 'Tell customers what it’s about.';
-    let details: Campaign['offerDetails'] | undefined;
-    if (form.type === 'offer') {
-      const code = form.promoCode.trim().toUpperCase();
-      if (!/^[A-Z0-9]{3,15}$/.test(code)) e.promoCode = '3–15 letters or numbers, no spaces.';
-      else if (campaigns.some((c) => c.offerDetails?.promoCode?.toUpperCase() === code && stateOf(c) !== 'expired'))
-        e.promoCode = 'This code is already in use.';
-      const value = Number(form.discountValue);
-      if (form.discountType === 'percentage' && !(value >= 1 && value <= 100)) e.discountValue = 'Between 1% and 100%.';
-      if (form.discountType === 'flat' && !(value > 0)) e.discountValue = 'Enter an amount above £0.';
-      const min = Number(form.minOrderValue || 0);
-      if (isNaN(min) || min < 0) e.minOrderValue = 'Enter £0 or more.';
-      else if (form.discountType === 'flat' && min > 0 && value >= min) e.minOrderValue = 'Must be more than the discount.';
-      if (!e.promoCode && !e.discountValue && !e.minOrderValue) {
-        details = {
-          promoCode: code,
-          discountType: form.discountType,
-          discountValue: Math.round(value * 100) / 100,
-          minOrderValue: Math.round(min * 100) / 100,
-          validUntil: endOfDayIso(daysFromNow(Number(form.duration))),
-        };
-      }
-    }
-    setErrors(e);
-    if (Object.keys(e).length) return;
-
-    setSaving(true);
-    try {
-      const data = new FormData();
-      data.append('title', form.title.trim());
-      data.append('content', form.content.trim());
-      data.append('announcementType', form.type);
-      if (details) data.append('offerDetails', JSON.stringify(details));
-      const res = await restaurantOwnerService.createAnnouncement(data);
-      if (!res.success) throw new Error(res.message || 'Couldn’t publish.');
-      showToast({ title: form.type === 'offer' ? 'Offer is live' : 'Announcement is live', message: 'Customers can see it in the Krifoo app.', type: 'success' });
-      setSheetOpen(false);
-      load();
-    } catch (err: any) {
-      showToast({ title: 'Couldn’t publish', message: err?.message || 'Please try again.', type: 'error' });
-    } finally {
-      setSaving(false);
-    }
-  };
+  const openCreate = () => router.push('/create-post');
 
   /* ── Row actions ───────────────────────────────────────────────────── */
 
@@ -279,6 +225,7 @@ export default function MarketingScreen() {
             <View style={listStyles.flex}>
               <Text style={styles.couponValue}>{discountText(o.discountType, o.discountValue)}</Text>
               <Text style={styles.couponMeta}>{Number(o.minOrderValue) > 0 ? `On orders over ${formatGBP(o.minOrderValue)}` : 'No minimum order'}</Text>
+              <Text style={styles.couponMeta} numberOfLines={1}>{appliesToText(o)}</Text>
             </View>
           </View>
         ) : null}
@@ -288,7 +235,10 @@ export default function MarketingScreen() {
           {o?.validUntil ? (
             <View style={styles.meta}>
               <CalendarClock size={14} color={Colors.textSubtle} />
-              <Text style={listStyles.meta}>{state === 'expired' ? 'Ended' : 'Ends'} {fmtDate(o.validUntil)}</Text>
+              <Text style={listStyles.meta}>
+                {state === 'scheduled' && o.validFrom ? `Starts ${fmtDate(o.validFrom)} · ` : ''}
+                {state === 'expired' ? 'Ended' : 'Ends'} {fmtDate(o.validUntil)}
+              </Text>
             </View>
           ) : null}
           {reactions > 0 ? (
@@ -303,8 +253,6 @@ export default function MarketingScreen() {
       </Card>
     );
   };
-
-  const previewValue = Number(form.discountValue);
 
   return (
     <View style={styles.screen}>
@@ -333,6 +281,7 @@ export default function MarketingScreen() {
                   options={[
                     { value: 'all', label: 'All', count: counts.all },
                     { value: 'live', label: 'Live', count: counts.live },
+                    ...(counts.scheduled > 0 ? [{ value: 'scheduled' as Filter, label: 'Scheduled', count: counts.scheduled }] : []),
                     { value: 'paused', label: 'Paused', count: counts.paused },
                     { value: 'expired', label: 'Expired', count: counts.expired },
                   ]}
@@ -360,102 +309,6 @@ export default function MarketingScreen() {
 
       {campaigns.length > 0 && <Fab label="New post" icon={Plus} onPress={openCreate} />}
 
-      <BottomSheet
-        visible={sheetOpen}
-        title={form.type === 'offer' ? 'New offer' : 'New announcement'}
-        subtitle="Shown to customers in the Krifoo app"
-        onClose={() => setSheetOpen(false)}
-        footer={
-          <>
-            <PrimaryButton label="Cancel" tone="secondary" onPress={() => setSheetOpen(false)} style={styles.flex} />
-            <PrimaryButton label="Publish" icon={Send} onPress={create} loading={saving} style={styles.flex} />
-          </>
-        }
-      >
-        <Segmented
-          options={[
-            { value: 'text', label: 'Announcement' },
-            { value: 'offer', label: 'Offer with promo code' },
-          ]}
-          value={form.type}
-          onChange={(v) => set('type', v)}
-        />
-        <Field
-          label="Headline"
-          required
-          value={form.title}
-          onChangeText={(v) => set('title', v)}
-          placeholder={form.type === 'offer' ? 'e.g. 20% off this weekend' : 'e.g. New summer menu is here'}
-          maxLength={60}
-          error={errors.title}
-        />
-        <Field
-          label="Message"
-          required
-          value={form.content}
-          onChangeText={(v) => set('content', v)}
-          placeholder="A sentence or two for your customers"
-          multiline
-          maxLength={300}
-          hint={`${form.content.length}/300`}
-          error={errors.content}
-        />
-
-        {form.type === 'offer' && (
-          <>
-            <Field
-              label="Promo code"
-              required
-              value={form.promoCode}
-              onChangeText={(v) => set('promoCode', v.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
-              placeholder="e.g. WEEKEND20"
-              autoCapitalize="characters"
-              autoCorrect={false}
-              maxLength={15}
-              error={errors.promoCode}
-            />
-            <Text style={styles.label}>Discount</Text>
-            <Segmented
-              options={[
-                { value: 'percentage', label: 'Percentage (%)' },
-                { value: 'flat', label: 'Amount (£)' },
-              ]}
-              value={form.discountType}
-              onChange={(v) => set('discountType', v)}
-            />
-            <FieldRow>
-              <Field
-                label={form.discountType === 'percentage' ? 'Percentage off' : 'Amount off'}
-                required
-                value={form.discountValue}
-                onChangeText={(v) => set('discountValue', sanitizeDecimal(v))}
-                keyboardType="decimal-pad"
-                prefix={form.discountType === 'flat' ? '£' : undefined}
-                suffix={form.discountType === 'percentage' ? '%' : undefined}
-                placeholder={form.discountType === 'percentage' ? '20' : '5.00'}
-                error={errors.discountValue}
-              />
-              <Field
-                label="Minimum order"
-                value={form.minOrderValue}
-                onChangeText={(v) => set('minOrderValue', sanitizeDecimal(v))}
-                keyboardType="decimal-pad"
-                prefix="£"
-                placeholder="0.00"
-                hint="Leave empty for none"
-                error={errors.minOrderValue}
-              />
-            </FieldRow>
-            <Text style={styles.label}>Runs for</Text>
-            <Segmented options={DURATIONS} value={form.duration} onChange={(v) => set('duration', v)} />
-            <Notice tone="success" icon={Tag}>
-              {`Customers enter ${form.promoCode || 'YOURCODE'} at checkout for ${previewValue > 0 ? discountText(form.discountType, previewValue) : 'a discount'}${
-                Number(form.minOrderValue) > 0 ? ` on orders over ${formatGBP(form.minOrderValue)}` : ''
-              }. Ends ${fmtDate(endOfDayIso(daysFromNow(Number(form.duration))))}.`}
-            </Notice>
-          </>
-        )}
-      </BottomSheet>
     </View>
   );
 }
@@ -487,5 +340,4 @@ const styles = StyleSheet.create({
   couponMeta: { fontSize: 12, color: '#6D28D9', marginTop: 1 },
   footer: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 12, marginTop: 14, paddingTop: 12, borderTopWidth: 1, borderTopColor: Colors.cardBorder },
   meta: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  label: { fontSize: 13, fontWeight: '700', color: Colors.text, marginBottom: 7 },
 });

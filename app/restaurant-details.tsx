@@ -51,6 +51,7 @@ import {
   RotateCcw,
   Store,
 } from 'lucide-react-native';
+import { KEYBOARD_BEHAVIOR } from '../utils/keyboard';
 
 /* ────────────────────────────────────────────────────────────────────────────
  * Form model
@@ -1026,7 +1027,7 @@ export default function RestaurantDetailsScreen() {
     <View style={styles.container}>
       <Header title="Restaurant" showBackButton />
 
-      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardAvoidingView style={styles.flex} behavior={KEYBOARD_BEHAVIOR}>
         <ScrollView
           contentContainerStyle={[styles.frame, { paddingHorizontal: gutter, paddingTop: 16, paddingBottom: bottomPad }]}
           keyboardShouldPersistTaps="handled"

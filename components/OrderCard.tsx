@@ -11,7 +11,7 @@ interface OrderCardProps {
   onAssignDelivery: (order: Order) => void;
 }
 
-import { getOrderStatusColor } from '../app/(tabs)/orders';
+import { getOrderStatusColor } from '../utils/order-status';
 
 export const OrderCard: React.FC<OrderCardProps> = ({ order, onPress, onAssignDelivery }) => {
   const statusColor = getOrderStatusColor(order.status);

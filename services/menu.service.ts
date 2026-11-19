@@ -14,6 +14,17 @@ export const menuService = {
     });
   },
 
+  /**
+   * Restaurant owner: create a category (POST /api/menu-items/categories). If one with the same
+   * name already exists, the server returns that one (re-enabled) instead of a duplicate.
+   */
+  async createCategory(payload: { categoryName: string; description?: string }): Promise<{ success: boolean; data?: Category; message?: string }> {
+    return apiRequest('/api/menu-items/categories', {
+      method: 'POST',
+      body: payload,
+    });
+  },
+
   async getAllCategories(): Promise<{ success: boolean; data?: Category[]; message?: string }> {
     return apiRequest('/api/menu-items/categories', {
       method: 'GET',

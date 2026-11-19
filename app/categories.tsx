@@ -13,6 +13,7 @@ import {
   KeyboardAvoidingView,
   ActivityIndicator,
   Platform,
+  useWindowDimensions,
 } from 'react-native';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
@@ -24,7 +25,7 @@ import { Colors } from '../constants/colors';
 import { categoryService } from '../services/category.service';
 import { useToast } from '../context/ToastContext';
 import { Category } from '../types';
-import { Plus, Search, Pencil, Trash2, Layers, X, ImagePlus, SearchX } from 'lucide-react-native';
+import { Plus, Search, Pencil, Trash2, Layers, X, ImagePlus, SearchX, ImageOff, EyeOff } from 'lucide-react-native';
 import {
   ErrorView,
   Field,
@@ -35,17 +36,20 @@ import {
   formStyles,
   useFormLayout,
 } from '../components/settings/FormKit';
+import { KEYBOARD_BEHAVIOR } from '../utils/keyboard';
 
 /**
  * Global menu categories (super admin).
  * Backend: GET/POST /api/admin/categories, PUT/DELETE /api/admin/categories/:id.
  * POST/PUT are multipart: categoryName, description, isActive ('true'|'false'), categoryType,
- * and an optional image file in the `categoryImage` field (the backend uploads it to Cloudinary).
+ * and an optional image file in the `categoryImage` field (the backend stores it on Cloudflare R2).
+ * Images from the old Cloudinary account no longer load; those tiles are flagged "Re-upload image".
  * Deleting a category also removes it from every menu item.
  */
 
 type CategoryType = 'both' | 'food' | 'grocery' | 'meat_poultry';
 type StatusFilter = 'all' | 'active' | 'inactive';
+type TypeFilter = 'any' | CategoryType;
 
 const TYPE_OPTIONS: { value: CategoryType; label: string }[] = [
   { value: 'both', label: 'All stores' },
@@ -108,6 +112,11 @@ export default function CategoriesScreen() {
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState<StatusFilter>('all');
   const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [typeFilter, setTypeFilter] = useState<TypeFilter>('any');
+  const [needsImageOnly, setNeedsImageOnly] = useState(false);
+  /** Categories whose image failed to load (e.g. deleted Cloudinary files) */
+  const [brokenImages, setBrokenImages] = useState<Set<string>>(() => new Set());
+  const { width } = useWindowDimensions();
 
   const [editorOpen, setEditorOpen] = useState(false);
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
@@ -146,11 +155,27 @@ export default function CategoriesScreen() {
     [categories]
   );
 
+  const needsImage = useCallback(
+    (c: Category) => !resolveMediaImageSource(c.imageUrl) || brokenImages.has(c._id),
+    [brokenImages]
+  );
+  const typeCounts = useMemo(() => {
+    const out: Record<string, number> = { any: categories.length, both: 0, food: 0, grocery: 0, meat_poultry: 0 };
+    categories.forEach((c) => {
+      const k = c.categoryType || 'both';
+      out[k] = (out[k] || 0) + 1;
+    });
+    return out;
+  }, [categories]);
+  const needsImageCount = useMemo(() => categories.filter(needsImage).length, [categories, needsImage]);
+
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
     return categories.filter((c) => {
       if (status === 'active' && !c.isActive) return false;
       if (status === 'inactive' && c.isActive) return false;
+      if (typeFilter !== 'any' && (c.categoryType || 'both') !== typeFilter) return false;
+      if (needsImageOnly && !needsImage(c)) return false;
       if (!q) return true;
       return (
         c.categoryName?.toLowerCase().includes(q) ||
@@ -158,7 +183,7 @@ export default function CategoriesScreen() {
         TYPE_LABELS[c.categoryType || 'both']?.toLowerCase().includes(q)
       );
     });
-  }, [categories, query, status]);
+  }, [categories, query, status, typeFilter, needsImageOnly, needsImage]);
 
   const upsertLocal = (cat: Category) =>
     setCategories((prev) => {
@@ -238,6 +263,13 @@ export default function CategoriesScreen() {
       if (res.success) {
         if (res.data) upsertLocal(res.data);
         else fetchCategories('refresh');
+        if (draft.id && draft.newImageUri) {
+          setBrokenImages((prev) => {
+            const next = new Set(prev);
+            next.delete(draft.id as string);
+            return next;
+          });
+        }
         setEditorOpen(false);
         showToast({
           title: draft.id ? 'Category updated' : 'Category created',
@@ -301,34 +333,65 @@ export default function CategoriesScreen() {
 
   /* ── Rendering ────────────────────────────────────────────────────────── */
 
-  const columns = isTablet ? 2 : 1;
+  const columns = width >= 1024 ? 4 : isTablet ? 3 : 2;
 
   const renderItem = ({ item }: { item: Category }) => {
     const img = resolveMediaImageSource(item.imageUrl);
+    const broken = brokenImages.has(item._id);
+    const showImage = Boolean(img) && !broken;
+    const typeLabel = TYPE_LABELS[item.categoryType || 'both'] || 'All stores';
     return (
-      <View style={[styles.cell, columns > 1 && { width: '50%', paddingHorizontal: 6 }]}>
-        <View style={[styles.card, !item.isActive && styles.cardInactive]}>
-          <TouchableOpacity style={styles.cardMain} onPress={() => openEdit(item)} activeOpacity={0.75} accessibilityRole="button" accessibilityLabel={`Edit ${item.categoryName}`}>
-            {img ? (
-              <Image source={img} style={styles.thumb} contentFit="cover" transition={150} cachePolicy="memory-disk" />
-            ) : (
-              <View style={[styles.thumb, styles.thumbEmpty]}>
-                <Layers size={20} color={Colors.primary} />
-              </View>
-            )}
-            <View style={styles.cardText}>
-              <Text style={styles.cardTitle} numberOfLines={1}>
+      <View style={[styles.cell, { width: `${100 / columns}%` }]}>
+        <View style={[styles.tile, !item.isActive && styles.tileInactive]}>
+          <TouchableOpacity
+            onPress={() => openEdit(item)}
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel={`Edit ${item.categoryName}`}
+          >
+            <View style={styles.tileMedia}>
+              {showImage ? (
+                <Image
+                  source={img!}
+                  style={[styles.tileImage, !item.isActive && { opacity: 0.55 }]}
+                  contentFit="cover"
+                  transition={150}
+                  cachePolicy="memory-disk"
+                  onError={() => setBrokenImages((prev) => new Set(prev).add(item._id))}
+                />
+              ) : (
+                <View style={[styles.tileImage, styles.tileFallback]}>
+                  <Text style={styles.tileInitial}>{(item.categoryName || '?').trim().charAt(0).toUpperCase()}</Text>
+                </View>
+              )}
+
+              {!item.isActive && (
+                <View style={[styles.badge, styles.badgeLeft, styles.badgeHidden]}>
+                  <EyeOff size={11} color="#FFFFFF" />
+                  <Text style={styles.badgeHiddenText}>Hidden</Text>
+                </View>
+              )}
+              {(broken || !img) && (
+                <View style={[styles.badge, styles.badgeBottom, styles.badgeWarn]}>
+                  <ImageOff size={11} color={Colors.statusPending.text} />
+                  <Text style={styles.badgeWarnText}>{broken ? 'Re-upload image' : 'No image'}</Text>
+                </View>
+              )}
+            </View>
+
+            <View style={styles.tileBody}>
+              <Text style={styles.tileTitle} numberOfLines={1}>
                 {item.categoryName}
               </Text>
-              <Text style={styles.cardMeta} numberOfLines={1}>
-                {TYPE_LABELS[item.categoryType || 'both'] || 'All stores'}
-                {item.description ? ` · ${item.description}` : ''}
+              <Text style={styles.tileMeta} numberOfLines={1}>
+                {typeLabel}
               </Text>
             </View>
           </TouchableOpacity>
-          <View style={styles.cardActions}>
+
+          <View style={styles.tileFooter}>
             {togglingId === item._id ? (
-              <ActivityIndicator color={Colors.primary} style={{ width: 51 }} />
+              <ActivityIndicator color={Colors.primary} style={{ width: 44 }} />
             ) : (
               <Switch
                 value={!!item.isActive}
@@ -336,9 +399,11 @@ export default function CategoriesScreen() {
                 trackColor={{ false: Colors.cardBorder, true: Colors.success }}
                 thumbColor="#FFFFFF"
                 ios_backgroundColor={Colors.cardBorder}
+                style={Platform.OS === 'ios' ? { transform: [{ scale: 0.8 }] } : undefined}
                 accessibilityLabel={`${item.categoryName} active`}
               />
             )}
+            <View style={{ flex: 1 }} />
             <TouchableOpacity style={styles.iconBtn} onPress={() => openEdit(item)} accessibilityLabel={`Edit ${item.categoryName}`}>
               <Pencil size={16} color={Colors.textMuted} />
             </TouchableOpacity>
@@ -352,7 +417,7 @@ export default function CategoriesScreen() {
   };
 
   const emptyState = () => {
-    const searching = query.trim().length > 0 || status !== 'all';
+    const searching = query.trim().length > 0 || status !== 'all' || typeFilter !== 'any' || needsImageOnly;
     return (
       <View style={styles.empty}>
         <View style={styles.emptyIcon}>{searching ? <SearchX size={28} color={Colors.textSubtle} /> : <Layers size={28} color={Colors.primary} />}</View>
@@ -361,7 +426,7 @@ export default function CategoriesScreen() {
           {searching ? 'Try a different search or filter.' : 'Create categories so stores can organise their menus.'}
         </Text>
         {searching ? (
-          <PrimaryButton label="Clear filters" tone="secondary" onPress={() => { setQuery(''); setStatus('all'); }} style={{ marginTop: 16 }} />
+          <PrimaryButton label="Clear filters" tone="secondary" onPress={() => { setQuery(''); setStatus('all'); setTypeFilter('any'); setNeedsImageOnly(false); }} style={{ marginTop: 16 }} />
         ) : (
           <PrimaryButton label="Add category" icon={Plus} onPress={openAdd} style={{ marginTop: 16 }} />
         )}
@@ -415,6 +480,37 @@ export default function CategoriesScreen() {
               ]}
             />
           </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips} keyboardShouldPersistTaps="handled">
+            {([{ value: 'any', label: 'All types' }, ...TYPE_OPTIONS] as { value: TypeFilter; label: string }[]).map((opt) => {
+              const selected = typeFilter === opt.value;
+              return (
+                <TouchableOpacity
+                  key={opt.value}
+                  style={[styles.chip, selected && styles.chipOn]}
+                  onPress={() => setTypeFilter(opt.value)}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected }}
+                >
+                  <Text style={[styles.chipText, selected && styles.chipTextOn]}>
+                    {opt.label} <Text style={[styles.chipCount, selected && styles.chipTextOn]}>{typeCounts[opt.value] ?? 0}</Text>
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+            {needsImageCount > 0 && (
+              <TouchableOpacity
+                style={[styles.chip, styles.chipWarn, needsImageOnly && styles.chipWarnOn]}
+                onPress={() => setNeedsImageOnly((v) => !v)}
+                accessibilityRole="switch"
+                accessibilityState={{ checked: needsImageOnly }}
+              >
+                <ImageOff size={13} color={needsImageOnly ? '#FFFFFF' : Colors.statusPending.text} />
+                <Text style={[styles.chipText, { color: needsImageOnly ? '#FFFFFF' : Colors.statusPending.text }]}>
+                  Needs image {needsImageCount}
+                </Text>
+              </TouchableOpacity>
+            )}
+          </ScrollView>
         </View>
       </View>
 
@@ -429,12 +525,12 @@ export default function CategoriesScreen() {
           numColumns={columns}
           keyExtractor={(c) => c._id}
           renderItem={renderItem}
-          extraData={togglingId}
+          extraData={[togglingId, brokenImages]}
           ListEmptyComponent={emptyState}
           contentContainerStyle={[
             styles.frame,
             styles.list,
-            { paddingHorizontal: columns > 1 ? gutter - 6 : gutter },
+            { paddingHorizontal: gutter - 6 },
             !visible.length && { flexGrow: 1 },
           ]}
           keyboardShouldPersistTaps="handled"
@@ -454,7 +550,7 @@ export default function CategoriesScreen() {
 
       {/* Add / edit sheet */}
       <Modal visible={editorOpen} transparent animationType={isTablet ? 'fade' : 'slide'} statusBarTranslucent onRequestClose={() => !submitting && setEditorOpen(false)}>
-        <KeyboardAvoidingView style={[styles.overlay, isTablet && styles.overlayTablet]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <KeyboardAvoidingView style={[styles.overlay, isTablet && styles.overlayTablet]} behavior={KEYBOARD_BEHAVIOR}>
           <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => !submitting && setEditorOpen(false)} accessibilityLabel="Close" />
           <View style={[styles.sheet, isTablet && styles.sheetTablet, { paddingBottom: isTablet ? 16 : Math.max(insets.bottom, 16) }]}>
             <View style={styles.sheetHead}>
@@ -552,7 +648,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     backgroundColor: Colors.primary,
   },
-  addBtnText: { fontSize: 14, fontWeight: '800', color: '#FFFFFF' },
+  addBtnText: { fontSize: 14, fontWeight: '700', color: '#FFFFFF' },
 
   toolbar: { backgroundColor: Colors.background, borderBottomWidth: 1, borderBottomColor: Colors.cardBorder, paddingTop: 12 },
   search: {
@@ -570,26 +666,67 @@ const styles = StyleSheet.create({
   clearBtn: { width: 20, height: 20, borderRadius: 10, backgroundColor: Colors.textSubtle, alignItems: 'center', justifyContent: 'center' },
 
   list: { paddingTop: 14, paddingBottom: 40 },
-  cell: { marginBottom: 10 },
-  card: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+  cell: { paddingHorizontal: 6, marginBottom: 12 },
+  tile: {
     backgroundColor: Colors.background,
     borderRadius: 16,
     borderWidth: 1,
     borderColor: Colors.cardBorder,
-    padding: 10,
+    overflow: 'hidden',
   },
-  cardInactive: { backgroundColor: Colors.cardSurface },
-  cardMain: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 12 },
-  thumb: { width: 52, height: 52, borderRadius: 12 },
-  thumbEmpty: { backgroundColor: Colors.primaryLight, alignItems: 'center', justifyContent: 'center' },
-  cardText: { flex: 1, minWidth: 0 },
-  cardTitle: { fontSize: 15, fontWeight: '800', color: Colors.text },
-  cardMeta: { fontSize: 13, color: Colors.textMuted, marginTop: 2 },
-  cardActions: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  tileInactive: { backgroundColor: Colors.cardSurface },
+  tileMedia: { position: 'relative' },
+  tileImage: { width: '100%', aspectRatio: 1, backgroundColor: Colors.cardSurface },
+  tileFallback: { backgroundColor: Colors.primaryLight, alignItems: 'center', justifyContent: 'center' },
+  tileInitial: { fontSize: 34, fontWeight: '700', color: Colors.primary },
+  badge: {
+    position: 'absolute',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    height: 22,
+    paddingHorizontal: 7,
+    borderRadius: 6,
+  },
+  badgeLeft: { top: 8, left: 8 },
+  badgeBottom: { bottom: 8, left: 8, right: 8, justifyContent: 'center' },
+  badgeHidden: { backgroundColor: 'rgba(17, 24, 28, 0.72)' },
+  badgeHiddenText: { fontSize: 11, fontWeight: '600', color: '#FFFFFF' },
+  badgeWarn: { backgroundColor: Colors.statusPending.bg, borderWidth: 1, borderColor: Colors.statusPending.border },
+  badgeWarnText: { fontSize: 11, fontWeight: '600', color: Colors.statusPending.text },
+  tileBody: { paddingHorizontal: 12, paddingTop: 10 },
+  tileTitle: { fontSize: 15, fontWeight: '700', color: Colors.text },
+  tileMeta: { fontSize: 12, color: Colors.textMuted, marginTop: 2 },
+  tileFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingLeft: 8,
+    paddingRight: 4,
+    paddingVertical: 4,
+    marginTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: Colors.cardBorder,
+  },
   iconBtn: { width: 40, height: 40, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+
+  chips: { gap: 8, paddingTop: 10, paddingBottom: 12 },
+  chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    height: 34,
+    paddingHorizontal: 12,
+    borderRadius: 17,
+    borderWidth: 1,
+    borderColor: Colors.cardBorder,
+    backgroundColor: Colors.background,
+  },
+  chipOn: { backgroundColor: Colors.text, borderColor: Colors.text },
+  chipText: { fontSize: 13, fontWeight: '600', color: Colors.text },
+  chipCount: { fontSize: 13, fontWeight: '500', color: Colors.textMuted },
+  chipTextOn: { color: '#FFFFFF' },
+  chipWarn: { backgroundColor: Colors.statusPending.bg, borderColor: Colors.statusPending.border },
+  chipWarnOn: { backgroundColor: Colors.statusPending.text, borderColor: Colors.statusPending.text },
 
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 48, paddingHorizontal: 24 },
   emptyIcon: {
@@ -603,7 +740,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginBottom: 14,
   },
-  emptyTitle: { fontSize: 18, fontWeight: '800', color: Colors.text },
+  emptyTitle: { fontSize: 18, fontWeight: '700', color: Colors.text },
   emptyText: { fontSize: 14, color: Colors.textMuted, marginTop: 6, textAlign: 'center', maxWidth: 340 },
 
   overlay: { flex: 1, backgroundColor: 'rgba(17, 24, 28, 0.45)', justifyContent: 'flex-end' },
@@ -618,7 +755,7 @@ const styles = StyleSheet.create({
     paddingTop: 18,
     paddingBottom: 6,
   },
-  sheetTitle: { fontSize: 18, fontWeight: '800', color: Colors.text },
+  sheetTitle: { fontSize: 18, fontWeight: '700', color: Colors.text },
   closeBtn: { width: 32, height: 32, borderRadius: 16, backgroundColor: Colors.cardSurface, alignItems: 'center', justifyContent: 'center' },
   sheetBody: { paddingHorizontal: 20, paddingTop: 10, paddingBottom: 8 },
   sheetFooter: { flexDirection: 'row', gap: 10, paddingHorizontal: 20, paddingTop: 12, borderTopWidth: 1, borderTopColor: Colors.cardBorder },
@@ -639,6 +776,6 @@ const styles = StyleSheet.create({
   imagePreview: { width: '100%', height: '100%' },
   imageTitle: { fontSize: 14, fontWeight: '700', color: Colors.text },
   imageHint: { fontSize: 12, color: Colors.textSubtle, marginTop: 2 },
-  link: { fontSize: 13, fontWeight: '800', color: Colors.primary },
+  link: { fontSize: 13, fontWeight: '700', color: Colors.primary },
   label: { fontSize: 13, fontWeight: '700', color: Colors.text, marginBottom: 8 },
 });

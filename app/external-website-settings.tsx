@@ -39,6 +39,7 @@ import {
   useFormLayout,
   useUnsavedChangesGuard,
 } from '../components/settings/FormKit';
+import { KEYBOARD_BEHAVIOR } from '../utils/keyboard';
 
 /**
  * Delivery for orders placed on a restaurant's own website.
@@ -282,7 +283,7 @@ export default function ExternalWebsiteSettingsScreen() {
   /* ── Render ───────────────────────────────────────────────────────────── */
 
   return (
-    <KeyboardAvoidingView style={formStyles.screen} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoidingView style={formStyles.screen} behavior={KEYBOARD_BEHAVIOR}>
       <ScreenHeader title="Website delivery" subtitle="Delivery for orders from your own website" />
 
       {loading ? (

@@ -4,10 +4,7 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  ScrollView,
   ActivityIndicator,
-  Share,
-  Dimensions,
   useWindowDimensions,
   Modal,
 } from 'react-native';
@@ -15,27 +12,14 @@ import { Colors } from '../constants/colors';
 import { Order } from '../types';
 import { orderService } from '../services/order.service';
 import {
-  TrendingUp,
-  ShoppingBag,
-  Banknote,
-  CreditCard,
-  Receipt,
-  CheckCircle2,
   RefreshCw,
-  Share2,
-  Calendar,
   CalendarDays,
-  Bike,
-  UtensilsCrossed,
-  Award,
-  ArrowUpRight,
-  Clock,
-  Check,
-  X,
-  Sparkles,
-  ChevronRight,
   ChevronLeft,
-  Flame,
+  ChevronRight,
+  X,
+  Bike,
+  ShoppingBag,
+  UtensilsCrossed,
 } from 'lucide-react-native';
 
 export type TimeframeKey = 'today' | '7d' | '30d' | 'custom' | 'all';
@@ -228,7 +212,7 @@ export function computeDashboardAnalytics(orders: Order[]): DashboardAnalytics {
     { id: 'placed', name: 'Placed', count: statusMap.placed || 0 },
     { id: 'preparing', name: 'In Kitchen', count: statusMap.preparing || 0 },
     { id: 'ready_for_pickup', name: 'Ready', count: statusMap.ready_for_pickup || 0 },
-    { id: 'out_for_delivery', name: 'Out for Delivery', count: statusMap.out_for_delivery || 0 },
+    { id: 'out_for_delivery', name: 'Out for delivery', count: statusMap.out_for_delivery || 0 },
     { id: 'delivered', name: 'Delivered', count: statusMap.delivered || 0 },
     { id: 'cancelled', name: 'Cancelled', count: statusMap.cancelled || 0 },
   ];
@@ -274,6 +258,9 @@ const getStatusTheme = (id: string) => {
   }
 };
 
+const PAY_CASH = '#10B981';
+const PAY_CARD = '#6366F1';
+
 export interface AnalyticsRestaurantProps {
   initialOrders: Order[];
   ownerStats?: {
@@ -302,29 +289,16 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
   restaurantName = 'Restaurant',
   restaurantId,
   onNavigateOrders,
-  onClose,
 }) => {
   const { width: windowWidth } = useWindowDimensions();
-  const isSmallScreen = windowWidth < 375;
   const isTablet = windowWidth >= 768;
-  const numColumns = isTablet ? 3 : 2;
-  const gridGap = isSmallScreen ? 8 : isTablet ? 12 : 10;
-  
-  // Calculate accurate content width considering tablet padding (28px horizontal on each side = 56px total)
-  const tabletHorizontalPadding = 56;
-  const contentWidth = isTablet
-    ? Math.min(windowWidth - tabletHorizontalPadding, 1200 - tabletHorizontalPadding)
-    : windowWidth - 32;
-  const cardWidth = Math.floor((contentWidth - (numColumns - 1) * gridGap) / numColumns);
-  const illustrationSize = isSmallScreen ? 44 : isTablet ? 60 : 52;
-  const glowSize = isSmallScreen ? 60 : isTablet ? 80 : 72;
 
   const [timeframe, setTimeframe] = useState<TimeframeKey>('today');
-  const [chartMetric, setChartMetric] = useState<ChartMetric>('revenue');
-  const [selectedDayIndex, setSelectedDayIndex] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [timeframeOrders, setTimeframeOrders] = useState<Order[]>(initialOrders);
   const [topDishes, setTopDishes] = useState<TopDishItem[]>([]);
+  // The menu report isn't date-filtered, so say so instead of implying it matches the period.
+  const [dishesAllTime, setDishesAllTime] = useState(false);
 
   // Selective Date (Custom Range) State
   const [customStartDate, setCustomStartDate] = useState<Date>(() => {
@@ -514,6 +488,7 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
             totalRevenue: Number(d.totalRevenue || 0),
           }));
           setTopDishes(dishes.slice(0, 5));
+          setDishesAllTime(true);
         } else {
           // Fallback: derive top dishes from orders
           let fallbackList = ordersRes.status === 'fulfilled' && ordersRes.value.data ? ordersRes.value.data : initialOrders;
@@ -544,6 +519,7 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
           });
           const sorted = Array.from(dishMap.values()).sort((a, b) => b.totalQuantitySold - a.totalQuantitySold);
           setTopDishes(sorted.slice(0, 5));
+          setDishesAllTime(false);
         }
       } catch (err) {
         console.warn('Failed fetching analytics data:', err);
@@ -563,7 +539,6 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
       setCustomStartDate(s);
       setCustomEndDate(e);
       setTimeframe('custom');
-      setSelectedDayIndex(null);
       setDateRangeModalVisible(false);
       fetchAnalyticsData('custom', s, e);
     }
@@ -610,739 +585,246 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
     return res;
   }, [timeframeOrders, timeframe, ownerStats]);
 
-  // Share report
-  const handleShareReport = async () => {
-    const tfLabel = TIMEFRAMES.find((t) => t.id === timeframe)?.label || 'Selected Period';
-    const lines = [
-      `📊 RESTAURANT SALES & OPERATIONAL REPORT`,
-      `Restaurant: ${restaurantName}`,
-      `Timeframe: ${tfLabel}`,
-      `Generated: ${new Date().toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}`,
-      `----------------------------------------`,
-      `Gross Sales: £${analytics.totalRevenue.toFixed(2)}`,
-      `Total Orders: ${analytics.totalOrders}`,
-      `Average Order Value (AOV): £${analytics.averageOrderValue.toFixed(2)}`,
-      `Delivered Orders: ${analytics.deliveredOrders}`,
-      `Cancelled / Rejected: ${analytics.cancelledOrders}`,
-      `Fulfillment Rate: ${analytics.totalOrders > 0 ? Math.round((analytics.deliveredOrders / analytics.totalOrders) * 100) : 0}%`,
-      `----------------------------------------`,
-      `PAYMENT BREAKDOWN:`,
-      `• Cash on Delivery: ${analytics.cashOrdersCount} orders (£${analytics.cashRevenue.toFixed(2)})`,
-      `• Online / Card / Stripe: ${analytics.onlineOrdersCount} orders (£${analytics.onlineRevenue.toFixed(2)})`,
-      `----------------------------------------`,
-      `FULFILLMENT MODES:`,
-      ...analytics.orderTypeBreakdown.map((f) => `• ${f.name}: ${f.count} orders (${f.percentage}%)`),
-      `----------------------------------------`,
-      `ORDER LIFECYCLE:`,
-      ...analytics.statusReport.map((s) => `• ${s.name}: ${s.count}`),
-    ];
+  const money = (n: number) =>
+    `£${(Number.isFinite(n) ? n : 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const shortDate = (d: Date) => d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+  const longDate = (d: Date) => d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 
-    if (topDishes.length > 0) {
-      lines.push(`----------------------------------------`);
-      lines.push(`TOP DISHES:`);
-      topDishes.forEach((d, idx) => {
-        lines.push(`#${idx + 1} ${d.itemName} - ${d.totalQuantitySold} sold (£${d.totalRevenue.toFixed(2)})`);
-      });
-    }
+  const customRangeLabel = isDateSameDay(customStartDate, customEndDate)
+    ? shortDate(customStartDate)
+    : `${shortDate(customStartDate)} – ${shortDate(customEndDate)}`;
+  const periodLabel =
+    timeframe === 'today'
+      ? `Today, ${shortDate(new Date())}`
+      : timeframe === 'custom'
+        ? isDateSameDay(customStartDate, customEndDate)
+          ? longDate(customStartDate)
+          : `${shortDate(customStartDate)} – ${longDate(customEndDate)}`
+        : 'All time';
 
-    try {
-      await Share.share({
-        title: `${restaurantName} Analytics Report`,
-        message: lines.join('\n'),
-      });
-    } catch (e) {
-      console.error('Share report error:', e);
-    }
-  };
-
-  // Trajectory chart calculations
-  const chartData = useMemo(() => {
-    if (analytics.dailyBreakdown.length > 0) return analytics.dailyBreakdown;
-    // Fallback if no daily points: show dummy day
-    return [
-      {
-        date: 'Today',
-        rawDate: new Date(),
-        orders: analytics.totalOrders,
-        delivered: analytics.deliveredOrders,
-        revenue: analytics.totalRevenue,
-        cashOrders: analytics.cashOrdersCount,
-        onlineOrders: analytics.onlineOrdersCount,
-      },
-    ];
-  }, [analytics]);
-
-  const maxChartValue = useMemo(() => {
-    if (chartMetric === 'revenue') {
-      const maxRev = Math.max(...chartData.map((d) => d.revenue), 10);
-      return maxRev;
-    }
-    if (chartMetric === 'orders') {
-      const maxOrd = Math.max(...chartData.map((d) => d.orders), 5);
-      return maxOrd;
-    }
-    // payment comparison
-    const maxPay = Math.max(...chartData.map((d) => Math.max(d.cashOrders, d.onlineOrders)), 5);
-    return maxPay;
-  }, [chartData, chartMetric]);
-
+  const paidOrders = Math.max(analytics.totalOrders - analytics.cancelledOrders, 0);
   const totalCashAndOnline = analytics.cashOrdersCount + analytics.onlineOrdersCount;
   const cashPct = totalCashAndOnline > 0 ? Math.round((analytics.cashOrdersCount / totalCashAndOnline) * 100) : 0;
   const onlinePct = totalCashAndOnline > 0 ? 100 - cashPct : 0;
+  const completionRate =
+    analytics.totalOrders > 0 ? Math.round((analytics.deliveredOrders / analytics.totalOrders) * 100) : 0;
+  const maxDishQty = Math.max(...topDishes.map((d) => d.totalQuantitySold), 1);
 
-  const fulfillmentRate =
-    analytics.totalOrders > 0
-      ? Math.round((analytics.deliveredOrders / analytics.totalOrders) * 100)
-      : 0;
+  const openCustomRange = () => {
+    setPickerStartDate(customStartDate);
+    setPickerEndDate(customEndDate);
+    setCalendarMonth(new Date(customStartDate));
+    setDateRangeModalVisible(true);
+  };
 
-  const cancellationRate =
-    analytics.totalOrders > 0
-      ? Math.round((analytics.cancelledOrders / analytics.totalOrders) * 100)
-      : 0;
+  const kpis: Array<{ label: string; value: string; sub: string; subTone?: 'bad' }> = [
+    { label: 'Sales', value: money(analytics.totalRevenue), sub: `${paidOrders} paid ${paidOrders === 1 ? 'order' : 'orders'}` },
+    { label: 'Orders', value: String(analytics.totalOrders), sub: `${analytics.deliveredOrders} completed` },
+    { label: 'Average order', value: money(analytics.averageOrderValue), sub: 'Excludes cancelled' },
+    {
+      label: 'Completion',
+      value: `${completionRate}%`,
+      sub: `${analytics.cancelledOrders} cancelled`,
+      subTone: analytics.cancelledOrders > 0 ? 'bad' : undefined,
+    },
+  ];
 
-  const maxDishQty = useMemo(() => {
-    return Math.max(...topDishes.map((d) => d.totalQuantitySold), 1);
-  }, [topDishes]);
-
-  const selectedDay = selectedDayIndex !== null && chartData[selectedDayIndex] ? chartData[selectedDayIndex] : null;
+  const channelIcon = (id: string) =>
+    id === 'dine_in' ? UtensilsCrossed : id === 'pickup' ? ShoppingBag : Bike;
 
   return (
     <View style={styles.container}>
-      {/* Analytics Section Header with Live Operations & Actions */}
+      {/* Header */}
       <View style={styles.headerRow}>
-        <View style={styles.headerLeft}>
-          <View style={styles.titleRow}>
-            <Text style={styles.headerTitle}>Business Overview</Text>
-            <View style={styles.livePill}>
-              <View style={styles.liveDot} />
-              <Text style={styles.livePillText}>Live</Text>
-            </View>
-          </View>
-          <Text style={styles.headerSubtitle}>Sales & Order Performance</Text>
+        <View style={styles.headerText}>
+          <Text style={styles.headerTitle}>Overview</Text>
+          <Text style={styles.headerSubtitle} numberOfLines={1}>{periodLabel}</Text>
         </View>
-
-        <View style={styles.headerActions}>
-          <TouchableOpacity
-            style={styles.iconButton}
-            onPress={() => fetchAnalyticsData(timeframe)}
-            disabled={loading}
-            activeOpacity={0.7}
-          >
-            {loading ? (
-              <ActivityIndicator size="small" color="#FF5C39" />
-            ) : (
-              <RefreshCw size={15} color="#4B5563" />
-            )}
-          </TouchableOpacity>
-
-
-        </View>
+        <TouchableOpacity
+          style={styles.iconButton}
+          onPress={() => fetchAnalyticsData(timeframe)}
+          disabled={loading}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel="Refresh"
+        >
+          {loading ? <ActivityIndicator size="small" color={Colors.primary} /> : <RefreshCw size={16} color="#475569" />}
+        </TouchableOpacity>
       </View>
 
-      {/* Timeframe Selector Ribbon */}
-      <View style={styles.timeframeBarContainer}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.timeframeBar}>
-          {TIMEFRAMES.map((tf) => {
-            const isSelected = timeframe === tf.id;
-            const isCustom = tf.id === 'custom';
-            const customLabel =
-              isCustom && timeframe === 'custom'
-                ? isDateSameDay(customStartDate, customEndDate)
-                  ? customStartDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
-                  : `${customStartDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} - ${customEndDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}`
-                : tf.label;
+      {/* Period */}
+      <View style={styles.segment}>
+        {TIMEFRAMES.map((tf) => {
+          const active = timeframe === tf.id;
+          const isCustom = tf.id === 'custom';
+          return (
+            <TouchableOpacity
+              key={tf.id}
+              style={[styles.segmentBtn, active && styles.segmentBtnActive]}
+              onPress={() => (isCustom ? openCustomRange() : setTimeframe(tf.id))}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityState={{ selected: active }}
+            >
+              {isCustom && <CalendarDays size={14} color={active ? Colors.text : '#64748B'} />}
+              <Text style={[styles.segmentText, active && styles.segmentTextActive]} numberOfLines={1}>
+                {isCustom ? (active ? customRangeLabel : 'Dates') : tf.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
 
-            return (
-              <TouchableOpacity
-                key={tf.id}
-                style={[
-                  styles.timeframePill,
-                  isSelected && styles.timeframePillActive,
-                  isCustom && styles.timeframePillCustom,
-                ]}
-                onPress={() => {
-                  if (isCustom) {
-                    setPickerStartDate(customStartDate);
-                    setPickerEndDate(customEndDate);
-                    setCalendarMonth(new Date(customStartDate));
-                    setDateRangeModalVisible(true);
-                  } else {
-                    setTimeframe(tf.id);
-                    setSelectedDayIndex(null);
-                  }
-                }}
-                activeOpacity={0.8}
-              >
-                {isCustom && (
-                  <CalendarDays
-                    size={13}
-                    color={isSelected ? '#FFFFFF' : '#4B5563'}
-                    style={{ marginRight: 5 }}
-                  />
-                )}
-                <Text style={[styles.timeframePillText, isSelected && styles.timeframePillTextActive]}>
-                  {customLabel}
+      {/* Key numbers */}
+      <View style={styles.kpiGrid}>
+        {kpis.map((k) => (
+          <View key={k.label} style={[styles.kpiCard, isTablet ? styles.kpiCardTablet : styles.kpiCardPhone]}>
+            <Text style={styles.kpiLabel}>{k.label}</Text>
+            <Text style={styles.kpiValue} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
+              {k.value}
+            </Text>
+            <Text style={[styles.kpiSub, k.subTone === 'bad' && styles.kpiSubBad]} numberOfLines={1}>
+              {k.sub}
+            </Text>
+          </View>
+        ))}
+      </View>
+
+      {/* Order status */}
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <Text style={styles.cardTitle}>Order status</Text>
+          {onNavigateOrders ? (
+            <TouchableOpacity onPress={onNavigateOrders} style={styles.linkBtn} activeOpacity={0.7}>
+              <Text style={styles.linkText}>View orders</Text>
+              <ChevronRight size={16} color={Colors.primary} />
+            </TouchableOpacity>
+          ) : null}
+        </View>
+        <View style={styles.statusGrid}>
+          {analytics.statusReport.map((st) => (
+            <View key={st.id} style={[styles.statusCell, isTablet ? styles.statusCellTablet : styles.statusCellPhone]}>
+              <Text style={[styles.statusCount, st.count === 0 && styles.statusCountZero]}>{st.count}</Text>
+              <View style={styles.statusLabelRow}>
+                <View style={[styles.statusDot, { backgroundColor: getStatusTheme(st.id).text }]} />
+                <Text style={styles.statusLabel} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
+                  {st.name}
                 </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
-      </View>
-
-      {/* 1. Executive 6-KPI Ribbon Grid */}
-      <View style={[styles.kpiGrid, { gap: gridGap }]}>
-        {/* Card 1: Gross Sales */}
-        <View style={[styles.kpiCard, styles.kpiCardRevenue, { width: cardWidth }, isTablet && styles.kpiCardTablet, isSmallScreen && { padding: 10 }]}>
-          <View
-            style={[
-              styles.kpiGlowBackdrop,
-              { backgroundColor: '#FFEDD5', width: glowSize, height: glowSize, borderRadius: glowSize / 2 },
-            ]}
-            pointerEvents="none"
-          />
-          <View style={[styles.kpiWatermarkBox, isTablet && styles.kpiWatermarkBoxTablet]} pointerEvents="none">
-            <TrendingUp size={isTablet ? 34 : 28} color="#EA580C" style={{ opacity: 0.35 }} />
-          </View>
-
-          <View style={styles.kpiContentContainer}>
-            <View style={styles.kpiTopRow}>
-              <View style={[styles.kpiIconBox, isTablet && styles.kpiIconBoxTablet, { backgroundColor: '#FFF7ED' }]}>
-                <TrendingUp size={isSmallScreen ? 15 : isTablet ? 18 : 17} color="#EA580C" />
-              </View>
-              <View style={[styles.kpiBadge, isTablet && styles.kpiBadgeTablet, { backgroundColor: '#FFEDD5' }]}>
-                <Text style={[styles.kpiBadgeText, isTablet && styles.kpiBadgeTextTablet, { color: '#C2410C' }]}>REVENUE</Text>
               </View>
             </View>
-            <Text
-              style={[styles.kpiValue, isTablet && styles.kpiValueTablet, isSmallScreen && { fontSize: 14 }]}
-              numberOfLines={1}
-              adjustsFontSizeToFit
-              minimumFontScale={0.7}
-            >
-              £{analytics.totalRevenue.toFixed(2)}
-            </Text>
-            <Text style={[styles.kpiLabel, isTablet && styles.kpiLabelTablet]} numberOfLines={1}>Gross Sales</Text>
-            <Text style={[styles.kpiSub, isTablet && styles.kpiSubTablet]} numberOfLines={1} ellipsizeMode="tail">
-              From {analytics.totalOrders - analytics.cancelledOrders} valid orders
-            </Text>
-          </View>
-        </View>
-
-        {/* Card 2: Total Orders */}
-        <View style={[styles.kpiCard, styles.kpiCardVolume, { width: cardWidth }, isTablet && styles.kpiCardTablet, isSmallScreen && { padding: 10 }]}>
-          <View
-            style={[
-              styles.kpiGlowBackdrop,
-              { backgroundColor: '#DBEAFE', width: glowSize, height: glowSize, borderRadius: glowSize / 2 },
-            ]}
-            pointerEvents="none"
-          />
-          <View style={[styles.kpiWatermarkBox, isTablet && styles.kpiWatermarkBoxTablet]} pointerEvents="none">
-            <ShoppingBag size={isTablet ? 34 : 28} color="#2563EB" style={{ opacity: 0.35 }} />
-          </View>
-
-          <View style={styles.kpiContentContainer}>
-            <View style={styles.kpiTopRow}>
-              <View style={[styles.kpiIconBox, isTablet && styles.kpiIconBoxTablet, { backgroundColor: '#EFF6FF' }]}>
-                <ShoppingBag size={isSmallScreen ? 15 : isTablet ? 18 : 17} color="#2563EB" />
-              </View>
-              <View style={[styles.kpiBadge, isTablet && styles.kpiBadgeTablet, { backgroundColor: '#DBEAFE' }]}>
-                <Text style={[styles.kpiBadgeText, isTablet && styles.kpiBadgeTextTablet, { color: '#1E40AF' }]}>VOLUME</Text>
-              </View>
-            </View>
-            <Text
-              style={[styles.kpiValue, isTablet && styles.kpiValueTablet, isSmallScreen && { fontSize: 14 }]}
-              numberOfLines={1}
-              adjustsFontSizeToFit
-              minimumFontScale={0.7}
-            >
-              {analytics.totalOrders}
-            </Text>
-            <Text style={[styles.kpiLabel, isTablet && styles.kpiLabelTablet]} numberOfLines={1}>Total Orders</Text>
-            <Text style={[styles.kpiSub, isTablet && styles.kpiSubTablet]} numberOfLines={1} ellipsizeMode="tail">
-              {analytics.deliveredOrders} fulfilled
-            </Text>
-          </View>
-        </View>
-
-        {/* Card 3: Average Order Value (AOV) */}
-        <View style={[styles.kpiCard, styles.kpiCardAov, { width: cardWidth }, isTablet && styles.kpiCardTablet, isSmallScreen && { padding: 10 }]}>
-          <View
-            style={[
-              styles.kpiGlowBackdrop,
-              { backgroundColor: '#EDE9FE', width: glowSize, height: glowSize, borderRadius: glowSize / 2 },
-            ]}
-            pointerEvents="none"
-          />
-          <View style={[styles.kpiWatermarkBox, isTablet && styles.kpiWatermarkBoxTablet]} pointerEvents="none">
-            <Receipt size={isTablet ? 34 : 28} color="#7C3AED" style={{ opacity: 0.35 }} />
-          </View>
-
-          <View style={styles.kpiContentContainer}>
-            <View style={styles.kpiTopRow}>
-              <View style={[styles.kpiIconBox, isTablet && styles.kpiIconBoxTablet, { backgroundColor: '#F5F3FF' }]}>
-                <Receipt size={isSmallScreen ? 15 : isTablet ? 18 : 17} color="#7C3AED" />
-              </View>
-              <View style={[styles.kpiBadge, isTablet && styles.kpiBadgeTablet, { backgroundColor: '#EDE9FE' }]}>
-                <Text style={[styles.kpiBadgeText, isTablet && styles.kpiBadgeTextTablet, { color: '#6D28D9' }]}>AOV</Text>
-              </View>
-            </View>
-            <Text
-              style={[styles.kpiValue, isTablet && styles.kpiValueTablet, isSmallScreen && { fontSize: 14 }]}
-              numberOfLines={1}
-              adjustsFontSizeToFit
-              minimumFontScale={0.7}
-            >
-              £{analytics.averageOrderValue.toFixed(2)}
-            </Text>
-            <Text style={[styles.kpiLabel, isTablet && styles.kpiLabelTablet]} numberOfLines={1}>Avg Order Value</Text>
-            <Text style={[styles.kpiSub, isTablet && styles.kpiSubTablet]} numberOfLines={1} ellipsizeMode="tail">
-              Average ticket basket size
-            </Text>
-          </View>
-        </View>
-
-        {/* Card 4: Cash on Delivery */}
-        <View style={[styles.kpiCard, styles.kpiCardCash, { width: cardWidth }, isTablet && styles.kpiCardTablet, isSmallScreen && { padding: 10 }]}>
-          <View
-            style={[
-              styles.kpiGlowBackdrop,
-              { backgroundColor: '#D1FAE5', width: glowSize, height: glowSize, borderRadius: glowSize / 2 },
-            ]}
-            pointerEvents="none"
-          />
-          <View style={[styles.kpiWatermarkBox, isTablet && styles.kpiWatermarkBoxTablet]} pointerEvents="none">
-            <Banknote size={isTablet ? 34 : 28} color="#059669" style={{ opacity: 0.35 }} />
-          </View>
-
-          <View style={styles.kpiContentContainer}>
-            <View style={styles.kpiTopRow}>
-              <View style={[styles.kpiIconBox, isTablet && styles.kpiIconBoxTablet, { backgroundColor: '#ECFDF5' }]}>
-                <Banknote size={isSmallScreen ? 15 : isTablet ? 18 : 17} color="#059669" />
-              </View>
-              <View style={[styles.kpiBadge, isTablet && styles.kpiBadgeTablet, { backgroundColor: '#D1FAE5' }]}>
-                <Text style={[styles.kpiBadgeText, isTablet && styles.kpiBadgeTextTablet, { color: '#065F46' }]}>{cashPct}% COD</Text>
-              </View>
-            </View>
-            <Text
-              style={[styles.kpiValue, isTablet && styles.kpiValueTablet, isSmallScreen && { fontSize: 14 }]}
-              numberOfLines={1}
-              adjustsFontSizeToFit
-              minimumFontScale={0.7}
-            >
-              £{analytics.cashRevenue.toFixed(2)}
-            </Text>
-            <Text style={[styles.kpiLabel, isTablet && styles.kpiLabelTablet]} numberOfLines={1}>Cash Orders</Text>
-            <Text style={[styles.kpiSub, isTablet && styles.kpiSubTablet]} numberOfLines={1} ellipsizeMode="tail">
-              {analytics.cashOrdersCount} cash orders
-            </Text>
-          </View>
-        </View>
-
-        {/* Card 5: Online / Stripe */}
-        <View style={[styles.kpiCard, styles.kpiCardOnline, { width: cardWidth }, isTablet && styles.kpiCardTablet, isSmallScreen && { padding: 10 }]}>
-          <View
-            style={[
-              styles.kpiGlowBackdrop,
-              { backgroundColor: '#E0E7FF', width: glowSize, height: glowSize, borderRadius: glowSize / 2 },
-            ]}
-            pointerEvents="none"
-          />
-          <View style={[styles.kpiWatermarkBox, isTablet && styles.kpiWatermarkBoxTablet]} pointerEvents="none">
-            <CreditCard size={isTablet ? 34 : 28} color="#4F46E5" style={{ opacity: 0.35 }} />
-          </View>
-
-          <View style={styles.kpiContentContainer}>
-            <View style={styles.kpiTopRow}>
-              <View style={[styles.kpiIconBox, isTablet && styles.kpiIconBoxTablet, { backgroundColor: '#EEF2FF' }]}>
-                <CreditCard size={isSmallScreen ? 15 : isTablet ? 18 : 17} color="#4F46E5" />
-              </View>
-              <View style={[styles.kpiBadge, isTablet && styles.kpiBadgeTablet, { backgroundColor: '#E0E7FF' }]}>
-                <Text style={[styles.kpiBadgeText, isTablet && styles.kpiBadgeTextTablet, { color: '#3730A3' }]}>{onlinePct}% CARD</Text>
-              </View>
-            </View>
-            <Text
-              style={[styles.kpiValue, isTablet && styles.kpiValueTablet, isSmallScreen && { fontSize: 14 }]}
-              numberOfLines={1}
-              adjustsFontSizeToFit
-              minimumFontScale={0.7}
-            >
-              £{analytics.onlineRevenue.toFixed(2)}
-            </Text>
-            <Text style={[styles.kpiLabel, isTablet && styles.kpiLabelTablet]} numberOfLines={1}>Online / Card</Text>
-            <Text style={[styles.kpiSub, isTablet && styles.kpiSubTablet]} numberOfLines={1} ellipsizeMode="tail">
-              {analytics.onlineOrdersCount} online orders
-            </Text>
-          </View>
-        </View>
-
-        {/* Card 6: Fulfillment Rate */}
-        <View style={[styles.kpiCard, styles.kpiCardRate, { width: cardWidth }, isTablet && styles.kpiCardTablet, isSmallScreen && { padding: 10 }]}>
-          <View
-            style={[
-              styles.kpiGlowBackdrop,
-              { backgroundColor: '#CCFBF1', width: glowSize, height: glowSize, borderRadius: glowSize / 2 },
-            ]}
-            pointerEvents="none"
-          />
-          <View style={[styles.kpiWatermarkBox, isTablet && styles.kpiWatermarkBoxTablet]} pointerEvents="none">
-            <CheckCircle2 size={isTablet ? 34 : 28} color="#0D9488" style={{ opacity: 0.35 }} />
-          </View>
-
-          <View style={styles.kpiContentContainer}>
-            <View style={styles.kpiTopRow}>
-              <View style={[styles.kpiIconBox, isTablet && styles.kpiIconBoxTablet, { backgroundColor: '#F0FDFA' }]}>
-                <CheckCircle2 size={isSmallScreen ? 15 : isTablet ? 18 : 17} color="#0D9488" />
-              </View>
-              <View style={[styles.kpiBadge, isTablet && styles.kpiBadgeTablet, { backgroundColor: '#CCFBF1' }]}>
-                <Text style={[styles.kpiBadgeText, isTablet && styles.kpiBadgeTextTablet, { color: '#0F766E' }]}>RATE</Text>
-              </View>
-            </View>
-            <Text
-              style={[styles.kpiValue, isTablet && styles.kpiValueTablet, isSmallScreen && { fontSize: 14 }]}
-              numberOfLines={1}
-              adjustsFontSizeToFit
-              minimumFontScale={0.7}
-            >
-              {fulfillmentRate}%
-            </Text>
-            <Text style={[styles.kpiLabel, isTablet && styles.kpiLabelTablet]} numberOfLines={1}>Fulfillment Rate</Text>
-            <Text style={[styles.kpiSub, isTablet && styles.kpiSubTablet]} numberOfLines={1} ellipsizeMode="tail">
-              {analytics.cancelledOrders} cancelled ({cancellationRate}%)
-            </Text>
-          </View>
+          ))}
         </View>
       </View>
 
-      {/* 2. Live Status Distribution Pipeline (Moved to top) */}
-      <View style={styles.cardSection}>
-        <View style={[styles.chartHeaderRow, isTablet && styles.chartHeaderRowTablet]}>
-          <View>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
-              <View style={styles.liveDot} />
-              <Text style={styles.cardSectionTitle}>Live Status Distribution</Text>
-            </View>
-            <Text style={styles.cardSectionSub}>
-              Real-time order pipeline across operational lifecycle stages
-            </Text>
+      <View style={[styles.pairRow, isTablet && styles.pairRowTablet]}>
+        {/* Payments */}
+        <View style={[styles.card, isTablet && styles.pairCol]}>
+          <View style={styles.cardHeader}>
+            <Text style={styles.cardTitle}>Payments</Text>
+          </View>
+          <View style={styles.splitBar}>
+            {totalCashAndOnline > 0 ? (
+              <>
+                {cashPct > 0 && <View style={{ flex: cashPct, backgroundColor: PAY_CASH }} />}
+                {onlinePct > 0 && <View style={{ flex: onlinePct, backgroundColor: PAY_CARD }} />}
+              </>
+            ) : null}
+          </View>
+          <View style={styles.payRow}>
+            {[
+              { label: 'Cash', color: PAY_CASH, amount: analytics.cashRevenue, count: analytics.cashOrdersCount, pct: cashPct },
+              { label: 'Card / online', color: PAY_CARD, amount: analytics.onlineRevenue, count: analytics.onlineOrdersCount, pct: onlinePct },
+            ].map((p, i) => (
+              <View key={p.label} style={[styles.payCol, i === 1 && styles.payColRight]}>
+                <View style={styles.payLabelRow}>
+                  <View style={[styles.statusDot, { backgroundColor: p.color }]} />
+                  <Text style={styles.payLabel}>{p.label}</Text>
+                </View>
+                <Text style={styles.payAmount} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>
+                  {money(p.amount)}
+                </Text>
+                <Text style={styles.paySub}>
+                  {p.count} {p.count === 1 ? 'order' : 'orders'} · {p.pct}%
+                </Text>
+              </View>
+            ))}
           </View>
         </View>
 
-        {isTablet ? (
-          /* Tablet: All 6 in a single horizontal row */
-          <View style={styles.lifecyclePillsRowTablet}>
-            {analytics.statusReport.map((st) => {
-              const theme = getStatusTheme(st.id);
-              return (
-                <TouchableOpacity
-                  key={st.id}
-                  style={[
-                    styles.lifecycleChipTop,
-                    styles.lifecycleChipTopTablet,
-                    { backgroundColor: theme.bg, borderColor: theme.border },
-                  ]}
-                  onPress={() => onNavigateOrders?.()}
-                  activeOpacity={0.7}
-                >
-                  <Text style={[styles.lifecycleCountTop, { color: theme.text }]}>{st.count}</Text>
-                  <Text
-                    style={styles.lifecycleLabelTop}
-                    numberOfLines={1}
-                    adjustsFontSizeToFit
-                    minimumFontScale={0.8}
-                  >
-                    {st.name}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
+        {/* Top dishes */}
+        <View style={[styles.card, isTablet && styles.pairCol]}>
+          <View style={styles.cardHeader}>
+            <Text style={styles.cardTitle}>Top dishes</Text>
+            {dishesAllTime && topDishes.length > 0 ? <Text style={styles.cardMeta}>All time</Text> : null}
           </View>
-        ) : (
-          /* Mobile: 2 rows of 3 chips each (3x2 grid) */
-          <View style={styles.lifecyclePillsMobileGrid}>
-            <View style={styles.lifecyclePillsRowMobile}>
-              {analytics.statusReport.slice(0, 3).map((st) => {
-                const theme = getStatusTheme(st.id);
-                return (
-                  <TouchableOpacity
-                    key={st.id}
-                    style={[
-                      styles.lifecycleChipTop,
-                      { backgroundColor: theme.bg, borderColor: theme.border },
-                    ]}
-                    onPress={() => onNavigateOrders?.()}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={[styles.lifecycleCountTop, { color: theme.text }]}>{st.count}</Text>
-                    <Text
-                      style={styles.lifecycleLabelTop}
-                      numberOfLines={2}
-                    >
-                      {st.name}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-            <View style={styles.lifecyclePillsRowMobile}>
-              {analytics.statusReport.slice(3, 6).map((st) => {
-                const theme = getStatusTheme(st.id);
-                return (
-                  <TouchableOpacity
-                    key={st.id}
-                    style={[
-                      styles.lifecycleChipTop,
-                      { backgroundColor: theme.bg, borderColor: theme.border },
-                    ]}
-                    onPress={() => onNavigateOrders?.()}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={[styles.lifecycleCountTop, { color: theme.text }]}>{st.count}</Text>
-                    <Text
-                      style={styles.lifecycleLabelTop}
-                      numberOfLines={2}
-                    >
-                      {st.name}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          </View>
-        )}
-      </View>
-
-      {/* 3 & 4. Analytics Duo Row on Tablet (Payment Split & Top Dishes) */}
-      <View style={[styles.analyticsGridRow, isTablet && styles.analyticsGridRowTablet]}>
-        {/* Payment Method Breakdown Progress Card */}
-        <View style={[styles.cardSection, isTablet && styles.analyticsCol]}>
-          <Text style={styles.cardSectionTitle}>Payment Method Share</Text>
-          <Text style={styles.cardSectionSub}>Volume and revenue ratio by payment channel</Text>
-
-          {/* Dual Progress Bar */}
-          <View style={styles.dualProgressWrapper}>
-            <View style={[styles.dualProgressFill, { flex: cashPct || 1, backgroundColor: '#10B981' }]} />
-            <View style={[styles.dualProgressFill, { flex: onlinePct || 1, backgroundColor: '#6366F1' }]} />
-          </View>
-
-          {/* Stats Row */}
-          <View style={styles.paymentDetailsRow}>
-            <View style={styles.paymentDetailBox}>
-              <View style={styles.paymentDetailTop}>
-                <View style={[styles.paymentDot, { backgroundColor: '#10B981' }]} />
-                <Text style={styles.paymentDetailTitle}>Cash on Delivery</Text>
-              </View>
-              <Text style={styles.paymentAmountText}>£{analytics.cashRevenue.toFixed(2)}</Text>
-              <Text style={styles.paymentCountSub}>
-                {analytics.cashOrdersCount} orders • {cashPct}% volume
-              </Text>
-            </View>
-
-            <View style={styles.paymentDivider} />
-
-            <View style={styles.paymentDetailBox}>
-              <View style={styles.paymentDetailTop}>
-                <View style={[styles.paymentDot, { backgroundColor: '#6366F1' }]} />
-                <Text style={styles.paymentDetailTitle}>Online / Card</Text>
-              </View>
-              <Text style={styles.paymentAmountText}>£{analytics.onlineRevenue.toFixed(2)}</Text>
-              <Text style={styles.paymentCountSub}>
-                {analytics.onlineOrdersCount} orders • {onlinePct}% volume
-              </Text>
-            </View>
-          </View>
-        </View>
-
-        {/* Top Performing Menu Items (Leaderboard) */}
-        <View style={[styles.cardSection, isTablet && styles.analyticsCol]}>
-          <View style={styles.leaderboardHeaderRow}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <Flame size={18} color="#FF5C39" />
-              <Text style={styles.cardSectionTitle}>Top Performing Dishes</Text>
-            </View>
-          </View>
-
           {topDishes.length === 0 ? (
-            <View style={styles.emptyDishesBox}>
-              <Award size={24} color="#CBD5E1" />
-              <Text style={styles.emptyDishesText}>No item performance data available for this timeframe.</Text>
-            </View>
+            <Text style={styles.emptyText}>No dishes sold in this period.</Text>
           ) : (
-            <View style={styles.dishList}>
-              {topDishes.map((dish, idx) => {
-                const rankColor = idx === 0 ? '#F59E0B' : idx === 1 ? '#94A3B8' : idx === 2 ? '#B45309' : '#64748B';
-                const fillPct = Math.round((dish.totalQuantitySold / maxDishQty) * 100);
-                return (
-                  <View key={dish.itemName + idx} style={styles.dishRow}>
-                    <View style={[styles.rankCircle, { backgroundColor: rankColor + '20' }]}>
-                      <Text style={[styles.rankText, { color: rankColor }]}>#{idx + 1}</Text>
-                    </View>
-
-                    <View style={{ flex: 1, marginHorizontal: 10 }}>
-                      <View style={styles.dishNameRow}>
-                        <Text style={styles.dishName} numberOfLines={1}>
-                          {dish.itemName}
-                        </Text>
-                        <Text style={styles.dishRev}>
-                          {dish.totalRevenue > 0 ? `£${dish.totalRevenue.toFixed(2)}` : ''}
-                        </Text>
-                      </View>
-                      <View style={styles.dishBarTrack}>
-                        <View style={[styles.dishBarFill, { width: `${fillPct}%`, backgroundColor: rankColor }]} />
-                      </View>
-                    </View>
-
-                    <View style={styles.dishQtyBadge}>
-                      <Text style={styles.dishQtyText}>{dish.totalQuantitySold} sold</Text>
-                    </View>
+            topDishes.map((dish, idx) => (
+              <View key={dish.itemName + idx} style={styles.dishRow}>
+                <Text style={styles.dishRank}>{idx + 1}</Text>
+                <View style={styles.dishBody}>
+                  <View style={styles.dishTop}>
+                    <Text style={styles.dishName} numberOfLines={1}>{dish.itemName}</Text>
+                    <Text style={styles.dishQty}>
+                      {dish.totalQuantitySold} sold
+                      {dish.totalRevenue > 0 ? <Text style={styles.dishRev}>{`  ${money(dish.totalRevenue)}`}</Text> : null}
+                    </Text>
                   </View>
-                );
-              })}
-            </View>
+                  <View style={styles.dishTrack}>
+                    <View
+                      style={[
+                        styles.dishFill,
+                        { width: `${Math.round((dish.totalQuantitySold / maxDishQty) * 100)}%` },
+                        idx > 0 && styles.dishFillMuted,
+                      ]}
+                    />
+                  </View>
+                </View>
+              </View>
+            ))
           )}
         </View>
       </View>
 
-      {/* Store Performance: Orders & Fulfillment Breakdown Table */}
-      <View style={styles.cardSection}>
-        <View style={styles.tableHeaderSection}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            <Receipt size={18} color="#FF5C39" />
-            <Text style={styles.cardSectionTitle}>Store Performance & Order Breakdown</Text>
-          </View>
-          <Text style={styles.cardSectionSub}>
-            Complete breakdown of delivered orders, cancelled orders, and order channels
+      {/* Sales by channel */}
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <Text style={styles.cardTitle}>Sales by channel</Text>
+        </View>
+        <View style={styles.tableHead}>
+          <Text style={[styles.th, styles.colName]}>Channel</Text>
+          <Text style={[styles.th, styles.colNum]}>Orders</Text>
+          <Text style={[styles.th, styles.colNum]}>Share</Text>
+          <Text style={[styles.th, styles.colMoney]}>Sales</Text>
+        </View>
+        {analytics.orderTypeBreakdown.map((row) => {
+          const Icon = channelIcon(row.id);
+          return (
+            <View key={row.id} style={styles.tr}>
+              <View style={[styles.colName, styles.channelCell]}>
+                <Icon size={16} color="#64748B" />
+                <Text style={styles.td} numberOfLines={1}>{row.name}</Text>
+              </View>
+              <Text style={[styles.td, styles.colNum]}>{row.count}</Text>
+              <Text style={[styles.tdMuted, styles.colNum]}>{row.percentage}%</Text>
+              <Text style={[styles.td, styles.colMoney]} numberOfLines={1}>{money(row.revenue)}</Text>
+            </View>
+          );
+        })}
+        <View style={[styles.tr, styles.trTotal]}>
+          <Text style={[styles.tdTotal, styles.colName]}>Total</Text>
+          <Text style={[styles.tdTotal, styles.colNum]}>{analytics.totalOrders}</Text>
+          <Text style={[styles.tdMuted, styles.colNum]}>{analytics.totalOrders > 0 ? '100%' : '0%'}</Text>
+          <Text style={[styles.tdTotal, styles.colMoney]} numberOfLines={1}>{money(analytics.totalRevenue)}</Text>
+        </View>
+        {analytics.cancelledRevenue > 0 ? (
+          <Text style={styles.footnote}>
+            Sales exclude {analytics.cancelledOrders} cancelled {analytics.cancelledOrders === 1 ? 'order' : 'orders'} ({money(analytics.cancelledRevenue)}).
           </Text>
-        </View>
-
-        {/* Breakdown Table */}
-        <View style={styles.analyticsTable}>
-          {/* Table Header Row */}
-          <View style={styles.tableHeadRow}>
-            <Text style={[styles.tableHeadCell, { flex: 2.2 }]}>Category / Type</Text>
-            <Text style={[styles.tableHeadCell, { flex: 1, textAlign: 'center' }]}>Orders</Text>
-            <Text style={[styles.tableHeadCell, { flex: 1, textAlign: 'center' }]}>Share</Text>
-            <Text style={[styles.tableHeadCell, { flex: 1.4, textAlign: 'right' }]}>Revenue</Text>
-          </View>
-
-          {/* Table Section: Order Types */}
-          <View style={styles.tableGroupHeader}>
-            <Text style={styles.tableGroupHeaderText}>FULFILLMENT CHANNELS (TYPE OF ORDER)</Text>
-          </View>
-
-          {analytics.orderTypeBreakdown.map((item, idx) => {
-            const isLast = idx === analytics.orderTypeBreakdown.length - 1;
-            return (
-              <View key={item.id} style={[styles.tableRow, isLast && styles.tableRowDivider]}>
-                <View style={[styles.tableCellCol, { flex: 2.2 }]}>
-                  <Text style={styles.tableCellMainText}>
-                    {item.icon} {item.name}
-                  </Text>
-                </View>
-                <Text style={[styles.tableCellText, { flex: 1, textAlign: 'center', fontWeight: '700' }]}>
-                  {item.count}
-                </Text>
-                <View style={[styles.tableCellCol, { flex: 1, alignItems: 'center' }]}>
-                  <View style={styles.shareBadge}>
-                    <Text style={styles.shareBadgeText}>{item.percentage}%</Text>
-                  </View>
-                </View>
-                <Text style={[styles.tableCellAmount, { flex: 1.4, textAlign: 'right' }]}>
-                  £{item.revenue.toFixed(2)}
-                </Text>
-              </View>
-            );
-          })}
-
-          {/* Table Section: Order Outcomes */}
-          <View style={styles.tableGroupHeader}>
-            <Text style={styles.tableGroupHeaderText}>ORDER OUTCOMES & FULFILLMENT</Text>
-          </View>
-
-          {/* Delivered Orders Row */}
-          <View style={styles.tableRow}>
-            <View style={[styles.tableCellCol, { flex: 2.2 }]}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-                <CheckCircle2 size={15} color="#059669" />
-                <Text style={[styles.tableCellMainText, { color: '#065F46' }]}>Delivered Orders</Text>
-              </View>
-              <Text style={styles.tableCellSubText}>Successfully fulfilled</Text>
-            </View>
-            <Text style={[styles.tableCellText, { flex: 1, textAlign: 'center', fontWeight: '800', color: '#059669' }]}>
-              {analytics.deliveredOrders}
-            </Text>
-            <View style={[styles.tableCellCol, { flex: 1, alignItems: 'center' }]}>
-              <View style={[styles.shareBadge, { backgroundColor: '#ECFDF5', borderColor: '#A7F3D0' }]}>
-                <Text style={[styles.shareBadgeText, { color: '#047857' }]}>
-                  {analytics.totalOrders > 0 ? Math.round((analytics.deliveredOrders / analytics.totalOrders) * 100) : 0}%
-                </Text>
-              </View>
-            </View>
-            <Text style={[styles.tableCellAmount, { flex: 1.4, textAlign: 'right', color: '#059669' }]}>
-              £{analytics.deliveredRevenue.toFixed(2)}
-            </Text>
-          </View>
-
-          {/* Cancelled Orders Row */}
-          <View style={[styles.tableRow, styles.tableRowDivider]}>
-            <View style={[styles.tableCellCol, { flex: 2.2 }]}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-                <X size={15} color="#DC2626" />
-                <Text style={[styles.tableCellMainText, { color: '#991B1B' }]}>Cancelled Orders</Text>
-              </View>
-              <Text style={styles.tableCellSubText}>Rejected or cancelled</Text>
-            </View>
-            <Text style={[styles.tableCellText, { flex: 1, textAlign: 'center', fontWeight: '800', color: '#DC2626' }]}>
-              {analytics.cancelledOrders}
-            </Text>
-            <View style={[styles.tableCellCol, { flex: 1, alignItems: 'center' }]}>
-              <View style={[styles.shareBadge, { backgroundColor: '#FEF2F2', borderColor: '#FECACA' }]}>
-                <Text style={[styles.shareBadgeText, { color: '#B91C1C' }]}>
-                  {analytics.totalOrders > 0 ? Math.round((analytics.cancelledOrders / analytics.totalOrders) * 100) : 0}%
-                </Text>
-              </View>
-            </View>
-            <Text style={[styles.tableCellAmount, { flex: 1.4, textAlign: 'right', color: '#DC2626' }]}>
-              {analytics.cancelledRevenue > 0 ? `-£${analytics.cancelledRevenue.toFixed(2)}` : '£0.00'}
-            </Text>
-          </View>
-
-          {/* Table Total Summary Row */}
-          <View style={styles.tableTotalRow}>
-            <View style={[styles.tableCellCol, { flex: 2.2 }]}>
-              <Text style={styles.tableTotalLabel}>Total Orders</Text>
-              <Text style={styles.tableCellSubText}>All recorded activity</Text>
-            </View>
-            <Text style={[styles.tableTotalVal, { flex: 1, textAlign: 'center' }]}>
-              {analytics.totalOrders}
-            </Text>
-            <View style={[styles.tableCellCol, { flex: 1, alignItems: 'center' }]}>
-              <View style={[styles.shareBadge, { backgroundColor: '#F1F5F9', borderColor: '#CBD5E1' }]}>
-                <Text style={[styles.shareBadgeText, { color: '#0F172A', fontWeight: '800' }]}>100%</Text>
-              </View>
-            </View>
-            <Text style={[styles.tableTotalAmount, { flex: 1.4, textAlign: 'right' }]}>
-              £{analytics.totalRevenue.toFixed(2)}
-            </Text>
-          </View>
-        </View>
+        ) : null}
       </View>
 
-      {/* 6. Quick Action to Live Orders Board */}
-      {/* {onNavigateOrders ? (
-        <TouchableOpacity style={styles.ordersLinkBanner} onPress={onNavigateOrders} activeOpacity={0.85}>
-          <View style={styles.ordersLinkLeft}>
-            <View style={styles.ordersLinkIconBox}>
-              <ShoppingBag size={18} color="#FFFFFF" />
-            </View>
-            <View>
-              <Text style={styles.ordersLinkTitle}>Live Operations Board</Text>
-              <Text style={styles.ordersLinkSub}>Manage incoming kitchen & delivery orders</Text>
-            </View>
-          </View>
-          <ChevronRight size={20} color="#FF5C39" />
-        </TouchableOpacity>
-      ) : null} */}
       {/* Date Range Picker Modal */}
       <Modal
         visible={dateRangeModalVisible}
@@ -1356,7 +838,7 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
             <View style={styles.dateModalHeader}>
               <View style={styles.dateModalTitleRow}>
                 <CalendarDays size={18} color="#0F172A" />
-                <Text style={styles.dateModalTitle}>Select Date Range</Text>
+                <Text style={styles.dateModalTitle}>Choose dates</Text>
               </View>
               <TouchableOpacity
                 style={styles.dateModalCloseBtn}
@@ -1368,7 +850,7 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
             </View>
 
             {/* Quick Presets */}
-            <Text style={styles.modalSectionLabel}>Quick Presets</Text>
+            
             <View style={styles.presetsGrid}>
               {[
                 { id: 'today', label: 'Today' },
@@ -1486,7 +968,7 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
                 onPress={handleApplyCustomRange}
                 activeOpacity={0.8}
               >
-                <Text style={styles.applyBtnText}>Apply Range</Text>
+                <Text style={styles.applyBtnText}>Apply</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -1497,10 +979,6 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
 };
 
 const styles = StyleSheet.create({
-  timeframePillCustom: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
   /* Date Range Picker Modal Styles */
   dateModalOverlay: {
     flex: 1,
@@ -1511,7 +989,7 @@ const styles = StyleSheet.create({
   },
   dateModalCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 20,
+    borderRadius: 14,
     width: '100%',
     maxWidth: 380,
     padding: 18,
@@ -1570,8 +1048,8 @@ const styles = StyleSheet.create({
     color: '#334155',
   },
   rangeSummaryBox: {
-    backgroundColor: '#F0FDF4',
-    borderColor: '#BBF7D0',
+    backgroundColor: '#F8FAFC',
+    borderColor: '#E2E8F0',
     borderWidth: 1,
     borderRadius: 10,
     paddingHorizontal: 12,
@@ -1584,12 +1062,12 @@ const styles = StyleSheet.create({
   rangeSummaryLabel: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#166534',
+    color: '#64748B',
   },
   rangeSummaryDates: {
     fontSize: 12,
     fontWeight: '800',
-    color: '#15803D',
+    color: '#0F172A',
   },
   calendarNavRow: {
     flexDirection: 'row',
@@ -1694,339 +1172,25 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#FFFFFF',
   },
-  container: {
-    marginTop: 4,
-    marginBottom: 8,
-  },
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-  },
-  headerLeft: {
-    flex: 1,
-  },
-  titleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: '800',
-    color: Colors.text,
-    letterSpacing: -0.3,
-  },
-  headerSubtitle: {
-    fontSize: 12,
-    color: Colors.textMuted,
-    marginTop: 2,
-  },
-  livePill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: '#ECFDF5',
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#A7F3D0',
-  },
-  liveDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#10B981',
-  },
-  livePillText: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#047857',
-  },
-  headerActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
+  container: { marginTop: 4, marginBottom: 8 },
+
+  headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, gap: 12 },
+  headerText: { flex: 1, minWidth: 0 },
+  headerTitle: { fontSize: 18, fontWeight: '800', color: Colors.text, letterSpacing: -0.3 },
+  headerSubtitle: { fontSize: 13, color: Colors.textMuted, marginTop: 2, fontWeight: '500' },
   iconButton: {
-    width: 36,
-    height: 36,
+    width: 40,
+    height: 40,
     borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
     backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 1,
-  },
-  exportButton: {
-    borderColor: '#FDBA74',
-    backgroundColor: '#FFF7ED',
-  },
-
-  /* Timeframe Bar */
-  timeframeBarContainer: {
-    marginBottom: 16,
-  },
-  timeframeBar: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  timeframePill: {
-    paddingHorizontal: 14,
-    paddingVertical: 7,
-    borderRadius: 10,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-  },
-  timeframePillActive: {
-    backgroundColor: '#111827',
-    borderColor: '#111827',
-  },
-  timeframePillText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#4B5563',
-  },
-  timeframePillTextActive: {
-    color: '#FFFFFF',
-  },
-
-  /* 6 KPI Cards Grid */
-  kpiGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-    marginBottom: 14,
-  },
-  kpiCard: {
-    borderRadius: 16,
-    padding: 13,
-    borderWidth: 1,
-    position: 'relative',
-    overflow: 'hidden',
-    shadowColor: '#0F172A',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  kpiCardRevenue: {
-    backgroundColor: '#FFFAF5',
-    borderColor: '#FED7AA',
-  },
-  kpiCardVolume: {
-    backgroundColor: '#F8FAFF',
-    borderColor: '#BFDBFE',
-  },
-  kpiCardCash: {
-    backgroundColor: '#F6FDF9',
-    borderColor: '#A7F3D0',
-  },
-  kpiCardOnline: {
-    backgroundColor: '#F8F9FF',
-    borderColor: '#C7D2FE',
-  },
-  kpiCardAov: {
-    backgroundColor: '#FAF8FF',
-    borderColor: '#DDD6FE',
-  },
-  kpiCardRate: {
-    backgroundColor: '#F4FDFB',
-    borderColor: '#99F6E4',
-  },
-  kpiGlowBackdrop: {
-    position: 'absolute',
-    bottom: -16,
-    right: -16,
-    width: 76,
-    height: 76,
-    borderRadius: 40,
-    opacity: 0.55,
-    zIndex: 0,
-  },
-  kpiWatermarkBox: {
-    position: 'absolute',
-    bottom: 4,
-    right: 4,
-    width: 46,
-    height: 46,
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 1,
-  },
-  kpiWatermarkBoxTablet: {
-    width: 58,
-    height: 58,
-    bottom: 6,
-    right: 6,
-  },
-  kpiBgIllustration: {
-    position: 'absolute',
-    bottom: -4,
-    right: -4,
-    width: 54,
-    height: 54,
-    resizeMode: 'contain',
-    opacity: 0.85,
-    zIndex: 1,
-  },
-  kpiContentContainer: {
-    position: 'relative',
-    zIndex: 2,
-    paddingRight: 10,
-  },
-  kpiTopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 6,
-  },
-  kpiIconBox: {
-    width: 30,
-    height: 30,
-    borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  kpiBadge: {
-    paddingHorizontal: 4,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  kpiBadgeText: {
-    fontSize: 9,
-    fontWeight: '800',
-    letterSpacing: 0.3,
-  },
-  kpiValue: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: Colors.text,
-    letterSpacing: -0.3,
-  },
-  kpiLabel: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: Colors.text,
-    marginTop: 2,
-  },
-  kpiSub: {
-    fontSize: 10,
-    color: Colors.textMuted,
-    marginTop: 2,
-  },
 
-  kpiCardTablet: {
-    padding: 15,
-    borderRadius: 18,
-    minHeight: 118,
-  },
-  kpiBgIllustrationTablet: {
-    bottom: -6,
-    right: -6,
-  },
-  kpiIconBoxTablet: {
-    width: 34,
-    height: 34,
-    borderRadius: 9,
-  },
-  kpiBadgeTablet: {
-    paddingHorizontal: 6,
-    paddingVertical: 3,
-    borderRadius: 6,
-  },
-  kpiBadgeTextTablet: {
-    fontSize: 10,
-    fontWeight: '800',
-  },
-  kpiValueTablet: {
-    fontSize: 19,
-    letterSpacing: -0.4,
-  },
-  kpiLabelTablet: {
-    fontSize: 13,
-    marginTop: 3,
-  },
-  kpiSubTablet: {
-    fontSize: 11,
-    marginTop: 2,
-  },
-
-  /* Card Section Standard */
-  cardSection: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    marginBottom: 14,
-    shadowColor: '#0F172A',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 6,
-    elevation: 2,
-  },
-  analyticsGridRow: {
-    marginBottom: 0,
-  },
-  analyticsGridRowTablet: {
-    flexDirection: 'row',
-    gap: 14,
-    alignItems: 'stretch',
-    marginBottom: 0,
-  },
-  analyticsCol: {
-    flex: 1,
-    marginBottom: 14,
-  },
-  cardSectionTitle: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: Colors.text,
-    letterSpacing: -0.2,
-  },
-  cardSectionSub: {
-    fontSize: 11,
-    color: Colors.textMuted,
-    marginTop: 1,
-  },
-  cardSectionTitleSmall: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: Colors.text,
-    marginBottom: 10,
-  },
-  chartHeaderRow: {
-    flexDirection: 'column',
-    gap: 8,
-    marginBottom: 12,
-  },
-  chartHeaderRowTablet: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 14,
-  },
-  segmentContainer: {
-    flexDirection: 'row',
-    backgroundColor: '#F3F4F6',
-    borderRadius: 8,
-    padding: 2,
-    alignSelf: 'flex-start',
-  },
-  segmentBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 6,
-  },
+  segment: { flexDirection: 'row', alignSelf: 'flex-start', backgroundColor: '#F1F3F5', borderRadius: 10, padding: 3, marginBottom: 14 },
+  segmentBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, minHeight: 34, borderRadius: 8 },
   segmentBtnActive: {
     backgroundColor: '#FFFFFF',
     shadowColor: '#000',
@@ -2035,489 +1199,84 @@ const styles = StyleSheet.create({
     shadowRadius: 2,
     elevation: 1,
   },
-  segmentBtnText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#6B7280',
-  },
-  segmentBtnTextActive: {
-    color: '#111827',
-  },
+  segmentText: { fontSize: 13.5, fontWeight: '600', color: '#64748B' },
+  segmentTextActive: { color: Colors.text, fontWeight: '700' },
 
-  /* Chart Tooltip */
-  tooltipBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F8FAFC',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    marginBottom: 10,
-  },
-  tooltipDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#FF5C39',
-    marginRight: 6,
-  },
-  tooltipText: {
-    fontSize: 11,
-    color: '#475569',
-  },
-
-  /* Chart Canvas */
-  chartScrollArea: {
-    paddingBottom: 4,
-  },
-  chartCanvas: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    height: 120,
-    paddingTop: 16,
-    gap: 12,
-  },
-  barCol: {
-    alignItems: 'center',
-    width: 42,
-    height: '100%',
-    justifyContent: 'flex-end',
-  },
-  barTopVal: {
-    fontSize: 9,
-    fontWeight: '700',
-    color: '#64748B',
-    marginBottom: 3,
-  },
-  barTrack: {
-    width: 20,
-    flex: 1,
-    justifyContent: 'flex-end',
-    backgroundColor: '#F1F5F9',
-    borderRadius: 6,
-    overflow: 'hidden',
-  },
-  barFill: {
-    width: '100%',
-    borderRadius: 6,
-  },
-  barDateLabel: {
-    fontSize: 10,
-    color: '#64748B',
-    fontWeight: '600',
-    marginTop: 6,
-  },
-  barDateLabelSelected: {
-    color: '#FF5C39',
-    fontWeight: '800',
-  },
-
-  /* Dual Bars for Cash vs Online */
-  dualBarCol: {
-    alignItems: 'center',
-    width: 46,
-    height: '100%',
-    justifyContent: 'flex-end',
-  },
-  dualBarTrack: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    width: 32,
-    flex: 1,
-    justifyContent: 'center',
-    gap: 3,
-    backgroundColor: '#F1F5F9',
-    borderRadius: 6,
-    padding: 2,
-  },
-  dualBar: {
-    width: 12,
-    borderRadius: 4,
-  },
-  legendRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 16,
-    marginTop: 10,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
-  },
-  legendItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  legendSquare: {
-    width: 10,
-    height: 10,
-    borderRadius: 2,
-  },
-  legendText: {
-    fontSize: 11,
-    color: '#4B5563',
-    fontWeight: '600',
-  },
-
-  /* Payment Split Progress */
-  dualProgressWrapper: {
-    flexDirection: 'row',
-    height: 10,
-    borderRadius: 5,
-    overflow: 'hidden',
-    marginTop: 12,
-    marginBottom: 12,
-    backgroundColor: '#E5E7EB',
-  },
-  dualProgressFill: {
-    height: '100%',
-  },
-  paymentDetailsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  paymentDetailBox: {
-    flex: 1,
-  },
-  paymentDivider: {
-    width: 1,
-    height: 40,
-    backgroundColor: '#E5E7EB',
-    marginHorizontal: 12,
-  },
-  paymentDetailTop: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  paymentDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  paymentDetailTitle: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#4B5563',
-  },
-  paymentAmountText: {
-    fontSize: 17,
-    fontWeight: '800',
-    color: Colors.text,
-    marginTop: 2,
-  },
-  paymentCountSub: {
-    fontSize: 10,
-    color: Colors.textMuted,
-    marginTop: 1,
-  },
-
-  /* Store Performance & Order Breakdown Table Styles */
-  tableHeaderSection: {
-    marginBottom: 12,
-  },
-  analyticsTable: {
+  kpiGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 12 },
+  kpiCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
-    overflow: 'hidden',
-    marginBottom: 14,
-  },
-  tableHeadRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F8FAFC',
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E2E8F0',
-  },
-  tableHeadCell: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#475569',
-    letterSpacing: 0.2,
-    textTransform: 'uppercase',
-  },
-  tableGroupHeader: {
-    backgroundColor: '#F1F5F9',
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E2E8F0',
-  },
-  tableGroupHeaderText: {
-    fontSize: 9.5,
-    fontWeight: '800',
-    color: '#64748B',
-    letterSpacing: 0.4,
-  },
-  tableRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
-  },
-  tableRowDivider: {
-    borderBottomWidth: 1.5,
-    borderBottomColor: '#E2E8F0',
-  },
-  tableCellCol: {
-    justifyContent: 'center',
-  },
-  tableCellMainText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#1E293B',
-  },
-  tableCellSubText: {
-    fontSize: 9.5,
-    color: '#94A3B8',
-    marginTop: 1,
-  },
-  tableCellText: {
-    fontSize: 12.5,
-    color: '#334155',
-  },
-  tableCellAmount: {
-    fontSize: 12.5,
-    fontWeight: '800',
-    color: '#0F172A',
-  },
-  shareBadge: {
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
-    backgroundColor: '#F1F5F9',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  shareBadgeText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#475569',
-  },
-  tableTotalRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F8FAFC',
-    paddingHorizontal: 12,
-    paddingVertical: 11,
-  },
-  tableTotalLabel: {
-    fontSize: 12.5,
-    fontWeight: '800',
-    color: '#0F172A',
-  },
-  tableTotalVal: {
-    fontSize: 13.5,
-    fontWeight: '800',
-    color: '#0F172A',
-  },
-  tableTotalAmount: {
-    fontSize: 13.5,
-    fontWeight: '800',
-    color: '#FF5C39',
-  },
-
-  /* Compact Lifecycle Row */
-  lifecycleRowContainer: {
-    paddingTop: 4,
-  },
-  lifecycleHeaderLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#64748B',
-    textTransform: 'uppercase',
-    letterSpacing: 0.3,
-    marginBottom: 8,
-  },
-  lifecyclePillsRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-  },
-  lifecycleChipCompact: {
-    flexGrow: 1,
-    flexBasis: '30%',
-    borderRadius: 8,
-    paddingVertical: 6,
-    paddingHorizontal: 8,
-    alignItems: 'center',
-  },
-  lifecycleCountCompact: {
-    fontSize: 13.5,
-    fontWeight: '800',
-  },
-  lifecycleLabelCompact: {
-    fontSize: 9,
-    fontWeight: '700',
-    color: '#6B7280',
-    marginTop: 1,
-  },
-  /* Top Live Status Pipeline */
-  lifecyclePillsMobileGrid: {
-    gap: 8,
-    marginTop: 10,
-  },
-  lifecyclePillsRowMobile: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  lifecyclePillsRowTablet: {
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 10,
-  },
-  lifecycleChipTop: {
-    flex: 1,
-    borderRadius: 12,
-    paddingVertical: 8,
-    paddingHorizontal: 4,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    minHeight: 58,
-  },
-  lifecycleChipTopTablet: {
+    borderColor: '#EEEEEE',
+    paddingHorizontal: 14,
     paddingVertical: 12,
-    minHeight: 66,
   },
-  lifecycleCountTop: {
-    fontSize: 16,
-    fontWeight: '800',
-    letterSpacing: -0.3,
-  },
-  lifecycleLabelTop: {
-    fontSize: 10.5,
-    fontWeight: '700',
-    color: '#64748B',
-    marginTop: 2,
-    textAlign: 'center',
-    lineHeight: 13,
-  },
+  kpiCardPhone: { flexBasis: '46%', flexGrow: 1 },
+  kpiCardTablet: { flexBasis: '22%', flexGrow: 1 },
+  kpiLabel: { fontSize: 13, fontWeight: '600', color: Colors.textMuted },
+  kpiValue: { fontSize: 22, fontWeight: '800', color: Colors.text, marginTop: 4, letterSpacing: -0.4, fontVariant: ['tabular-nums'] },
+  kpiSub: { fontSize: 12.5, color: Colors.textMuted, marginTop: 2 },
+  kpiSubBad: { color: '#DC2626', fontWeight: '600' },
 
-  /* Leaderboard */
-  leaderboardHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+  card: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#EEEEEE',
+    padding: 14,
     marginBottom: 12,
   },
-  cardSectionSubSmall: {
-    fontSize: 10.5,
-    color: Colors.textMuted,
-  },
-  emptyDishesBox: {
-    alignItems: 'center',
-    paddingVertical: 20,
-    gap: 6,
-  },
-  emptyDishesText: {
-    fontSize: 11,
-    color: Colors.textMuted,
-    textAlign: 'center',
-  },
-  dishList: {
-    gap: 10,
-  },
-  dishRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  rankCircle: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  rankText: {
-    fontSize: 10,
-    fontWeight: '800',
-  },
-  dishNameRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 3,
-  },
-  dishName: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: Colors.text,
-    flex: 1,
-    marginRight: 6,
-  },
-  dishRev: {
-    fontSize: 11.5,
-    fontWeight: '600',
-    color: '#059669',
-  },
-  dishBarTrack: {
-    height: 5,
-    backgroundColor: '#F1F5F9',
-    borderRadius: 3,
-    overflow: 'hidden',
-  },
-  dishBarFill: {
-    height: '100%',
-    borderRadius: 3,
-  },
-  dishQtyBadge: {
-    backgroundColor: '#F8FAFC',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  dishQtyText: {
-    fontSize: 10.5,
-    fontWeight: '700',
-    color: '#475569',
-  },
+  cardHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, minHeight: 24 },
+  cardTitle: { fontSize: 16, fontWeight: '800', color: Colors.text, letterSpacing: -0.3 },
+  cardMeta: { fontSize: 12.5, color: Colors.textMuted, fontWeight: '600' },
+  linkBtn: { flexDirection: 'row', alignItems: 'center', gap: 2, minHeight: 32 },
+  linkText: { fontSize: 13.5, fontWeight: '700', color: Colors.primary },
 
-  /* Quick Orders Banner */
-  ordersLinkBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#FFF7ED',
-    borderWidth: 1,
-    borderColor: '#FED7AA',
-    borderRadius: 14,
-    padding: 12,
-    marginTop: 2,
-    marginBottom: 10,
-  },
-  ordersLinkLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  ordersLinkIconBox: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: '#FF5C39',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  ordersLinkTitle: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#111827',
-  },
-  ordersLinkSub: {
-    fontSize: 10.5,
-    color: '#6B7280',
-    marginTop: 1,
-  },
+  statusGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  statusCell: { backgroundColor: '#F8F9FA', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 10 },
+  statusCellPhone: { flexBasis: '30%', flexGrow: 1 },
+  statusCellTablet: { flexBasis: '14%', flexGrow: 1 },
+  statusCount: { fontSize: 20, fontWeight: '800', color: Colors.text, fontVariant: ['tabular-nums'] },
+  statusCountZero: { color: '#CBD5E1' },
+  statusLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 },
+  statusDot: { width: 8, height: 8, borderRadius: 4 },
+  statusLabel: { flexShrink: 1, fontSize: 12.5, fontWeight: '600', color: '#475569' },
+
+  pairRow: {},
+  pairRowTablet: { flexDirection: 'row', gap: 12, alignItems: 'stretch' },
+  pairCol: { flex: 1 },
+
+  splitBar: { flexDirection: 'row', height: 10, borderRadius: 5, overflow: 'hidden', backgroundColor: '#F1F3F5', gap: 2 },
+  payRow: { flexDirection: 'row', marginTop: 14 },
+  payCol: { flex: 1, minWidth: 0 },
+  payColRight: { paddingLeft: 14, borderLeftWidth: 1, borderLeftColor: '#F1F3F5' },
+  payLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  payLabel: { fontSize: 13, fontWeight: '600', color: '#475569' },
+  payAmount: { fontSize: 18, fontWeight: '800', color: Colors.text, marginTop: 4, fontVariant: ['tabular-nums'] },
+  paySub: { fontSize: 12.5, color: Colors.textMuted, marginTop: 2 },
+
+  emptyText: { fontSize: 13.5, color: Colors.textMuted, paddingVertical: 8 },
+  dishRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 7 },
+  dishRank: { width: 16, fontSize: 13, fontWeight: '700', color: '#94A3B8', textAlign: 'center', fontVariant: ['tabular-nums'] },
+  dishBody: { flex: 1, minWidth: 0 },
+  dishTop: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 },
+  dishName: { flex: 1, fontSize: 14, fontWeight: '600', color: Colors.text },
+  dishQty: { fontSize: 13, fontWeight: '700', color: Colors.text, fontVariant: ['tabular-nums'] },
+  dishRev: { fontWeight: '500', color: Colors.textMuted },
+  dishTrack: { height: 4, borderRadius: 2, backgroundColor: '#F1F3F5', marginTop: 6, overflow: 'hidden' },
+  dishFill: { height: 4, borderRadius: 2, backgroundColor: Colors.primary },
+  dishFillMuted: { opacity: 0.45 },
+
+  tableHead: { flexDirection: 'row', alignItems: 'center', paddingBottom: 8, borderBottomWidth: 1, borderBottomColor: '#F1F3F5' },
+  th: { fontSize: 12.5, fontWeight: '600', color: Colors.textMuted },
+  tr: { flexDirection: 'row', alignItems: 'center', minHeight: 44, borderBottomWidth: 1, borderBottomColor: '#F6F7F8' },
+  trTotal: { borderBottomWidth: 0 },
+  colName: { flex: 2 },
+  colNum: { flex: 1, textAlign: 'right' },
+  colMoney: { flex: 1.6, textAlign: 'right' },
+  channelCell: { flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0 },
+  td: { fontSize: 14, fontWeight: '600', color: Colors.text, fontVariant: ['tabular-nums'] },
+  tdMuted: { fontSize: 13.5, color: Colors.textMuted, fontVariant: ['tabular-nums'] },
+  tdTotal: { fontSize: 14, fontWeight: '800', color: Colors.text, fontVariant: ['tabular-nums'] },
+  footnote: { fontSize: 12.5, color: Colors.textMuted, marginTop: 8 },
 });

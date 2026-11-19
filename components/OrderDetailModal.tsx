@@ -1,15 +1,10 @@
 import React from 'react';
-import { Modal, View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, useWindowDimensions } from 'react-native';
+import { Modal, View, StyleSheet, TouchableOpacity, useWindowDimensions } from 'react-native';
 import { Order } from '../types';
-import { Colors } from '../constants/colors';
-import { StatusBadge } from './StatusBadge';
-import { X, Store, User, MapPin, Bike, CreditCard, Phone, ShoppingBag, UtensilsCrossed, Tag, Receipt, CheckCircle2, Printer, Banknote, ChevronDown, ChevronUp, Check, AlertTriangle, Clock } from 'lucide-react-native';
-import { Linking } from 'react-native';
-import { orderService } from '../services/order.service';
-import { printThermalReceipt, getLastPrintJobReport, getOrderScheduleInfo } from '../services/thermal-print.service';
-import { getSanitizedOrderNotes } from '../services/printer/receipt-document';
-import { getItemOptionsList } from '../services/receipt-customization.service';
+import { orderService, type ManualPaymentStatus } from '../services/order.service';
 import { useToast } from '../context/ToastContext';
+import { OrderDetailView } from './order/OrderDetailView';
+import { useOrderPrint } from './order/useOrderPrint';
 
 interface OrderDetailModalProps {
   visible: boolean;
@@ -17,824 +12,116 @@ interface OrderDetailModalProps {
   onClose: () => void;
   onAssignDelivery: (order: Order) => void;
   onUpdateStatus?: (orderId: string, status: string) => Promise<void>;
+  /** Owner only: manual payment status. The sheet stays open so the change is visible. */
+  onUpdatePaymentStatus?: (orderId: string, status: ManualPaymentStatus) => Promise<void>;
   onCancelOrder?: (orderId: string) => Promise<void>;
   onEditDeliveryTime?: (order: Order) => void;
   paperRollSize?: string;
 }
 
+/**
+ * Order details as a bottom sheet (phone) / dialog (tablet), used by the Orders tab.
+ * Content lives in `OrderDetailView`, shared with the full-screen `app/order-details.tsx`.
+ */
 export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
   visible,
   order: propOrder,
   onClose,
   onAssignDelivery,
   onUpdateStatus,
+  onUpdatePaymentStatus,
   onCancelOrder,
   onEditDeliveryTime,
   paperRollSize = '58',
 }) => {
-  const { width: windowWidth } = useWindowDimensions();
-  const isTablet = windowWidth >= 768;
-
-  const [editingStatus, setEditingStatus] = React.useState(false);
-  const [loadingStatus, setLoadingStatus] = React.useState(false);
+  const { width } = useWindowDimensions();
+  const isTablet = width >= 768;
+  const { showToast } = useToast();
+  const { printing, print } = useOrderPrint();
   const [fetchedOrder, setFetchedOrder] = React.useState<Order | null>(null);
   const [loading, setLoading] = React.useState(false);
-  const { showToast } = useToast();
-  const [printing, setPrinting] = React.useState(false);
-  const [showCancelConfirm, setShowCancelConfirm] = React.useState(false);
-  const [cancelling, setCancelling] = React.useState(false);
 
-  const handlePrint = async () => {
-    if (!order) return;
-    const orderNum = order.orderNumber || order._id?.slice(-5).toUpperCase() || 'Order';
-    const orderStatus = order.status;
-    console.log(`\n[PRINT CLICK] User tapped "Print Receipt" inside OrderDetailModal for #${orderNum} | Stage: "${orderStatus}"`);
-
-    setPrinting(true);
-    try {
-      showToast({ title: 'Printing Receipt...', message: `Sending #${orderNum} to printer...`, type: 'info' });
-      const success = await printThermalReceipt(order, true);
-      const report = getLastPrintJobReport();
-
-      console.log(`[PRINT CLICK RESULT] Modal Order #${orderNum} | Result: ${success ? '✅ SUCCESS' : '❌ FAILED'} | Driver: ${report?.driverLabel || 'Unknown'} | Time: ${report?.durationMs || 0}ms`);
-
-      if (success) {
-        showToast({
-          title: 'Print Success ✅',
-          message: `Receipt printed via ${report?.driverLabel || 'printer'}.`,
-          type: 'success',
-        });
-      } else {
-        showToast({
-          title: 'Print Notice',
-          message: report?.error || 'Receipt print cancelled or printer unavailable.',
-          type: 'info',
-        });
-      }
-    } catch (e: any) {
-      console.error(`[PRINT CLICK ERROR] Modal Order #${orderNum} print failed:`, e);
-      showToast({ title: 'Print Error ❌', message: e?.message || 'Failed to print receipt.', type: 'error' });
-    } finally {
-      setPrinting(false);
-    }
-  };
-
+  // Load the full order (list payloads can be partial).
   React.useEffect(() => {
     if (visible && propOrder?._id) {
-      const fetchDetail = async () => {
-        setLoading(true);
-        try {
-          const res = await orderService.getOrderById(propOrder._id);
-          if (res.success && res.data) {
-            setFetchedOrder(res.data);
-          } else {
-            setFetchedOrder(propOrder);
-          }
-        } catch (e) {
+      let cancelled = false;
+      setLoading(true);
+      orderService
+        .getOrderById(propOrder._id)
+        .then((res) => !cancelled && setFetchedOrder(res.success && res.data ? res.data : propOrder))
+        .catch((e) => {
           console.error('Failed fetching order details in modal:', e);
-          setFetchedOrder(propOrder);
-        } finally {
-          setLoading(false);
-        }
+          if (!cancelled) setFetchedOrder(propOrder);
+        })
+        .finally(() => !cancelled && setLoading(false));
+      return () => {
+        cancelled = true;
       };
-      fetchDetail();
-    } else if (!visible) {
-      setFetchedOrder(null);
-      setEditingStatus(false);
-      setShowCancelConfirm(false);
-      setCancelling(false);
     }
+    if (!visible) setFetchedOrder(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, propOrder?._id]);
 
-  const order = fetchedOrder || propOrder;
-
+  // Edits made on the board while the sheet is open (status, expected time…) arrive via props;
+  // overlay just those fields so the freshly fetched full order doesn't hide them.
+  const order: Order | null =
+    fetchedOrder && propOrder && fetchedOrder._id === propOrder._id
+      ? {
+          ...fetchedOrder,
+          status: propOrder.status,
+          acceptanceStatus: propOrder.acceptanceStatus ?? fetchedOrder.acceptanceStatus,
+          acceptedAt: propOrder.acceptedAt ?? fetchedOrder.acceptedAt,
+          paymentStatus: propOrder.paymentStatus ?? fetchedOrder.paymentStatus,
+          expectedDeliveryTime: propOrder.expectedDeliveryTime ?? fetchedOrder.expectedDeliveryTime,
+          deliveryTime: propOrder.deliveryTime ?? fetchedOrder.deliveryTime,
+        }
+      : fetchedOrder || propOrder;
   if (!order) return null;
 
-  const STATUS_DROPDOWN_OPTIONS = [
-    { label: 'Placed', sub: 'New Order Received', value: 'placed', icon: '📦', color: '#3B82F6' },
-    { label: 'Preparing', sub: 'In Kitchen Cooking', value: 'preparing', icon: '🍳', color: '#F59E0B' },
-    { label: 'Ready for Pickup', sub: 'Self Pickup Collection', value: 'ready_for_pickup', icon: '🛍️', color: '#EA580C' },
-    { label: 'Out for Delivery', sub: 'Rider Out on Road', value: 'out_for_delivery', icon: '🛵', color: '#8B5CF6' },
-    { label: 'Delivered', sub: 'Order Completed & Delivered', value: 'delivered', icon: '✅', color: '#10B981' },
-    { label: 'Cancelled', sub: 'Order Cancelled', value: 'cancelled', icon: '❌', color: '#EF4444' },
-  ];
-
-  const handleStatusSelect = async (newStatus: string) => {
-    if (newStatus === 'cancelled') {
-      setEditingStatus(false);
-      setShowCancelConfirm(true);
-      return;
-    }
-    if (!onUpdateStatus || newStatus === order.status) {
-      setEditingStatus(false);
-      return;
-    }
-    setLoadingStatus(true);
-    try {
-      await onUpdateStatus(order._id, newStatus);
-      onClose();
-    } finally {
-      setLoadingStatus(false);
-      setEditingStatus(false);
-    }
+  const handleUpdateStatus = async (status: string) => {
+    if (!onUpdateStatus) return;
+    await onUpdateStatus(order._id, status);
+    onClose();
   };
 
-  const handleConfirmCancel = async () => {
-    if (!order) return;
-    setCancelling(true);
-    try {
-      if (onCancelOrder) {
-        await onCancelOrder(order._id);
-      } else if (onUpdateStatus) {
-        await onUpdateStatus(order._id, 'cancelled');
-      } else {
-        await orderService.updateOrderStatus(order._id, 'cancelled');
-        showToast({ title: 'Success', message: "Order status updated to 'cancelled'.", type: 'success' });
-      }
-      setShowCancelConfirm(false);
-      onClose();
-    } catch (err: any) {
-      console.error('Failed cancelling order:', err);
-      showToast({ title: 'Error', message: err?.message || 'Failed to cancel order.', type: 'error' });
-    } finally {
-      setCancelling(false);
-    }
+  const handleUpdatePaymentStatus = async (status: ManualPaymentStatus) => {
+    if (!onUpdatePaymentStatus) return;
+    await onUpdatePaymentStatus(order._id, status);
   };
 
-  const restaurantName = typeof order.restaurantId === 'object'
-    ? order.restaurantId?.restaurantName || 'Unknown Restaurant'
-    : 'Restaurant';
-
-  const customerName = typeof order.customerId === 'object'
-    ? order.customerId?.fullName || order.customerDetails?.name || 'Customer'
-    : order.customerDetails?.name || 'Customer';
-
-  const customerPhone = typeof order.customerId === 'object'
-    ? order.customerId?.phoneNumber || order.customerDetails?.phoneNumber
-    : order.customerDetails?.phoneNumber;
-
-  const orderTypeRaw = String(order.orderType || (order as any).fulfillmentType || '').toLowerCase();
-  const domain = String(order.sourceDomain || '').toLowerCase();
-  const notes = typeof order.notes === 'string' ? order.notes.toLowerCase() : '';
-  const custName = (order.customerDetails?.name || (order.customerId as any)?.fullName || '').toLowerCase();
-  const phone = (order.customerDetails?.phoneNumber || (order.customerId as any)?.phoneNumber || '').replace(/\D/g, '');
-  const isDineIn =
-    orderTypeRaw.includes('dine') ||
-    orderTypeRaw.includes('eat') ||
-    Boolean((order as any).tableNumber) ||
-    notes.includes('dine-in') ||
-    notes.includes('dine in') ||
-    notes.includes('table');
-
-  const isTakeaway =
-    !isDineIn && (
-      orderTypeRaw === 'takeaway' ||
-      notes.includes('takeaway') ||
-      custName.includes('takeaway') ||
-      Boolean((order as any).appName && String((order as any).appName).toLowerCase().includes('takeaway'))
-    );
-
-  const isDeliveryOrder = !isTakeaway && !isDineIn && (orderTypeRaw === 'delivery' || (!orderTypeRaw && !!order.deliveryAddress && typeof order.deliveryAddress === 'object'));
-
-  const deliveryPartner = typeof order.assignedDeliveryPartnerId === 'object'
-    ? order.assignedDeliveryPartnerId
-    : undefined;
-  const scheduleInfo = getOrderScheduleInfo(order);
-
-  const cleanAddressString = (text: string) => {
-    if (!text || typeof text !== 'string') return '';
-    return text
-      .split(',')
-      .map(t => t.trim())
-      .filter(t => t.length > 0 && !/hyderabad|telangana/i.test(t))
-      .filter((item, index, arr) => arr.indexOf(item) === index)
-      .join(', ');
+  const handleCancel = async () => {
+    if (onCancelOrder) await onCancelOrder(order._id);
+    else if (onUpdateStatus) await onUpdateStatus(order._id, 'cancelled');
+    else {
+      await orderService.updateOrderStatus(order._id, 'cancelled');
+      showToast({ title: 'Order cancelled', message: `#${order.orderNumber || ''} was cancelled.`, type: 'success' });
+    }
+    onClose();
   };
-
-  const formatAddress = () => {
-    const addr: any = order.deliveryAddress;
-    if (!addr) {
-      const custAddr: any = order.customerDetails?.address;
-      if (typeof custAddr === 'string' && custAddr.trim()) {
-        const cleaned = cleanAddressString(custAddr);
-        return cleaned || custAddr.trim();
-      }
-      return isTakeaway ? 'Takeaway Order' : isDineIn ? 'Dine In (Takeaway)' : 'Self Pickup';
-    }
-    if (typeof addr === 'string') {
-      const cleaned = cleanAddressString(addr);
-      return cleaned || addr.trim() || (isTakeaway ? 'Takeaway Order' : isDineIn ? 'Dine In (Takeaway)' : 'Self Pickup');
-    }
-    if (addr.fullAddress && typeof addr.fullAddress === 'string' && addr.fullAddress.trim()) {
-      const cleaned = cleanAddressString(addr.fullAddress);
-      if (cleaned) return cleaned;
-    }
-    if (addr.formattedAddress && typeof addr.formattedAddress === 'string' && addr.formattedAddress.trim()) {
-      const cleaned = cleanAddressString(addr.formattedAddress);
-      if (cleaned) return cleaned;
-    }
-    if (addr.addressLine1 && typeof addr.addressLine1 === 'string' && addr.addressLine1.includes(',')) {
-      const cleaned = cleanAddressString(addr.addressLine1);
-      if (cleaned) return cleaned;
-    }
-
-    const rawParts = [
-      addr.houseNumber || addr.flatNumber || addr.doorNo,
-      addr.addressLine1,
-      addr.addressLine2,
-      addr.street,
-      addr.landmark,
-      addr.area,
-      addr.city,
-      addr.postalCode || addr.postcode || addr.zipCode,
-    ].filter(Boolean);
-
-    const uniqueParts: string[] = [];
-    rawParts.forEach((p: any) => {
-      const str = String(p).trim();
-      if (
-        str &&
-        !/hyderabad|telangana/i.test(str) &&
-        !uniqueParts.some(u => u.toLowerCase() === str.toLowerCase() || u.toLowerCase().includes(str.toLowerCase()))
-      ) {
-        uniqueParts.push(str);
-      }
-    });
-
-    return uniqueParts.length > 0 ? uniqueParts.join(', ') : (addr.address || (isTakeaway ? 'Takeaway Order' : isDineIn ? 'Dine In (Takeaway)' : 'Self Pickup'));
-  };
-
-  const addressText = formatAddress();
-
-  const orderedItemsList =
-    (Array.isArray(order.orderedItems) && order.orderedItems.length > 0)
-      ? order.orderedItems
-      : (Array.isArray((order as any).items) && (order as any).items.length > 0)
-      ? (order as any).items
-      : [];
 
   return (
-    <Modal visible={visible} animationType={isTablet ? 'fade' : 'slide'} transparent={true} onRequestClose={onClose}>
-      <View style={[styles.modalOverlay, isTablet && styles.modalOverlayTablet]}>
-        <View style={[styles.modalContent, isTablet && styles.modalContentTablet]}>
-          <View style={styles.header}>
-            <View>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                <Text style={styles.headerTitle}>
-                  Order #{order.orderNumber || order._id?.substring(0, 8)}
-                </Text>
-                {isDineIn ? (
-                  <View style={{ backgroundColor: '#F5F3FF', borderColor: '#DDD6FE', borderWidth: 1, paddingHorizontal: 7, paddingVertical: 2, borderRadius: 5 }}>
-                    <Text style={{ fontSize: 10, fontWeight: '800', color: '#7C3AED' }}>DINE IN (TAKEAWAY)</Text>
-                  </View>
-                ) : isTakeaway ? (
-                  <View style={{ backgroundColor: '#FEF3C7', borderColor: '#FDE68A', borderWidth: 1, paddingHorizontal: 7, paddingVertical: 2, borderRadius: 5 }}>
-                    <Text style={{ fontSize: 10, fontWeight: '800', color: '#B45309' }}>TAKEAWAY ORDER</Text>
-                  </View>
-                ) : null}
-              </View>
-              <Text style={styles.headerSub}>
-                {order.createdAt ? new Date(order.createdAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : ''}
-              </Text>
-            </View>
-            <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
-              <X size={20} color={Colors.textMuted} />
-            </TouchableOpacity>
-          </View>
-
-          {loading ? (
-            <View style={{ padding: 60, justifyContent: 'center', alignItems: 'center' }}>
-              <ActivityIndicator size="large" color={Colors.primary} />
-              <Text style={{ color: Colors.textMuted, marginTop: 12, fontWeight: '600' }}>
-                Loading order details...
-              </Text>
-            </View>
-          ) : (
-            <ScrollView style={styles.scrollBody} showsVerticalScrollIndicator={false}>
-            {/* Dropdown Status Selector */}
-            {order.status === 'placed' ? (
-              <View style={styles.acceptActionsRow}>
-                <TouchableOpacity
-                  style={[styles.acceptButton, { flex: 1 }]}
-                  onPress={() => handleStatusSelect('preparing')}
-                  disabled={loadingStatus}
-                >
-                  {loadingStatus ? (
-                    <ActivityIndicator size="small" color="#FFFFFF" />
-                  ) : (
-                    <Text style={styles.acceptButtonText}>Accept Order</Text>
-                  )}
-                </TouchableOpacity>
-              </View>
-            ) : (
-              <View style={styles.dropdownContainer}>
-                <TouchableOpacity
-                  style={styles.dropdownTrigger}
-                  onPress={() => setEditingStatus(!editingStatus)}
-                  activeOpacity={0.8}
-                >
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
-                    <Text style={styles.dropdownTriggerLabel}>Status:</Text>
-                    <StatusBadge status={order.status} type="order" />
-                  </View>
-                  <View style={styles.dropdownChevronBox}>
-                    <Text style={styles.editStatusBtnText}>
-                      {editingStatus ? 'Close' : 'Change Status'}
-                    </Text>
-                    {editingStatus ? <ChevronUp size={15} color={Colors.primary} /> : <ChevronDown size={15} color={Colors.primary} />}
-                  </View>
-                </TouchableOpacity>
-
-                {editingStatus && (
-                  <View style={styles.dropdownMenu}>
-                    {STATUS_DROPDOWN_OPTIONS.map((opt) => {
-                      const isSelected = order.status === opt.value;
-                      return (
-                        <TouchableOpacity
-                          key={opt.value}
-                          disabled={loadingStatus}
-                          style={[
-                            styles.dropdownItem,
-                            isSelected && styles.dropdownItemSelected,
-                          ]}
-                          onPress={() => handleStatusSelect(opt.value)}
-                          activeOpacity={0.7}
-                        >
-                          <Text style={{ fontSize: 16, marginRight: 10 }}>{opt.icon}</Text>
-                          <View style={{ flex: 1 }}>
-                            <Text style={[styles.dropdownItemText, isSelected && styles.dropdownItemTextSelected]}>
-                              {opt.label}
-                            </Text>
-                            <Text style={styles.dropdownItemSubText}>{opt.sub}</Text>
-                          </View>
-                          {isSelected && <Check size={16} color="#10B981" style={{ marginLeft: 8 }} />}
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                )}
-              </View>
-            )}
-
-            {/* Restaurant & Source Card */}
-            <View style={styles.card}>
-              <View style={styles.cardHeader}>
-                <Store size={16} color={Colors.primary} />
-                <Text style={styles.cardTitle}>Restaurant & Channel</Text>
-              </View>
-              <Text style={styles.infoName}>{restaurantName}</Text>
-              
-              <View style={{ marginTop: 8, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                {(() => {
-                  const source = (order.orderSource || '').toLowerCase();
-                  const rawDomain = (order.sourceDomain || '').trim();
-                  const restExt = typeof order.restaurantId === 'object' ? (order.restaurantId as any)?.externalWebsiteSettings : undefined;
-                  const restCustomDomain = (restExt?.customDomain || restExt?.domain || '').trim();
-                  const restSubdomain = restExt?.subdomain ? `${restExt.subdomain}.krifoo.co.uk` : '';
-                  const fallbackExtDomain = restCustomDomain || restSubdomain;
-
-                  const isMarketplace = rawDomain.toLowerCase().includes('krifoo.co.uk') || (!rawDomain && source === 'krifoo');
-                  const isExt = !isMarketplace && (source === 'external' || Boolean(rawDomain));
-                  
-                      const restName = typeof order.restaurantId === 'object' ? (order.restaurantId as any)?.restaurantName : '';
-                  let domainUrl = 'krifoo.co.uk';
-                      const appName = ((order as any).appName || '').trim();
-                      if (appName) {
-                        domainUrl = appName;
-                  } else if (isExt) {
-                    domainUrl = rawDomain && rawDomain !== 'External Website' && rawDomain !== 'External Web'
-                      ? rawDomain
-                      : (fallbackExtDomain || (restName ? `${restName} Web` : 'External Web'));
-                  }
-
-                      if (isExt || appName) {
-                    return (
-                      <View style={{ backgroundColor: '#FEF3C7', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6, borderWidth: 1, borderColor: '#FDE68A' }}>
-                        <Text style={{ fontSize: 13, fontWeight: '700', color: '#B45309' }}>
-                          {`🌐 ${domainUrl}`}
-                        </Text>
-                      </View>
-                    );
-                  }
-                  return (
-                    <View style={{ backgroundColor: '#EFF6FF', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6, borderWidth: 1, borderColor: '#DBEAFE' }}>
-                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#2563EB' }}>
-                        📱 krifoo.co.uk
-                      </Text>
-                    </View>
-                  );
-                })()}
-              </View>
-            </View>
-
-            {/* Scheduled Order Banner (If Scheduled) */}
-            {scheduleInfo.isScheduled && (
-              <View style={styles.scheduledAlertBox}>
-                <View style={styles.scheduledAlertHeader}>
-                  <Clock size={18} color="#B45309" />
-                  <Text style={styles.scheduledAlertTitle}>SCHEDULED ORDER</Text>
-                </View>
-                <Text style={styles.scheduledAlertTime}>
-                      Time: {scheduleInfo.scheduleTimeText}
-                </Text>
-                <Text style={styles.scheduledAlertSubtitle}>
-                    Cook closer to scheduled fulfillment time.
-                </Text>
-              </View>
-            )}
-
-                {/* Expected Delivery Time Card */}
-                <View style={styles.deliveryTimeCard}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
-                      <View style={styles.deliveryTimeIconCircle}>
-                        <Clock size={18} color="#2563EB" />
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.deliveryTimeLabel}>EXPECTED DELIVERY TIME</Text>
-                        <Text style={styles.deliveryTimeValue}>
-                          {order.expectedDeliveryTime || order.deliveryTime || 30} mins
-                        </Text>
-                      </View>
-                    </View>
-                    {onEditDeliveryTime ? (
-                      <TouchableOpacity
-                        style={styles.editDeliveryTimeBtn}
-                        onPress={() => onEditDeliveryTime(order)}
-                        activeOpacity={0.8}
-                      >
-                        <Text style={styles.editDeliveryTimeBtnText}>Edit Time</Text>
-                      </TouchableOpacity>
-                    ) : null}
-                  </View>
-                </View>
-
-            {/* Customer & Location */}
-            <View style={styles.card}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
-                    <View style={[styles.cardHeader, { marginBottom: 0 }]}>
-                  <User size={16} color={Colors.info} />
-                  <Text style={styles.cardTitle}>Customer & Location</Text>
-                </View>
-                <View
-                  style={[
-                    {
-                      paddingHorizontal: 8,
-                      paddingVertical: 3,
-                      borderRadius: 6,
-                      borderWidth: 1,
-                      alignSelf: 'flex-start',
-                    },
-                    isDeliveryOrder
-                      ? { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }
-                      : isDineIn
-                      ? { backgroundColor: '#F5F3FF', borderColor: '#DDD6FE' }
-                      : isTakeaway
-                      ? { backgroundColor: '#FEF3C7', borderColor: '#FDE68A' }
-                      : { backgroundColor: '#FFF7ED', borderColor: '#FED7AA' },
-                  ]}
-                >
-                  <Text
-                    style={[
-                          { fontSize: 10.5, fontWeight: '800' },
-                      isDeliveryOrder
-                        ? { color: '#2563EB' }
-                        : isDineIn
-                        ? { color: '#7C3AED' }
-                        : isTakeaway
-                        ? { color: '#B45309' }
-                        : { color: '#EA580C' },
-                    ]}
-                  >
-                        {isDeliveryOrder ? '🛵 DELIVERY' : isDineIn ? '🍽️ DINE IN (TAKEAWAY)' : isTakeaway ? '🥡 TAKEAWAY ORDER' : '🛍️ SELF PICKUP'}
-                  </Text>
-                </View>
-              </View>
-              
-              <View style={styles.customerRow}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.infoName}>{customerName}</Text>
-                  {customerPhone ? (
-                    <View style={styles.phoneWithCallRow}>
-                      <Text style={styles.infoText}>Phone: {customerPhone}</Text>
-                      <TouchableOpacity
-                        style={styles.callRiderInlineBtn}
-                        onPress={() => Linking.openURL(`tel:${customerPhone}`)}
-                      >
-                        <Phone size={11} color="#FFFFFF" />
-                        <Text style={styles.callRiderInlineBtnText}>Call Customer</Text>
-                      </TouchableOpacity>
-                    </View>
-                  ) : null}
-                </View>
-              </View>
-
-              <View style={styles.divider} />
-
-              <View style={styles.addressRow}>
-                <MapPin size={16} color={Colors.textSubtle} />
-                <Text style={styles.addressText}>{addressText}</Text>
-              </View>
-
-                  {(() => {
-                    const cleanNote = getSanitizedOrderNotes(order.notes);
-                    return cleanNote ? (
-                      <View style={styles.notesBox}>
-                        <Text style={styles.notesTitle}>Special Instructions / Notes:</Text>
-                        <Text style={styles.notesText}>{cleanNote}</Text>
-                      </View>
-                    ) : null;
-                  })()}
-            </View>
-
-            {/* Items List */}
-            <View style={styles.card}>
-              <View style={styles.cardHeader}>
-                <Receipt size={16} color={Colors.primary} />
-                <Text style={styles.cardTitle}>Ordered Items</Text>
-              </View>
-              {orderedItemsList.map((item: any, idx: number) => {
-                const itemName =
-                  item.name ||
-                  (item as any).itemName ||
-                  (item as any).title ||
-                  (item as any).dishName ||
-                  (item as any).productName ||
-                  (item as any).menuItemId?.name ||
-                  (item as any).itemId?.name ||
-                  'Item';
-                const itemQty = Number(item.quantity || (item as any).qty || 1);
-
-                let itemTotal = 0;
-                if (item.itemTotal !== undefined && item.itemTotal !== null && !isNaN(Number(item.itemTotal)) && Number(item.itemTotal) > 0) {
-                  itemTotal = Number(item.itemTotal);
-                } else if ((item as any).totalPrice !== undefined && (item as any).totalPrice !== null && !isNaN(Number((item as any).totalPrice)) && Number((item as any).totalPrice) > 0) {
-                  itemTotal = Number((item as any).totalPrice);
-                } else {
-                  const unitPrice = Number(
-                    item.price ??
-                    (item as any).basePrice ??
-                    (item as any).unitPrice ??
-                    (item as any).menuItemId?.price ??
-                    (item as any).menuItemId?.basePrice ??
-                    (item as any).itemId?.price ??
-                    (item as any).itemId?.basePrice ??
-                    0
-                  );
-                  itemTotal = unitPrice * itemQty;
-                }
-
-                return (
-                  <View key={idx} style={styles.itemRow}>
-                    <View style={styles.itemQtyBadge}>
-                      <Text style={styles.itemQtyText}>{itemQty}x</Text>
-                    </View>
-                    <View style={styles.itemInfo}>
-                      <Text style={styles.itemName}>{itemName}</Text>
-                      {getItemOptionsList(item).map((opt: string, oIdx: number) => (
-                        <Text key={oIdx} style={styles.itemMeta}>+ {opt}</Text>
-                      ))}
-                      {item.instructions ? (
-                        <Text style={[styles.itemMeta, { fontStyle: 'italic' }]}>Note: {item.instructions}</Text>
-                      ) : null}
-                    </View>
-                    <Text style={styles.itemPrice}>£{itemTotal.toFixed(2)}</Text>
-                  </View>
-                );
-              })}
-
-              <View style={styles.divider} />
-
-              {/* Price Breakdown */}
-              <View style={styles.priceRow}>
-                <Text style={styles.priceLabel}>Subtotal:</Text>
-                <Text style={styles.priceVal}>
-                  £{(order.pricing?.subtotal || 0).toFixed(2)}
-                </Text>
-              </View>
-
-              <View style={styles.priceRow}>
-                <Text style={styles.priceLabel}>Delivery Fee:</Text>
-                <Text style={styles.priceVal}>
-                  {(order.pricing?.deliveryFee || order.deliveryFee || 0) === 0 ? 'FREE' : `£${(order.pricing?.deliveryFee || order.deliveryFee || 0).toFixed(2)}`}
-                </Text>
-              </View>
-
-              {(order.pricing?.handlingCharge || order.pricing?.tax || order.taxAmount) ? (
-                <View style={styles.priceRow}>
-                  <Text style={styles.priceLabel}>Handling & Tax:</Text>
-                  <Text style={styles.priceVal}>
-                    £{(order.pricing?.handlingCharge || order.pricing?.tax || order.taxAmount || 0).toFixed(2)}
-                  </Text>
-                </View>
-              ) : null}
-
-              {(order.pricing?.onlinePaymentFee) ? (
-                <View style={styles.priceRow}>
-                      <Text style={styles.priceLabel}>Handling Fee:</Text>
-                  <Text style={styles.priceVal}>
-                    £{(order.pricing?.onlinePaymentFee || 0).toFixed(2)}
-                  </Text>
-                </View>
-              ) : null}
-
-              {(order.pricing?.platformFee) ? (
-                <View style={styles.priceRow}>
-                  <Text style={styles.priceLabel}>Platform Fee:</Text>
-                  <Text style={styles.priceVal}>
-                    £{(order.pricing?.platformFee || 0).toFixed(2)}
-                  </Text>
-                </View>
-              ) : null}
-
-              {(order.pricing?.discount || order.pricing?.discountAmount) ? (
-                <View style={styles.priceRow}>
-                  <Text style={styles.priceLabel}>Discount:</Text>
-                  <Text style={[styles.priceVal, { color: Colors.success }]}>
-                    -£{(order.pricing?.discount || order.pricing?.discountAmount || 0).toFixed(2)}
-                  </Text>
-                </View>
-              ) : null}
-
-              <View style={[styles.priceRow, styles.totalPriceRow]}>
-                <Text style={styles.totalLabel}>Total Paid:</Text>
-                <Text style={styles.totalVal}>
-                  £{(
-                    order.pricing?.totalAmount ??
-                    order.pricing?.total ??
-                    order.totalAmount ??
-                    order.totalPrice ??
-                    0
-                  ).toFixed(2)}
-                </Text>
-              </View>
-            </View>
-
-            {/* Payment Method Card */}
-            <View style={styles.paymentCard}>
-              <View style={styles.cardHeader}>
-                <CreditCard size={16} color={Colors.primary} />
-                <Text style={styles.cardTitle}>Payment Method</Text>
-              </View>
-              <View style={styles.paymentDetailRow}>
-                <View style={styles.paymentMethodInfo}>
-                  <View style={styles.paymentIconBadge}>
-                    {(order.paymentType || 'cash').toLowerCase() === 'cash' ? (
-                      <Banknote size={18} color="#16A34A" />
-                    ) : (
-                      <CreditCard size={18} color="#2563EB" />
-                    )}
-                  </View>
-                  <View>
-                    <Text style={styles.paymentMethodTitle}>
-                      {(order.paymentType || 'Cash').toUpperCase()}
-                    </Text>
-                    <Text style={styles.paymentMethodSub}>
-                      {(order.paymentType || 'cash').toLowerCase() === 'cash'
-                        ? (isTakeaway || isDineIn ? 'Cash at Counter' : 'Pay on fulfillment / COD')
-                        : (order.paymentType?.toLowerCase() === 'card' && (isTakeaway || isDineIn) ? 'Card at Counter / Terminal' : 'Processed via Stripe')}
-                    </Text>
-                  </View>
-                </View>
-
-                <StatusBadge status={order.paymentStatus || 'pending'} type="payment" />
-              </View>
-            </View>
-
-            {/* Assigned Delivery Partner Card (Only for Delivery Orders) */}
-            {isDeliveryOrder && (
-              <View style={styles.card}>
-                <View style={styles.cardHeader}>
-                  <Bike size={16} color={Colors.primary} />
-                  <Text style={styles.cardTitle}>Assigned Delivery Partner</Text>
-                </View>
-
-                {deliveryPartner ? (
-                  <View style={styles.driverInfoBox}>
-                    <Text style={styles.infoName}>{deliveryPartner.fullName}</Text>
-                    {deliveryPartner.phoneNumber ? (
-                      <View style={styles.phoneWithCallRow}>
-                        <Text style={styles.infoText}>Phone: {deliveryPartner.phoneNumber}</Text>
-                        <TouchableOpacity
-                          style={styles.callRiderInlineBtn}
-                          onPress={() => Linking.openURL(`tel:${deliveryPartner.phoneNumber}`)}
-                        >
-                          <Phone size={11} color="#FFFFFF" />
-                          <Text style={styles.callRiderInlineBtnText}>Call Rider</Text>
-                        </TouchableOpacity>
-                      </View>
-                    ) : null}
-                    {deliveryPartner.vehicleNumber ? (
-                      <Text style={styles.infoText}>Vehicle: {deliveryPartner.vehicleNumber}</Text>
-                    ) : null}
-                  </View>
-                ) : (
-                  <Text style={styles.unassignedText}>No delivery partner assigned yet.</Text>
-                )}
-              </View>
-            )}
-
-            {/* Print Receipt Section for Delivered / Completed Orders */}
-            {order.status === 'delivered' && (
-              <View style={styles.printSectionCard}>
-                <TouchableOpacity
-                  style={styles.printReceiptBtn}
-                  onPress={handlePrint}
-                  disabled={printing}
-                  activeOpacity={0.82}
-                >
-                  {printing ? (
-                    <ActivityIndicator size="small" color="#FFFFFF" />
-                  ) : (
-                    <>
-                      <Printer size={18} color="#FFFFFF" />
-                      <Text style={styles.printReceiptBtnText}>Print Receipt({paperRollSize || '58'}mm)</Text>
-                    </>
-                  )}
-                </TouchableOpacity>
-              </View>
-            )}
-
-            {/* Generous Bottom Spacing Spacer */}
-            <View style={{ height: 40 }} />
-          </ScrollView>
-          )}
-
-          {/* Footer Actions for Active Orders (Assign Delivery & Cancel Order) */}
-          {order.status !== 'delivered' && order.status !== 'cancelled' && (
-            <View style={styles.footerAction}>
-              {isDeliveryOrder && (
-                <TouchableOpacity
-                  style={styles.assignDriverBtn}
-                  onPress={() => {
-                    onClose();
-                    onAssignDelivery(order);
-                  }}
-                  activeOpacity={0.8}
-                >
-                  <Bike size={18} color="#FFFFFF" />
-                  <Text style={styles.assignDriverText}>
-                    {deliveryPartner ? 'Reassign Delivery Partner' : 'Assign Delivery Partner'}
-                  </Text>
-                </TouchableOpacity>
-              )}
-
-              <TouchableOpacity
-                style={[
-                  styles.cancelOrderBtn,
-                  isDeliveryOrder && { marginTop: 8 },
-                ]}
-                onPress={() => setShowCancelConfirm(true)}
-                activeOpacity={0.75}
-                disabled={cancelling}
-              >
-                <X size={16} color="#EF4444" />
-                <Text style={styles.cancelOrderBtnText}>Cancel Order</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-
-          {/* In-Modal Confirmation to Cancel */}
-          {showCancelConfirm && (
-            <View style={styles.confirmOverlay}>
-              <View style={styles.confirmBox}>
-                <View style={styles.confirmHeaderRow}>
-                  <View style={styles.confirmIconContainer}>
-                    <AlertTriangle size={22} color="#EF4444" />
-                  </View>
-                  <Text style={styles.confirmTitle}>Cancel Order</Text>
-                </View>
-
-                <Text style={styles.confirmMessage}>
-                  Are you sure you want to cancel order #{order.orderNumber || order._id?.substring(0, 8).toUpperCase()}? This action cannot be undone.
-                </Text>
-
-                <View style={styles.confirmBtnRow}>
-                  <TouchableOpacity
-                    style={styles.confirmKeepBtn}
-                    onPress={() => setShowCancelConfirm(false)}
-                    disabled={cancelling}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={styles.confirmKeepBtnText}>Keep Order</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={styles.confirmCancelBtn}
-                    onPress={handleConfirmCancel}
-                    disabled={cancelling}
-                    activeOpacity={0.7}
-                  >
-                    {cancelling ? (
-                      <ActivityIndicator size="small" color="#FFFFFF" />
-                    ) : (
-                      <Text style={styles.confirmCancelBtnText}>Yes, Cancel</Text>
-                    )}
-                  </TouchableOpacity>
-                </View>
-              </View>
-            </View>
-          )}
+    <Modal visible={visible} animationType={isTablet ? 'fade' : 'slide'} transparent onRequestClose={onClose}>
+      <View style={[styles.overlay, isTablet && styles.overlayTablet]}>
+        {!isTablet && <TouchableOpacity style={StyleSheet.absoluteFill} onPress={onClose} accessibilityLabel="Close order details" />}
+        <View style={[styles.sheet, isTablet && styles.sheetTablet]}>
+          {!isTablet && <View style={styles.grabber} />}
+          <OrderDetailView
+            order={order}
+            variant="sheet"
+            loading={loading}
+            onClose={onClose}
+            onUpdateStatus={onUpdateStatus ? handleUpdateStatus : undefined}
+            onUpdatePaymentStatus={onUpdatePaymentStatus ? handleUpdatePaymentStatus : undefined}
+            onCancelOrder={handleCancel}
+            onAssignDelivery={() => {
+              onClose();
+              onAssignDelivery(order);
+            }}
+            onEditDeliveryTime={onEditDeliveryTime ? () => onEditDeliveryTime(order) : undefined}
+            onPrint={() => print(order)}
+            printing={printing}
+            paperRollSize={paperRollSize}
+          />
         </View>
       </View>
     </Modal>
@@ -842,670 +129,34 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
 };
 
 const styles = StyleSheet.create({
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(17, 24, 28, 0.45)',
-    justifyContent: 'flex-end',
+  overlay: { flex: 1, backgroundColor: 'rgba(17, 24, 28, 0.5)', justifyContent: 'flex-end' },
+  overlayTablet: { justifyContent: 'center', alignItems: 'center', padding: 24 },
+  sheet: {
+    backgroundColor: '#F4F5F7',
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    maxHeight: '92%',
+    overflow: 'hidden',
   },
-  modalOverlayTablet: {
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 24,
-  },
-  modalContent: {
-    backgroundColor: Colors.background,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    maxHeight: '90%',
-    paddingBottom: 20,
-  },
-  modalContentTablet: {
+  sheetTablet: {
     width: '100%',
-    maxWidth: 680,
-    borderRadius: 20,
-    maxHeight: '85%',
+    maxWidth: 640,
+    maxHeight: '88%',
+    borderRadius: 16,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 12 },
     shadowOpacity: 0.18,
     shadowRadius: 24,
     elevation: 12,
   },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.cardBorder,
-  },
-  headerTitle: {
-    color: Colors.text,
-    fontSize: 18,
-    fontWeight: '700',
-  },
-  headerSub: {
-    color: Colors.textSubtle,
-    fontSize: 12,
-  },
-  closeBtn: {
-    padding: 6,
-  },
-  scrollBody: {
-    padding: 16,
-  },
-  statusBox: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: Colors.card,
-    borderRadius: 12,
-    borderColor: Colors.cardBorder,
-    borderWidth: 1,
-    padding: 12,
-    marginBottom: 12,
-  },
-  statusBoxLabel: {
-    color: Colors.text,
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  statusBoxDate: {
-    color: Colors.textSubtle,
-    fontSize: 11,
-    marginTop: 2,
-  },
-  card: {
-    backgroundColor: Colors.card,
-    borderRadius: 12,
-    borderColor: Colors.cardBorder,
-    borderWidth: 1,
-    padding: 14,
-    marginBottom: 12,
-  },
-  cardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginBottom: 8,
-  },
-  cardTitle: {
-    color: Colors.textMuted,
-    fontSize: 13,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  infoName: {
-    color: Colors.text,
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  infoText: {
-    color: Colors.textMuted,
-    fontSize: 13,
-    marginTop: 2,
-  },
-  divider: {
-    height: 1,
-    backgroundColor: Colors.cardBorder,
-    marginVertical: 10,
-  },
-  addressRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 8,
-  },
-  addressText: {
-    color: Colors.text,
-    fontSize: 13,
-    flex: 1,
-  },
-  notesBox: {
-    backgroundColor: '#FFFFFF',
-    padding: 8,
-    borderRadius: 6,
-    marginTop: 10,
-  },
-  notesTitle: {
-    color: Colors.textSubtle,
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  notesText: {
-    color: Colors.warning,
-    fontSize: 12,
-    marginTop: 2,
-  },
-  itemRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 6,
-  },
-  itemQtyBadge: {
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-    marginRight: 8,
-  },
-  itemQtyText: {
-    color: Colors.primary,
-    fontWeight: '700',
-    fontSize: 12,
-  },
-  itemInfo: {
-    flex: 1,
-  },
-  itemName: {
-    color: Colors.text,
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  itemMeta: {
-    color: Colors.textSubtle,
-    fontSize: 11,
-  },
-  itemPrice: {
-    color: Colors.text,
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  priceRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginVertical: 2,
-  },
-  priceLabel: {
-    color: Colors.textSubtle,
-    fontSize: 13,
-  },
-  priceVal: {
-    color: Colors.text,
-    fontSize: 13,
-  },
-  totalPriceRow: {
-    marginTop: 8,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: Colors.cardBorder,
-  },
-  totalLabel: {
-    color: Colors.text,
-    fontSize: 15,
-    fontWeight: '800',
-  },
-  totalVal: {
-    color: Colors.primary,
-    fontSize: 18,
-    fontWeight: '800',
-  },
-  driverInfoBox: {
-    backgroundColor: '#FFFFFF',
-    padding: 10,
-    borderRadius: 8,
-  },
-  unassignedText: {
-    color: Colors.textSubtle,
-    fontSize: 13,
-    fontStyle: 'italic',
-  },
-  footerAction: {
-    paddingHorizontal: 16,
-  },
-  assignDriverBtn: {
-    backgroundColor: Colors.primary,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 8,
-    paddingVertical: 12,
-    borderRadius: 10,
-  },
-  assignDriverText: {
-    color: '#FFFFFF',
-    fontWeight: '800',
-    fontSize: 14,
-  },
-  editStatusBtn: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-    backgroundColor: Colors.primaryLight,
-  },
-  editStatusBtnText: {
-    color: Colors.primary,
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  statusPickerCard: {
-    backgroundColor: Colors.card,
-    borderRadius: 12,
-    borderColor: Colors.primary,
-    borderWidth: 1,
-    padding: 12,
-    marginBottom: 12,
-  },
-  statusPickerTitle: {
-    color: Colors.text,
-    fontSize: 12,
-    fontWeight: '700',
-    marginBottom: 8,
-  },
-  statusGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-  },
-  statusChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-    backgroundColor: Colors.background,
-    borderWidth: 1,
-    borderColor: Colors.cardBorder,
-  },
-  statusChipSelected: {
-    backgroundColor: Colors.primary,
-    borderColor: Colors.primary,
-  },
-  statusChipText: {
-    color: Colors.textMuted,
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  statusChipTextSelected: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-  },
-  acceptActionsRow: {
-    flexDirection: 'row',
-    gap: 12,
-    marginBottom: 20,
-  },
-  acceptButton: {
-    flex: 2,
-    backgroundColor: '#16A34A', // success green
-    height: 48,
-    borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  acceptButtonText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '800',
-  },
-  rejectButton: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#EF4444',
-    height: 48,
-    borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  rejectButtonText: {
-    color: '#EF4444',
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  customerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  callContactBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    backgroundColor: '#2563EB',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 16,
-  },
-  callContactBtnText: {
-    color: '#FFFFFF',
-    fontSize: 11,
-    fontWeight: '700',
-  },
-
-  /* Payment Method & Thermal Print Styles */
-  paymentCard: {
-    backgroundColor: Colors.card,
-    borderRadius: 14,
-    borderColor: Colors.cardBorder,
-    borderWidth: 1.2,
-    padding: 14,
-    marginBottom: 14,
-  },
-  paymentDetailRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginTop: 10,
-    gap: 12,
-  },
-  paymentMethodInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    flex: 1,
-  },
-  paymentIconBadge: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: '#F3F4F6',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  paymentMethodTitle: {
-    color: Colors.text,
-    fontSize: 14,
-    fontWeight: '800',
-  },
-  paymentMethodSub: {
-    color: Colors.textMuted,
-    fontSize: 11,
-    marginTop: 1,
-  },
-  paymentStatusBadge: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 14,
-    borderWidth: 1,
-  },
-  paymentStatusBadgeText: {
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-  printSectionCard: {
-    marginTop: 4,
-    marginBottom: 14,
-  },
-  printReceiptBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: '#FF5C39',
-    paddingVertical: 14,
-    borderRadius: 12,
-    shadowColor: '#FF5C39',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.25,
-    shadowRadius: 6,
-    elevation: 4,
-  },
-  printReceiptBtnText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '800',
-  },
-  phoneWithCallRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginTop: 3,
-  },
-  callRiderInlineBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: '#2563EB',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 12,
-  },
-  callRiderInlineBtnText: {
-    color: '#FFFFFF',
-    fontSize: 10.5,
-    fontWeight: '800',
-  },
-
-  /* Status Dropdown Styles */
-  dropdownContainer: {
-    marginBottom: 14,
-  },
-  dropdownTrigger: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: Colors.card,
-    borderRadius: 12,
-    borderWidth: 1.2,
-    borderColor: Colors.cardBorder,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-  },
-  dropdownTriggerLabel: {
-    color: Colors.textMuted,
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  dropdownChevronBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: Colors.primaryLight,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
-  },
-  dropdownMenu: {
-    backgroundColor: Colors.card,
-    borderRadius: 12,
-    borderWidth: 1.2,
-    borderColor: Colors.primary,
-    marginTop: 6,
-    padding: 6,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 5,
-  },
-  dropdownItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 8,
-    marginVertical: 1,
-  },
-  dropdownItemSelected: {
-    backgroundColor: '#F3F4F6',
-  },
-  dropdownItemText: {
-    color: Colors.text,
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  dropdownItemTextSelected: {
-    color: Colors.primary,
-  },
-  dropdownItemSubText: {
-    color: Colors.textMuted,
-    fontSize: 11,
-    marginTop: 1,
-  },
-
-  /* Cancel Order Button & Confirmation Overlay */
-  cancelOrderBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    backgroundColor: '#FEF2F2',
-    borderWidth: 1,
-    borderColor: '#FCA5A5',
-    paddingVertical: 12,
-    borderRadius: 10,
-  },
-  cancelOrderBtnText: {
-    color: '#EF4444',
-    fontWeight: '700',
-    fontSize: 14,
-  },
-  confirmOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(15, 23, 42, 0.55)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    zIndex: 999,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-  },
-  confirmBox: {
-    width: '100%',
-    maxWidth: 340,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: Colors.cardBorder,
-    shadowColor: '#0F172A',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.15,
-    shadowRadius: 16,
-    elevation: 8,
-  },
-  confirmHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
-    gap: 12,
-  },
-  confirmIconContainer: {
-    width: 38,
-    height: 38,
-    borderRadius: 10,
-    backgroundColor: '#FEF2F2',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  confirmTitle: {
-    color: Colors.text,
-    fontSize: 16,
-    fontWeight: '700',
-    flex: 1,
-  },
-  confirmMessage: {
-    color: Colors.textSubtle,
-    fontSize: 14,
-    lineHeight: 20,
-    fontWeight: '500',
-    marginBottom: 20,
-  },
-  confirmBtnRow: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    gap: 10,
-  },
-  confirmKeepBtn: {
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: Colors.cardBorder,
-    backgroundColor: Colors.background,
-    justifyContent: 'center',
-    alignItems: 'center',
-    minWidth: 75,
-  },
-  confirmKeepBtnText: {
-    color: Colors.textMuted,
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  confirmCancelBtn: {
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 10,
-    backgroundColor: '#EF4444',
-    justifyContent: 'center',
-    alignItems: 'center',
-    minWidth: 85,
-  },
-  confirmCancelBtnText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  scheduledAlertBox: {
-    backgroundColor: '#FEF3C7',
-    borderRadius: 12,
-    borderWidth: 1.5,
-    borderColor: '#F59E0B',
-    padding: 14,
-    marginBottom: 14,
-  },
-  scheduledAlertHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginBottom: 4,
-  },
-  scheduledAlertTitle: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#92400E',
-    letterSpacing: 0.5,
-  },
-  scheduledAlertTime: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: '#78350F',
-    marginTop: 2,
-  },
-  deliveryTimeCard: {
-    backgroundColor: '#EFF6FF',
-    borderRadius: 12,
-    borderWidth: 1.5,
-    borderColor: '#BFDBFE',
-    padding: 14,
-    marginBottom: 14,
-  },
-  deliveryTimeIconCircle: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#DBEAFE',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  deliveryTimeLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#1E40AF',
-    letterSpacing: 0.5,
-  },
-  deliveryTimeValue: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: '#1E3A8A',
-    marginTop: 2,
-  },
-  editDeliveryTimeBtn: {
-    backgroundColor: '#2563EB',
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 8,
-  },
-  editDeliveryTimeBtnText: {
-    color: '#FFFFFF',
-    fontSize: 12.5,
-    fontWeight: '700',
-  },
-  scheduledAlertSubtitle: {
-    fontSize: 12,
-    color: '#92400E',
-    marginTop: 4,
-    fontWeight: '500',
+  grabber: {
+    position: 'absolute',
+    top: 6,
+    alignSelf: 'center',
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: 'rgba(17,24,28,0.2)',
+    zIndex: 2,
   },
 });
-

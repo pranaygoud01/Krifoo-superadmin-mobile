@@ -6,7 +6,7 @@ try {
 }
 
 import * as Device from 'expo-device';
-import { Platform } from 'react-native';
+import { Platform, DeviceEventEmitter } from 'react-native';
 import Constants from 'expo-constants';
 import { apiRequest } from './api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -15,6 +15,8 @@ import { printThermalReceipt, isAutoPrintEnabled } from './thermal-print.service
 import { orderService } from './order.service';
 import { STORAGE_KEYS } from '../constants/config';
 import { claimOrderAlert } from './order-alert-registry';
+import { isBroadcastNotification, isNewOrderNotification as isNewOrderData, KRIFOO_UPDATE_EVENT } from '../utils/notification-kind';
+export { KRIFOO_UPDATE_EVENT };
 
 async function getActiveRestaurantContext(): Promise<{ isOwner: boolean; restaurantId: string | null }> {
   try {
@@ -55,6 +57,9 @@ if (TaskManager && typeof TaskManager.defineTask === 'function') {
         const notification = data?.notification;
         const content = notification?.request?.content || data || {};
         const notificationData = content.data || data?.data || {};
+
+        // Krifoo service updates are informational — never print them.
+        if (isBroadcastNotification(notificationData)) return;
 
         const status = notificationData.status || notificationData.order?.status || '';
         const isNonNewStatus = ['preparing', 'ready_for_pickup', 'out_for_delivery', 'delivered', 'cancelled'].includes(status);
@@ -125,23 +130,16 @@ try {
     // Listen for incoming notifications in foreground to trigger 5-sec buzz sound and auto-print
     if (Notifications.addNotificationReceivedListener && !notificationListener) {
       notificationListener = Notifications.addNotificationReceivedListener((notification: any) => {
-        const title = notification?.request?.content?.title || '';
-        const body = notification?.request?.content?.body || '';
         const data = notification?.request?.content?.data || {};
 
-        const status = data.status || data.order?.status || '';
-        const isNonNewStatus = ['preparing', 'ready_for_pickup', 'out_for_delivery', 'delivered', 'cancelled'].includes(status);
+        // Krifoo service update: let the system show it, refresh the badge, no buzz / print.
+        if (isBroadcastNotification(data)) {
+          DeviceEventEmitter.emit(KRIFOO_UPDATE_EVENT);
+          return;
+        }
 
-        const isNewOrderNotification =
-          !isNonNewStatus &&
-          (
-            data.type === 'NEW_ORDER' ||
-            data.type === 'ORDER_CREATED' ||
-            data.type === 'ORDER_PLACED' ||
-            (data.isNew === true && status === 'placed') ||
-            title.toLowerCase().includes('new order') ||
-            body.toLowerCase().includes('new order')
-          );
+        // Decided from the payload only — text like "new order" in a title must not buzz or print.
+        const isNewOrderNotification = isNewOrderData(data);
 
         if (isNewOrderNotification) {
           const notifRestId = data.restaurantId || data.order?.restaurantId;
@@ -215,6 +213,16 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
         lightColor: '#FF5C39',
         enableVibrate: true,
         enableLights: true,
+      });
+
+      // Krifoo service updates: normal sound, never the order buzz.
+      await Notifications.setNotificationChannelAsync('updates', {
+        name: 'Krifoo updates',
+        description: 'Service messages from Krifoo (maintenance, new features, payouts).',
+        importance: Notifications.AndroidImportance.DEFAULT,
+        sound: 'default',
+        enableVibrate: true,
+        lightColor: '#FF5C39',
       });
 
       await Notifications.setNotificationChannelAsync('orders', {
@@ -326,4 +334,21 @@ export async function setupPushNotifications(): Promise<void> {
   } catch (err) {
     console.error('[Push] setupPushNotifications failed:', err);
   }
+}
+
+/**
+ * Calls `onOpen` when the user taps a Krifoo service update (also when the tap launched the app).
+ * Returns an unsubscribe function.
+ */
+export function addBroadcastTapListener(onOpen: () => void): () => void {
+  if (!Notifications?.addNotificationResponseReceivedListener) return () => {};
+  const handle = (response: any) => {
+    const data = response?.notification?.request?.content?.data;
+    if (isBroadcastNotification(data)) onOpen();
+  };
+  Notifications.getLastNotificationResponseAsync?.()
+    .then((last: any) => last && handle(last))
+    .catch(() => {});
+  const sub = Notifications.addNotificationResponseReceivedListener(handle);
+  return () => sub?.remove?.();
 }

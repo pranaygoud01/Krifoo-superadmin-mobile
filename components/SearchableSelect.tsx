@@ -1,7 +1,8 @@
 /**
  * Dropdown field with a searchable list.
  * Tapping the field opens a sheet (bottom sheet on phones, centred card on tablets)
- * with a search box and the filtered options.
+ * with a search box and the filtered options. With `create`, the same sheet can also
+ * create a new option (shown in place — no second modal on top of this one).
  */
 import React, { useMemo, useState } from 'react';
 import {
@@ -11,6 +12,7 @@ import {
   TouchableOpacity,
   Modal,
   FlatList,
+  ScrollView,
   StyleSheet,
   Platform,
   KeyboardAvoidingView,
@@ -18,7 +20,8 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ChevronDown, Search, X, Check } from 'lucide-react-native';
+import { ChevronDown, Search, X, Check, Plus, ArrowLeft } from 'lucide-react-native';
+import { KEYBOARD_BEHAVIOR } from '../utils/keyboard';
 
 export interface SelectOption {
   value: string;
@@ -38,6 +41,18 @@ interface Props {
   loading?: boolean;
   /** Optional action shown at the bottom of the sheet (e.g. "Manage categories"). */
   footerAction?: { label: string; onPress: () => void };
+  /**
+   * Allow creating a new option from the sheet. `onCreate` saves it and returns the value to
+   * select (or throws / returns null on failure — its error message is shown in the form).
+   */
+  create?: {
+    /** Noun for the button and form title, e.g. "category". */
+    noun: string;
+    onCreate: (input: { name: string; description: string }) => Promise<string | null>;
+    namePlaceholder?: string;
+    descriptionPlaceholder?: string;
+    maxNameLength?: number;
+  };
   error?: boolean;
 }
 
@@ -51,10 +66,17 @@ export function SearchableSelect({
   emptyText = 'No matches',
   loading,
   footerAction,
+  create,
   error,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
+  // Create mode (replaces the list inside the same sheet)
+  const [mode, setMode] = useState<'list' | 'create'>('list');
+  const [newName, setNewName] = useState('');
+  const [newDescription, setNewDescription] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
   const insets = useSafeAreaInsets();
   const { width, height } = useWindowDimensions();
   const isTablet = width >= 768;
@@ -71,8 +93,53 @@ export function SearchableSelect({
   }, [options, query]);
 
   const close = () => {
+    if (creating) return;
     setOpen(false);
     setQuery('');
+    setMode('list');
+    setCreateError(null);
+  };
+
+  const trimmedQuery = query.trim();
+  const exactMatch = options.some((o) => o.label.trim().toLowerCase() === trimmedQuery.toLowerCase());
+  const noun = create?.noun || 'option';
+  const capitalNoun = noun.charAt(0).toUpperCase() + noun.slice(1);
+
+  const startCreate = (prefill: string) => {
+    setNewName(prefill.slice(0, create?.maxNameLength ?? 60));
+    setNewDescription('');
+    setCreateError(null);
+    setMode('create');
+  };
+
+  const submitCreate = async () => {
+    if (!create) return;
+    const name = newName.trim();
+    if (!name) {
+      setCreateError(`Enter a name for the ${noun}.`);
+      return;
+    }
+    const existing = options.find((o) => o.label.trim().toLowerCase() === name.toLowerCase());
+    if (existing) {
+      // Already there — just select it.
+      onChange(existing.value);
+      close();
+      return;
+    }
+    setCreating(true);
+    setCreateError(null);
+    try {
+      const createdValue = await create.onCreate({ name, description: newDescription.trim() });
+      if (!createdValue) throw new Error(`Couldn’t create the ${noun}.`);
+      setCreating(false);
+      onChange(createdValue);
+      setOpen(false);
+      setQuery('');
+      setMode('list');
+    } catch (e: any) {
+      setCreateError(e?.message || `Couldn’t create the ${noun}. Please try again.`);
+      setCreating(false);
+    }
   };
 
   const pick = (v: string) => {
@@ -97,7 +164,7 @@ export function SearchableSelect({
       </TouchableOpacity>
 
       <Modal visible={open} transparent animationType={isTablet ? 'fade' : 'slide'} onRequestClose={close} statusBarTranslucent>
-        <KeyboardAvoidingView style={[styles.backdrop, isTablet && styles.backdropTablet]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <KeyboardAvoidingView style={[styles.backdrop, isTablet && styles.backdropTablet, { paddingTop: insets.top + 8 }]} behavior={KEYBOARD_BEHAVIOR}>
           <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={close} accessibilityLabel="Close" />
           <View
             style={[
@@ -109,12 +176,78 @@ export function SearchableSelect({
             {!isTablet && <View style={styles.handle} />}
 
             <View style={styles.header}>
-              <Text style={styles.title}>{title}</Text>
+              {mode === 'create' ? (
+                <TouchableOpacity
+                  onPress={() => !creating && setMode('list')}
+                  style={[styles.closeBtn, styles.backBtn]}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  accessibilityLabel="Back to list"
+                >
+                  <ArrowLeft size={16} color="#475569" />
+                </TouchableOpacity>
+              ) : null}
+              <Text style={styles.title}>{mode === 'create' ? `New ${noun}` : title}</Text>
               <TouchableOpacity onPress={close} style={styles.closeBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityLabel="Close">
                 <X size={16} color="#475569" />
               </TouchableOpacity>
             </View>
 
+            {mode === 'create' && create ? (
+              <ScrollView style={styles.createScroll} contentContainerStyle={styles.createForm} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+                <Text style={styles.fieldLabel}>
+                  {capitalNoun} name <Text style={styles.required}>*</Text>
+                </Text>
+                <TextInput
+                  style={[styles.field, createError && !newName.trim() && styles.fieldError]}
+                  value={newName}
+                  onChangeText={(t) => {
+                    setNewName(t);
+                    if (createError) setCreateError(null);
+                  }}
+                  placeholder={create.namePlaceholder || `e.g. Starters`}
+                  placeholderTextColor="#94A3B8"
+                  maxLength={create.maxNameLength ?? 60}
+                  autoFocus
+                  autoCapitalize="words"
+                  returnKeyType="done"
+                  onSubmitEditing={submitCreate}
+                  accessibilityLabel={`${capitalNoun} name`}
+                />
+                <Text style={styles.fieldLabel}>Description (optional)</Text>
+                <TextInput
+                  style={[styles.field, styles.fieldMultiline]}
+                  value={newDescription}
+                  onChangeText={setNewDescription}
+                  placeholder={create.descriptionPlaceholder || 'Shown to customers under the name'}
+                  placeholderTextColor="#94A3B8"
+                  multiline
+                  maxLength={200}
+                  accessibilityLabel="Description"
+                />
+                {createError ? <Text style={styles.createError}>{createError}</Text> : null}
+                <View style={styles.footerRow}>
+                  <TouchableOpacity style={styles.footerBtn} onPress={() => setMode('list')} disabled={creating} accessibilityRole="button">
+                    <Text style={styles.footerBtnText}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.footerBtn, styles.footerBtnPrimary, creating && { opacity: 0.7 }]}
+                    onPress={submitCreate}
+                    disabled={creating}
+                    accessibilityRole="button"
+                  >
+                    {creating ? (
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                    ) : (
+                      <>
+                        <Check size={15} color="#FFFFFF" strokeWidth={2.5} />
+                        <Text style={[styles.footerBtnText, styles.footerBtnTextPrimary]}>Create & select</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </ScrollView>
+            ) : (
+              <>
             <View style={styles.search}>
               <Search size={16} color="#94A3B8" />
               <TextInput
@@ -142,6 +275,18 @@ export function SearchableSelect({
               keyboardShouldPersistTaps="handled"
               style={styles.list}
               initialNumToRender={20}
+              ListHeaderComponent={
+                create && trimmedQuery && !exactMatch ? (
+                  <TouchableOpacity style={styles.createRow} onPress={() => startCreate(trimmedQuery)} activeOpacity={0.7} accessibilityRole="button">
+                    <View style={styles.createIcon}>
+                      <Plus size={16} color="#FF5C39" strokeWidth={2.5} />
+                    </View>
+                    <Text style={styles.createRowText} numberOfLines={1}>
+                      Create {noun} “{trimmedQuery}”
+                    </Text>
+                  </TouchableOpacity>
+                ) : null
+              }
               renderItem={({ item }) => {
                 const isSelected = item.value === value;
                 return (
@@ -168,23 +313,37 @@ export function SearchableSelect({
               }}
               ListEmptyComponent={
                 <View style={styles.empty}>
-                  <Text style={styles.emptyText}>{loading ? 'Loading…' : query ? `No results for “${query}”` : emptyText}</Text>
+                  <Text style={styles.emptyText}>
+                    {loading ? 'Loading…' : query ? (create ? `No ${noun} called “${trimmedQuery}” yet.` : `No results for “${query}”`) : emptyText}
+                  </Text>
                 </View>
               }
             />
 
-            {footerAction ? (
-              <TouchableOpacity
-                style={styles.footerBtn}
-                onPress={() => {
-                  close();
-                  footerAction.onPress();
-                }}
-                accessibilityRole="button"
-              >
-                <Text style={styles.footerBtnText}>{footerAction.label}</Text>
-              </TouchableOpacity>
+            {create || footerAction ? (
+              <View style={styles.footerRow}>
+                {create ? (
+                  <TouchableOpacity style={[styles.footerBtn, styles.footerBtnPrimary]} onPress={() => startCreate(trimmedQuery)} accessibilityRole="button">
+                    <Plus size={15} color="#FFFFFF" strokeWidth={2.5} />
+                    <Text style={[styles.footerBtnText, styles.footerBtnTextPrimary]}>New {noun}</Text>
+                  </TouchableOpacity>
+                ) : null}
+                {footerAction ? (
+                  <TouchableOpacity
+                    style={styles.footerBtn}
+                    onPress={() => {
+                      close();
+                      footerAction.onPress();
+                    }}
+                    accessibilityRole="button"
+                  >
+                    <Text style={styles.footerBtnText}>{footerAction.label}</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
             ) : null}
+              </>
+            )}
           </View>
         </KeyboardAvoidingView>
       </Modal>
@@ -211,7 +370,9 @@ const styles = StyleSheet.create({
 
   backdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(15, 23, 42, 0.45)' },
   backdropTablet: { justifyContent: 'center', alignItems: 'center', padding: 24 },
+  // flexShrink: when the keyboard lifts the sheet, it shrinks (list/form scrolls) instead of running off the top.
   sheet: {
+    flexShrink: 1,
     backgroundColor: '#FFFFFF',
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
@@ -236,7 +397,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   searchInput: { flex: 1, minWidth: 0, fontSize: 14, color: '#0F172A', paddingVertical: 0 },
-  list: { flexGrow: 0 },
+  list: { flexGrow: 0, flexShrink: 1 },
   option: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -252,8 +413,11 @@ const styles = StyleSheet.create({
   optionDesc: { fontSize: 12, color: '#64748B', marginTop: 1 },
   empty: { paddingVertical: 28, alignItems: 'center' },
   emptyText: { fontSize: 13.5, color: '#64748B' },
+  footerRow: { flexDirection: 'row', gap: 8, marginTop: 8 },
   footerBtn: {
-    marginTop: 8,
+    flex: 1,
+    flexDirection: 'row',
+    gap: 6,
     height: 44,
     borderRadius: 11,
     borderWidth: 1.2,
@@ -261,5 +425,40 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  footerBtnPrimary: { backgroundColor: '#FF5C39', borderColor: '#FF5C39' },
+  footerBtnTextPrimary: { color: '#FFFFFF' },
+  backBtn: { marginRight: 10 },
+  createRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    minHeight: 48,
+    paddingHorizontal: 12,
+    marginBottom: 4,
+    borderRadius: 10,
+    borderWidth: 1.2,
+    borderStyle: 'dashed',
+    borderColor: '#FDBA74',
+    backgroundColor: '#FFF7ED',
+  },
+  createIcon: { width: 28, height: 28, borderRadius: 8, backgroundColor: '#FFEDD5', alignItems: 'center', justifyContent: 'center' },
+  createRowText: { flex: 1, fontSize: 14.5, fontWeight: '700', color: '#C2410C' },
+  createScroll: { flexGrow: 0, flexShrink: 1 },
+  createForm: { paddingTop: 4, paddingBottom: 4 },
+  fieldLabel: { fontSize: 13, fontWeight: '700', color: '#0F172A', marginBottom: 6, marginTop: 8 },
+  required: { color: '#DC2626' },
+  field: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1.2,
+    borderColor: '#E2E8F0',
+    borderRadius: 11,
+    paddingHorizontal: 12,
+    height: 46,
+    fontSize: 14.5,
+    color: '#0F172A',
+  },
+  fieldMultiline: { height: 84, paddingTop: 10, textAlignVertical: 'top' },
+  fieldError: { borderColor: '#DC2626' },
+  createError: { fontSize: 12.5, fontWeight: '600', color: '#DC2626', marginTop: 8 },
   footerBtnText: { fontSize: 13.5, fontWeight: '700', color: '#334155' },
 });

@@ -70,6 +70,7 @@ import {
   ReceiptTemplate,
 } from '../services/receipt-customization.service';
 import { hasBluetoothPermissions, requestBluetoothPermissions } from '../services/printer/bluetooth-permissions';
+import { KEYBOARD_BEHAVIOR } from '../utils/keyboard';
 
 type WizardDevice = {
   id: string;
@@ -856,7 +857,7 @@ export function PrinterSetupWizardModal({
 
         <KeyboardAvoidingView
           style={{ flex: 1 }}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          behavior={KEYBOARD_BEHAVIOR}
         >
           <ScrollView
             ref={scrollViewRef}

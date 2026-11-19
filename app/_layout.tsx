@@ -23,6 +23,7 @@ import { FontSizeProvider, globalFontScale } from '../context/FontSizeContext';
 import { SocketProvider } from '../context/SocketContext';
 import { ConnectionBanner } from '../components/ConnectionBanner';
 import { AuthGate } from '../components/AuthGate';
+import { BroadcastTapHandler } from '../components/BroadcastTapHandler';
 import { initAppOrientation } from '../services/orientation.service';
 import { configureAudio } from '../services/sound.service';
 
@@ -102,6 +103,7 @@ export default function RootLayout() {
               <StatusBar style="dark" />
               <ConnectionBanner />
               <AuthGate />
+              <BroadcastTapHandler />
               <Stack
                 screenOptions={{
                   headerShown: false,
@@ -117,11 +119,17 @@ export default function RootLayout() {
                 <Stack.Screen name="privacy-policy" options={{ animation: 'slide_from_right' }} />
                 <Stack.Screen name="terms-conditions" options={{ animation: 'slide_from_right' }} />
                 <Stack.Screen name="order-details" options={{ animation: 'slide_from_right' }} />
+                {/* Kitchen Mode: no swipe-back, so it can't be closed by accident (exit is press-and-hold). */}
+                <Stack.Screen name="kitchen" options={{ animation: 'fade', gestureEnabled: false }} />
                 <Stack.Screen name="restaurant-details" options={{ animation: 'slide_from_right' }} />
                 <Stack.Screen name="notifications" options={{ animation: 'slide_from_right' }} />
                 <Stack.Screen name="tables" options={{ animation: 'slide_from_right' }} />
                 <Stack.Screen name="bookings" options={{ animation: 'slide_from_right' }} />
                 <Stack.Screen name="marketing" options={{ animation: 'slide_from_right' }} />
+                <Stack.Screen name="create-post" options={{ animation: 'slide_from_right' }} />
+                <Stack.Screen name="updates" options={{ animation: 'slide_from_right' }} />
+                <Stack.Screen name="broadcast" options={{ animation: 'slide_from_right' }} />
+                <Stack.Screen name="new-broadcast" options={{ animation: 'slide_from_right' }} />
                 <Stack.Screen name="fleet" options={{ animation: 'slide_from_right' }} />
                 <Stack.Screen name="analytics" options={{ animation: 'slide_from_right' }} />
                 <Stack.Screen name="restaurant-settings" options={{ animation: 'slide_from_right' }} />
@@ -131,6 +139,9 @@ export default function RootLayout() {
                 <Stack.Screen name="operational-timings" options={{ animation: 'slide_from_right' }} />
                 <Stack.Screen name="sound-settings" options={{ animation: 'slide_from_right' }} />
                 <Stack.Screen name="payout-settings" options={{ animation: 'slide_from_right' }} />
+                <Stack.Screen name="payouts" options={{ animation: 'slide_from_right' }} />
+                <Stack.Screen name="email-campaigns" options={{ animation: 'slide_from_right' }} />
+                <Stack.Screen name="new-campaign" options={{ animation: 'slide_from_right' }} />
                 <Stack.Screen name="printer-settings" options={{ animation: 'slide_from_right' }} />
                 <Stack.Screen name="printer-guide" options={{ animation: 'slide_from_right' }} />
                 <Stack.Screen name="receipt-customization" options={{ animation: 'slide_from_right' }} />

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -11,6 +11,7 @@ import {
   ScrollView,
   useWindowDimensions,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import { LocalImages } from '@/constants/local-assets';
 import { StatusBar } from 'expo-status-bar';
@@ -20,6 +21,7 @@ import { useToast } from '../context/ToastContext';
 import { Colors } from '../constants/colors';
 import { Lock, Mail, Eye, EyeOff, WifiOff, ServerOff, AlertCircle } from 'lucide-react-native';
 import Constants from 'expo-constants';
+import { KEYBOARD_BEHAVIOR } from '../utils/keyboard';
 
 interface LoginErrorDetails {
   type: 'network' | 'server' | 'auth' | 'generic';
@@ -27,9 +29,24 @@ interface LoginErrorDetails {
   statusCode?: number;
 }
 
+/**
+ * Layouts:
+ *  - stack: phone portrait — cover on top, form below
+ *  - card:  tablet portrait — centred card
+ *  - split: landscape tablets / POS screens and short landscape phones — cover left, form right
+ */
+type LayoutMode = 'stack' | 'card' | 'split';
+
+const clamp = (n: number, min: number, max: number) => Math.min(max, Math.max(min, n));
+
 export default function LoginScreen() {
-  const { width: windowWidth } = useWindowDimensions();
-  const isTablet = windowWidth >= 768;
+  const { width, height } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const isLandscape = width > height;
+  const mode: LayoutMode =
+    isLandscape && (width >= 900 || height < 560) ? 'split' : width >= 768 ? 'card' : 'stack';
+  const coverHeight = mode === 'card' ? clamp(height * 0.26, 200, 300) : clamp(height * 0.34, 180, 300);
+  const compactCover = mode !== 'split' && coverHeight < 230;
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -38,22 +55,18 @@ export default function LoginScreen() {
   const [passwordFocused, setPasswordFocused] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorDetails, setErrorDetails] = useState<LoginErrorDetails | null>(null);
+  const passwordRef = useRef<TextInput>(null);
 
   const { login } = useAuth();
   const router = useRouter();
   const { showToast } = useToast();
 
   const appVersion =
-    Constants.expoConfig?.version ??
-    (Constants as any).manifest2?.extra?.expoClient?.version ??
-    '1.0.7';
+    Constants.expoConfig?.version ?? (Constants as any).manifest2?.extra?.expoClient?.version ?? '1.0.7';
 
   const handleLogin = async () => {
     if (!email.trim() || !password.trim()) {
-      setErrorDetails({
-        type: 'auth',
-        message: 'Please enter both email and password.',
-      });
+      setErrorDetails({ type: 'auth', message: 'Please enter both email and password.' });
       return;
     }
 
@@ -67,7 +80,6 @@ export default function LoginScreen() {
       } else {
         const isNet = res.errorType === 'network';
         const isSrv = res.errorType === 'server' || (res.statusCode && res.statusCode >= 500);
-
         setErrorDetails({
           type: isNet ? 'network' : isSrv ? 'server' : 'auth',
           message: res.message || (isNet ? 'Cannot connect to backend server' : 'Invalid email or password.'),
@@ -75,196 +87,201 @@ export default function LoginScreen() {
         });
       }
     } catch (e: any) {
-      setErrorDetails({
-        type: 'generic',
-        message: e?.message || 'An unexpected error occurred during login.',
-      });
+      setErrorDetails({ type: 'generic', message: e?.message || 'An unexpected error occurred during login.' });
     } finally {
       setLoading(false);
     }
   };
 
-  return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-    >
-      <StatusBar style="light" />
+  /* ── Pieces ───────────────────────────────────────────────────────────── */
 
-      {/* Background Watermark Logo */}
-      <Image
-        source={LocalImages.logo}
-        style={styles.watermark}
-        contentFit="contain"
-      />
+  const brandTitle = (big: boolean) => (
+    <>
+      <Text style={[styles.coverTitle, big && styles.coverTitleBig, compactCover && styles.coverTitleCompact]}>Krifoo Admin</Text>
+      <Text style={[styles.coverSubtitle, big && styles.coverSubtitleBig]}>Management Application</Text>
+    </>
+  );
+
+  const logo = (
+    <View style={styles.logoCircle}>
+      <Image source={LocalImages.logo} style={styles.logoImage} contentFit="contain" />
+    </View>
+  );
+
+  const form = (
+    <View style={styles.form}>
+      <Text style={styles.formTitle}>Welcome back</Text>
+      <Text style={styles.formSubtitle}>Sign in to manage your operations</Text>
+
+      {errorDetails ? (
+        <View
+          style={[styles.errorCard, errorDetails.type === 'network' ? styles.errorCardNetwork : styles.errorCardGeneral]}
+          accessibilityRole="alert"
+        >
+          <View style={styles.errorIconWrap}>
+            {errorDetails.type === 'network' ? (
+              <WifiOff size={20} color="#D97706" />
+            ) : errorDetails.type === 'server' ? (
+              <ServerOff size={20} color="#DC2626" />
+            ) : (
+              <AlertCircle size={20} color="#DC2626" />
+            )}
+          </View>
+          <View style={styles.flex}>
+            <Text style={[styles.errorCardTitle, { color: errorDetails.type === 'network' ? '#92400E' : '#991B1B' }]}>
+              {errorDetails.type === 'network'
+                ? 'Server unreachable'
+                : errorDetails.type === 'server'
+                ? `Server error (${errorDetails.statusCode || 500})`
+                : 'Sign-in failed'}
+            </Text>
+            <Text style={[styles.errorCardDesc, { color: errorDetails.type === 'network' ? '#B45309' : '#B91C1C' }]}>
+              {errorDetails.message}
+            </Text>
+          </View>
+        </View>
+      ) : null}
+
+      <View style={styles.formFields}>
+        <View style={[styles.inputWrap, emailFocused && styles.inputWrapFocused]}>
+          <Mail size={18} color={emailFocused ? '#0F172A' : Colors.textSubtle} />
+          <TextInput
+            style={styles.input}
+            placeholder="Email address"
+            placeholderTextColor={Colors.textSubtle}
+            value={email}
+            onChangeText={setEmail}
+            keyboardType="email-address"
+            autoCapitalize="none"
+            autoCorrect={false}
+            autoComplete="email"
+            textContentType="username"
+            returnKeyType="next"
+            onSubmitEditing={() => passwordRef.current?.focus()}
+            blurOnSubmit={false}
+            onFocus={() => setEmailFocused(true)}
+            onBlur={() => setEmailFocused(false)}
+            accessibilityLabel="Email address"
+          />
+        </View>
+
+        <View style={[styles.inputWrap, passwordFocused && styles.inputWrapFocused]}>
+          <Lock size={18} color={passwordFocused ? '#0F172A' : Colors.textSubtle} />
+          <TextInput
+            ref={passwordRef}
+            style={styles.input}
+            placeholder="Password"
+            placeholderTextColor={Colors.textSubtle}
+            secureTextEntry={!showPassword}
+            value={password}
+            onChangeText={setPassword}
+            autoComplete="password"
+            textContentType="password"
+            returnKeyType="go"
+            onSubmitEditing={handleLogin}
+            onFocus={() => setPasswordFocused(true)}
+            onBlur={() => setPasswordFocused(false)}
+            accessibilityLabel="Password"
+          />
+          <TouchableOpacity
+            onPress={() => setShowPassword(!showPassword)}
+            hitSlop={12}
+            accessibilityRole="button"
+            accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}
+          >
+            {showPassword ? <EyeOff size={18} color={Colors.textSubtle} /> : <Eye size={18} color={Colors.textSubtle} />}
+          </TouchableOpacity>
+        </View>
+
+        <TouchableOpacity
+          style={[styles.loginBtn, loading && styles.loginBtnBusy]}
+          onPress={handleLogin}
+          disabled={loading}
+          activeOpacity={0.85}
+          accessibilityRole="button"
+        >
+          {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.loginBtnText}>Sign in</Text>}
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.registerBtn} onPress={() => router.push('/register')} activeOpacity={0.7} accessibilityRole="link">
+          <Text style={styles.registerBtnText}>
+            New business? <Text style={styles.registerBtnStrong}>Register your store</Text>
+          </Text>
+        </TouchableOpacity>
+
+        <Text style={styles.disclaimerText}>
+          By signing in, you agree to our{' '}
+          <Text style={styles.disclaimerLink} onPress={() => router.push('/terms-conditions')}>
+            Terms & Conditions
+          </Text>{' '}
+          and{' '}
+          <Text style={styles.disclaimerLink} onPress={() => router.push('/privacy-policy')}>
+            Privacy Policy
+          </Text>
+          .
+        </Text>
+
+        <Text style={styles.versionText}>Version {appVersion}</Text>
+      </View>
+    </View>
+  );
+
+  /* ── Layouts ──────────────────────────────────────────────────────────── */
+
+  if (mode === 'split') {
+    return (
+      <View style={styles.splitRoot}>
+        <StatusBar style="dark" />
+        <View style={styles.splitCover}>
+          <Image source={LocalImages.loginCover} style={StyleSheet.absoluteFill} contentFit="cover" />
+          <View style={[styles.coverOverlay, styles.splitCoverOverlay]}>
+            {logo}
+            <View style={styles.splitBrandText}>{brandTitle(height >= 560)}</View>
+          </View>
+        </View>
+
+        <KeyboardAvoidingView style={styles.splitFormPane} behavior={KEYBOARD_BEHAVIOR}>
+          <ScrollView
+            contentContainerStyle={[
+              styles.splitScroll,
+              { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 24, paddingRight: insets.right + 24 },
+            ]}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            <View style={styles.formMaxWidth}>{form}</View>
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </View>
+    );
+  }
+
+  const isCard = mode === 'card';
+
+  return (
+    <KeyboardAvoidingView style={[styles.root, isCard && styles.rootCard]} behavior={KEYBOARD_BEHAVIOR}>
+      <StatusBar style={isCard ? 'dark' : 'light'} />
+      <Image source={LocalImages.logo} style={styles.watermark} contentFit="contain" />
 
       <ScrollView
-        contentContainerStyle={[styles.scrollContent, isTablet && styles.scrollContentTablet]}
-        showsVerticalScrollIndicator={false}
+        contentContainerStyle={[
+          styles.scroll,
+          isCard && [styles.scrollCard, { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 24 }],
+        ]}
         keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
       >
-        <View style={[styles.card, isTablet && styles.cardTablet]}>
-          {/* Cover Header Image */}
-          <View style={styles.coverContainer}>
-            <Image
-              source={LocalImages.loginCover}
-              style={styles.coverImage}
-              contentFit="cover"
-            />
-            {/* Dark tint overlay */}
-            <View style={styles.coverOverlay}>
-              <Text style={styles.coverTitle}>Krifoo Admin</Text>
-              <Text style={styles.coverSubtitle}>Management Application</Text>
-            </View>
+        <View style={[styles.card, isCard && styles.cardTablet]}>
+          <View style={[styles.cover, { height: coverHeight }]}>
+            <Image source={LocalImages.loginCover} style={StyleSheet.absoluteFill} contentFit="cover" />
+            <View style={[styles.coverOverlay, !isCard && { paddingTop: insets.top }]}>{brandTitle(false)}</View>
           </View>
 
-          {/* Overlapping Brand Logo Avatar */}
-          <View style={styles.logoBadgeContainer}>
-            <View style={styles.logoCircle}>
-              <Image
-                source={LocalImages.logo}
-                style={{ width: 56, height: 56 }}
-                contentFit="contain"
-              />
-            </View>
-          </View>
+          {/* Logo overlaps the cover edge (in normal flow, so it follows any cover height) */}
+          <View style={styles.logoOverlap}>{logo}</View>
 
-          {/* Form Section */}
-          <View style={styles.formContainer}>
-            <Text style={styles.formTitle}>Welcome Back</Text>
-            <Text style={styles.formSubtitle}>Sign in to manage your operations</Text>
-
-            {/* Error Message Section */}
-            {errorDetails ? (
-              <View
-                style={[
-                  styles.errorCard,
-                  errorDetails.type === 'network'
-                    ? styles.errorCardNetwork
-                    : styles.errorCardGeneral,
-                ]}
-              >
-                <View style={styles.errorIconWrap}>
-                  {errorDetails.type === 'network' ? (
-                    <WifiOff size={20} color="#D97706" />
-                  ) : errorDetails.type === 'server' ? (
-                    <ServerOff size={20} color="#DC2626" />
-                  ) : (
-                    <AlertCircle size={20} color="#DC2626" />
-                  )}
-                </View>
-
-                <View style={{ flex: 1 }}>
-                  <Text
-                    style={[
-                      styles.errorCardTitle,
-                      { color: errorDetails.type === 'network' ? '#92400E' : '#991B1B' },
-                    ]}
-                  >
-                    {errorDetails.type === 'network'
-                      ? 'Server Unreachable'
-                      : errorDetails.type === 'server'
-                      ? `Server Error (${errorDetails.statusCode || 500})`
-                      : 'Authentication Failed'}
-                  </Text>
-                  <Text
-                    style={[
-                      styles.errorCardDesc,
-                      { color: errorDetails.type === 'network' ? '#B45309' : '#B91C1C' },
-                    ]}
-                  >
-                    {errorDetails.message}
-                  </Text>
-                </View>
-              </View>
-            ) : null}
-
-            <View style={styles.formFields}>
-              {/* Email Input */}
-              <View style={[styles.inputWrap, emailFocused && styles.inputWrapFocused]}>
-                <Mail size={16} color={emailFocused ? '#0F172A' : Colors.textSubtle} />
-                <TextInput
-                  style={styles.input}
-                  placeholder="Email Address"
-                  placeholderTextColor={Colors.textSubtle}
-                  value={email}
-                  onChangeText={setEmail}
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  onFocus={() => setEmailFocused(true)}
-                  onBlur={() => setEmailFocused(false)}
-                />
-              </View>
-
-              {/* Password Input */}
-              <View style={[styles.inputWrap, passwordFocused && styles.inputWrapFocused]}>
-                <Lock size={16} color={passwordFocused ? '#0F172A' : Colors.textSubtle} />
-                <TextInput
-                  style={styles.input}
-                  placeholder="Password"
-                  placeholderTextColor={Colors.textSubtle}
-                  secureTextEntry={!showPassword}
-                  value={password}
-                  onChangeText={setPassword}
-                  onFocus={() => setPasswordFocused(true)}
-                  onBlur={() => setPasswordFocused(false)}
-                />
-                <TouchableOpacity onPress={() => setShowPassword(!showPassword)} hitSlop={10}>
-                  {showPassword
-                    ? <EyeOff size={16} color={Colors.textSubtle} />
-                    : <Eye size={16} color={Colors.textSubtle} />}
-                </TouchableOpacity>
-              </View>
-
-              {/* Action Button */}
-              <TouchableOpacity
-                style={[styles.loginBtn, loading && { opacity: 0.7 }]}
-                onPress={handleLogin}
-                disabled={loading}
-                activeOpacity={0.85}
-              >
-                {loading ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text style={styles.loginBtnText}>Sign In</Text>
-                )}
-              </TouchableOpacity>
-
-              {/* Registration Link */}
-              <TouchableOpacity
-                style={styles.registerBtn}
-                onPress={() => router.push('/register')}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.registerBtnText}>New Business? Register Store</Text>
-              </TouchableOpacity>
-
-              {/* Disclaimer */}
-              <View style={styles.disclaimerContainer}>
-                <Text style={styles.disclaimerText}>
-                  By logging in, you agree to our{' '}
-                  <Text
-                    style={styles.disclaimerLink}
-                    onPress={() => router.push('/terms-conditions')}
-                  >
-                    Terms & Conditions
-                  </Text>{' '}
-                  and{' '}
-                  <Text
-                    style={styles.disclaimerLink}
-                    onPress={() => router.push('/privacy-policy')}
-                  >
-                    Privacy Policy
-                  </Text>
-                  .
-                </Text>
-              </View>
-
-              {/* Dynamic App Version */}
-              <View style={styles.versionContainer}>
-                <Text style={styles.versionText}>Version {appVersion}</Text>
-              </View>
-            </View>
+          <View style={[styles.formPad, !isCard && { paddingBottom: insets.bottom + 24 }]}>
+            <View style={styles.formMaxWidth}>{form}</View>
           </View>
         </View>
       </ScrollView>
@@ -273,10 +290,11 @@ export default function LoginScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-  },
+  flex: { flex: 1, minWidth: 0 },
+
+  /* Stack / card */
+  root: { flex: 1, backgroundColor: '#FFFFFF' },
+  rootCard: { backgroundColor: '#F1F5F9' },
   watermark: {
     position: 'absolute',
     bottom: -100,
@@ -285,62 +303,34 @@ const styles = StyleSheet.create({
     height: 400,
     opacity: 0.035,
     transform: [{ rotate: '-15deg' }],
-    zIndex: -1,
   },
-  scrollContent: {
-    flexGrow: 1,
-  },
-  scrollContentTablet: {
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingVertical: 32,
-    backgroundColor: '#F8FAFC',
-  },
-  card: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-    width: '100%',
-  },
+  scroll: { flexGrow: 1 },
+  scrollCard: { justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24 },
+  card: { flex: 1, backgroundColor: '#FFFFFF', width: '100%' },
   cardTablet: {
-    flexGrow: 0,
-    flexShrink: 0,
-    flexBasis: 'auto',
+    flex: 0,
     maxWidth: 520,
-    width: '100%',
-    alignSelf: 'center',
-    borderRadius: 24,
+    borderRadius: 20,
     overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
     shadowColor: '#0F172A',
     shadowOffset: { width: 0, height: 16 },
     shadowOpacity: 0.12,
     shadowRadius: 28,
     elevation: 10,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    marginVertical: 32,
   },
-  coverContainer: {
-    height: 330,
-    position: 'relative',
-    overflow: 'hidden',
-  },
-  coverImage: {
-    width: '100%',
-    height: '100%',
-  },
+  cover: { width: '100%', overflow: 'hidden' },
   coverOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(23, 23, 23, 0.39)',
+    backgroundColor: 'rgba(23, 23, 23, 0.42)',
     justifyContent: 'center',
     alignItems: 'center',
-    paddingTop: Platform.OS === 'ios' ? 40 : 20,
+    paddingHorizontal: 24,
   },
-  coverTitle: {
-    color: '#FFFFFF',
-    fontSize: 32,
-    fontWeight: '900',
-    letterSpacing: -0.8,
-  },
+  coverTitle: { color: '#FFFFFF', fontSize: 32, fontWeight: '900', letterSpacing: -0.8, textAlign: 'center' },
+  coverTitleCompact: { fontSize: 26 },
+  coverTitleBig: { fontSize: 44, letterSpacing: -1.2 },
   coverSubtitle: {
     color: '#FFECE8',
     fontSize: 13,
@@ -348,13 +338,10 @@ const styles = StyleSheet.create({
     marginTop: 6,
     letterSpacing: 0.8,
     textTransform: 'uppercase',
+    textAlign: 'center',
   },
-  logoBadgeContainer: {
-    position: 'absolute',
-    top: 290,
-    alignSelf: 'center',
-    zIndex: 10,
-  },
+  coverSubtitleBig: { fontSize: 15, marginTop: 10 },
+  logoOverlap: { alignItems: 'center', marginTop: -40, zIndex: 2 },
   logoCircle: {
     width: 80,
     height: 80,
@@ -364,180 +351,78 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderWidth: 4,
     borderColor: '#FFFFFF',
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 4,
   },
-  formContainer: {
-    paddingHorizontal: 28,
-    paddingTop: 64,
-    paddingBottom: 40,
-    flex: 1,
-    justifyContent: 'center',
-  },
-  formTitle: {
-    fontSize: 22,
-    fontWeight: '800',
-    color: Colors.text,
-    textAlign: 'center',
-    letterSpacing: -0.5,
-  },
-  formSubtitle: {
-    fontSize: 14,
-    color: Colors.textMuted,
-    textAlign: 'center',
-    marginTop: 4,
-    fontWeight: '500',
-    marginBottom: 32,
-  },
+  logoImage: { width: 56, height: 56 },
+  formPad: { paddingHorizontal: 24, paddingTop: 20, paddingBottom: 28, flexGrow: 1, alignItems: 'center' },
+  formMaxWidth: { width: '100%', maxWidth: 440, alignSelf: 'center' },
+
+  /* Split */
+  splitRoot: { flex: 1, flexDirection: 'row', backgroundColor: '#FFFFFF' },
+  splitCover: { flex: 1, overflow: 'hidden' },
+  splitCoverOverlay: { gap: 18 },
+  splitBrandText: { alignItems: 'center' },
+  splitFormPane: { flex: 1 },
+  splitScroll: { flexGrow: 1, justifyContent: 'center', paddingLeft: 24 },
+
+  /* Form */
+  form: { width: '100%' },
+  formTitle: { fontSize: 24, fontWeight: '800', color: Colors.text, textAlign: 'center', letterSpacing: -0.5 },
+  formSubtitle: { fontSize: 14.5, color: Colors.textMuted, textAlign: 'center', marginTop: 4, fontWeight: '500', marginBottom: 24 },
   errorCard: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     borderWidth: 1.5,
     paddingHorizontal: 14,
     paddingVertical: 12,
-    borderRadius: 14,
-    marginBottom: 20,
+    borderRadius: 12,
+    marginBottom: 16,
     gap: 12,
   },
-  errorCardNetwork: {
-    backgroundColor: '#FEF3C7',
-    borderColor: '#FCD34D',
-  },
-  errorCardGeneral: {
-    backgroundColor: '#FEF2F2',
-    borderColor: '#FECACA',
-  },
-  errorIconWrap: {
-    marginTop: 1,
-  },
-  errorCardTitle: {
-    fontSize: 13.5,
-    fontWeight: '800',
-    marginBottom: 2,
-  },
-  errorCardDesc: {
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '500',
-  },
-  errorConfigBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-    alignSelf: 'flex-start',
-    marginTop: 8,
-  },
-  errorConfigBtnText: {
-    fontSize: 11.5,
-    fontWeight: '700',
-    color: '#0F172A',
-  },
-  serverStatusPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    backgroundColor: '#F8FAFC',
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    marginTop: 8,
-    alignSelf: 'center',
-  },
-  serverStatusText: {
-    fontSize: 11,
-    color: '#64748B',
-    maxWidth: 220,
-  },
-  serverChangeText: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: Colors.primary,
-    marginLeft: 2,
-  },
-  formFields: {
-    gap: 14,
-  },
+  errorCardNetwork: { backgroundColor: '#FEF3C7', borderColor: '#FCD34D' },
+  errorCardGeneral: { backgroundColor: '#FEF2F2', borderColor: '#FECACA' },
+  errorIconWrap: { marginTop: 1 },
+  errorCardTitle: { fontSize: 14, fontWeight: '800', marginBottom: 2 },
+  errorCardDesc: { fontSize: 13, lineHeight: 18, fontWeight: '500' },
+  formFields: { gap: 14 },
   inputWrap: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#F8FAFC',
-    borderColor: '#EEEEEE',
+    borderColor: '#E5E7EB',
     borderWidth: 1,
-    borderRadius: 16,
+    borderRadius: 14,
     paddingHorizontal: 16,
     height: 54,
     gap: 12,
   },
-  inputWrapFocused: {
-    borderColor: '#0F172A',
-    backgroundColor: '#FFFFFF',
-  },
-  input: {
-    flex: 1,
-    color: Colors.text,
-    fontSize: 14,
-    fontWeight: '600',
-    paddingVertical: 0,
-  },
+  inputWrapFocused: { borderColor: '#0F172A', backgroundColor: '#FFFFFF' },
+  input: { flex: 1, color: Colors.text, fontSize: 15, fontWeight: '600', paddingVertical: 0 },
   loginBtn: {
     backgroundColor: '#0F172A',
     height: 54,
-    borderRadius: 16,
+    borderRadius: 14,
     justifyContent: 'center',
     alignItems: 'center',
-    marginTop: 10,
+    marginTop: 6,
   },
-  loginBtnText: {
-    color: '#FFFFFF',
-    fontWeight: '800',
-    fontSize: 15,
-    letterSpacing: 0.2,
-  },
-  registerBtn: {
-    marginTop: 16,
-    paddingVertical: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  registerBtnText: {
-    color: '#4B5563',
-    fontWeight: '700',
-    fontSize: 14,
-  },
-  disclaimerContainer: {
-    marginTop: 20,
-    alignItems: 'center',
-    paddingHorizontal: 10,
-  },
+  loginBtnBusy: { opacity: 0.7 },
+  loginBtnText: { color: '#FFFFFF', fontWeight: '800', fontSize: 16, letterSpacing: 0.2 },
+  registerBtn: { minHeight: 44, alignItems: 'center', justifyContent: 'center' },
+  registerBtnText: { color: '#4B5563', fontWeight: '600', fontSize: 14.5 },
+  registerBtnStrong: { color: Colors.primary, fontWeight: '800' },
   disclaimerText: {
-    fontSize: 11,
+    fontSize: 12,
     color: Colors.textSubtle,
     textAlign: 'center',
     lineHeight: 18,
     fontWeight: '500',
+    paddingHorizontal: 8,
   },
-  disclaimerLink: {
-    color: Colors.primary,
-    fontWeight: '700',
-    textDecorationLine: 'underline',
-  },
-  versionContainer: {
-    marginTop: 18,
-    marginBottom: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  versionText: {
-    fontSize: 12,
-    color: '#94A3B8',
-    fontWeight: '600',
-    letterSpacing: 0.3,
-  },
+  disclaimerLink: { color: Colors.primary, fontWeight: '700', textDecorationLine: 'underline' },
+  versionText: { fontSize: 12, color: '#94A3B8', fontWeight: '600', letterSpacing: 0.3, textAlign: 'center', marginTop: 4 },
 });

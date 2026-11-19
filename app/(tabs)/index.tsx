@@ -10,16 +10,17 @@ import {
   useWindowDimensions,
   Modal,
   Alert,
-  ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Header } from '../../components/Header';
 import { StatCard } from '../../components/StatCard';
-import { StatusBadge } from '../../components/StatusBadge';
 import { RestaurantAnalytics } from '../../components/RestaurantAnalytics';
+import { ChannelCard } from '../../components/home/ChannelCard';
 import { SuperAdminDashboard } from '../../components/admin/SuperAdminDashboard';
 import { CreateOrderModal } from '../../components/CreateOrderModal';
+import { ActionNeededOrders } from '../../components/ActionNeededOrders';
+import { RecentOrders } from '../../components/home/RecentOrders';
 import { ErrorState } from '../../components/ErrorState';
 import { ApiErrorType } from '../../services/api';
 import { Colors } from '../../constants/colors';
@@ -53,129 +54,9 @@ import {
   X,
   CalendarDays,
   BarChart3,
+  ChefHat,
 } from 'lucide-react-native';
 import { useAuth } from '../../context/AuthContext';
-
-function getOrderFulfillmentType(order: Order): 'delivery' | 'pickup' | 'takeaway' | 'dine_in' {
-  const oType = ((order.orderType || (order as any).deliveryType || '') as string).toLowerCase();
-  const domain = ((order.sourceDomain || '') as string).toLowerCase();
-  const notes = typeof order.notes === 'string' ? order.notes.toLowerCase() : '';
-  const addr1 = typeof (order.deliveryAddress as any)?.addressLine1 === 'string' ? (order.deliveryAddress as any).addressLine1.toLowerCase() : '';
-  const app = ((order as any).appName || '').toLowerCase();
-
-  if (
-    oType === 'dine_in' ||
-    oType === 'dinein' ||
-    oType === 'eatin' ||
-    oType === 'eat_in' ||
-    (order as any).tableNumber ||
-    notes.includes('eat-in') ||
-    notes.includes('dine-in') ||
-    notes.includes('dine in') ||
-    notes.includes('table') ||
-    addr1.startsWith('table')
-  ) {
-    return 'dine_in';
-  }
-
-  const custName = (order.customerDetails?.name || (order.customerId as any)?.fullName || '').toLowerCase();
-  if (
-    oType === 'pickup' ||
-    oType === 'collection' ||
-    notes.includes('pickup') ||
-    notes.includes('collection') ||
-    notes.includes('self pickup') ||
-    addr1.includes('pickup')
-  ) {
-    return 'pickup';
-  }
-
-  const isTakeawayApp =
-    oType === 'takeaway' ||
-    app.includes('takeaway') ||
-    notes.includes('takeaway') ||
-    custName.includes('takeaway');
-
-  if (isTakeawayApp) return 'takeaway';
-  return 'delivery';
-}
-
-interface OrderNextAction {
-  nextStatus: string;
-  label: string;
-  color: string;
-  bgColor: string;
-  IconComponent: any;
-}
-
-function getOrderNextAction(order: Order): OrderNextAction | null {
-  const status = (order.status || '').toLowerCase();
-  const fulfillment = getOrderFulfillmentType(order);
-
-  // 1. Placed / Pending -> Accept
-  if (status === 'placed' || status === 'pending') {
-    return {
-      nextStatus: 'preparing',
-      label: 'Accept',
-      color: '#FFFFFF',
-      bgColor: '#10B981',
-      IconComponent: Check,
-    };
-  }
-
-  // 2. Confirmed / Preparing
-  if (status === 'confirmed' || status === 'preparing') {
-    if (fulfillment === 'dine_in') {
-      return {
-        nextStatus: 'delivered',
-        label: 'Ready to Serve',
-        color: '#FFFFFF',
-        bgColor: '#7C3AED',
-        IconComponent: UtensilsCrossed,
-      };
-    }
-    if (fulfillment === 'takeaway' || fulfillment === 'pickup') {
-      return {
-        nextStatus: 'ready_for_pickup',
-        label: fulfillment === 'takeaway' ? 'Ready (Takeaway)' : 'Ready (Pickup)',
-        color: '#FFFFFF',
-        bgColor: '#FF5C39',
-        IconComponent: Check,
-      };
-    }
-    return {
-      nextStatus: 'out_for_delivery',
-      label: 'Dispatch',
-      color: '#FFFFFF',
-      bgColor: '#2563EB',
-      IconComponent: Bike,
-    };
-  }
-
-  // 3. Ready for pickup
-  if (status === 'ready_for_pickup') {
-    return {
-      nextStatus: 'delivered',
-      label: fulfillment === 'takeaway' ? 'Mark Collected' : 'Mark Delivered',
-      color: '#FFFFFF',
-      bgColor: '#10B981',
-      IconComponent: Check,
-    };
-  }
-
-  // 4. Out for delivery
-  if (status === 'out_for_delivery') {
-    return {
-      nextStatus: 'delivered',
-      label: 'Delivered',
-      color: '#FFFFFF',
-      bgColor: '#10B981',
-      IconComponent: Check,
-    };
-  }
-
-  return null;
-}
 
 const STATUS_PICKER_OPTIONS: { id: string; label: string; color: string }[] = [
   { id: 'placed', label: 'Placed (New Order)', color: '#D97706' },
@@ -193,7 +74,10 @@ export default function DashboardScreen() {
 
   const { width: windowWidth } = useWindowDimensions();
   const isSmallScreen = windowWidth < 375;
+  const isCompact = windowWidth < 360; // small Android phones: quick actions wrap to 2 rows
   const isTablet = windowWidth >= 768;
+  const insets = useSafeAreaInsets();
+  const sidePad = isTablet ? 28 : 16;
 
   const [refreshing, setRefreshing] = useState(false);
 
@@ -623,7 +507,12 @@ export default function DashboardScreen() {
             contentContainerStyle={[
               styles.scrollContent,
               isTablet && styles.scrollBodyTablet,
-              { paddingBottom: isTablet ? 140 : 110 }
+              {
+                // Respect notch / camera cut-outs in landscape and the home indicator under the floating tab bar.
+                paddingLeft: sidePad + insets.left,
+                paddingRight: sidePad + insets.right,
+                paddingBottom: (isTablet ? 140 : 110) + insets.bottom,
+              },
             ]}
           showsVerticalScrollIndicator={false}
           refreshControl={
@@ -658,7 +547,7 @@ export default function DashboardScreen() {
             onNavigate={(route) => {
               if (route === 'orders') router.push('/(tabs)/orders');
               else if (route === 'restaurants') router.push('/(tabs)/restaurants');
-              else if (route === 'marketing') router.push('/marketing');
+              else if (route === 'marketing') router.push(isSuperAdmin ? '/broadcast' : '/marketing');
               else router.push({ pathname: '/(tabs)/users', params: { role: 'delivery_partner' } } as any);
             }}
             lastUpdated={lastUpdated}
@@ -692,113 +581,46 @@ export default function DashboardScreen() {
                     <View style={[styles.orderGridWrapper, isTablet && styles.orderGridWrapperTablet]}>
                       {/* Pair 1: Create Order & Instore Orders */}
                       <View style={[styles.gridContainer, isSmallScreen && { gap: 8 }, isTablet && styles.gridContainerTablet]}>
-                        {/* 1. Create Order Card */}
-                        <TouchableOpacity
-                          style={[styles.gridCard, isSmallScreen && { padding: 11, minHeight: 80 }, isTablet && styles.gridCardTablet, styles.createOrderCardAccent]}
+                        <ChannelCard
+                          variant="action"
+                          title="New order"
+                          subtitle="Open POS terminal"
+                          icon={Plus}
+                          tone={{ color: '#FF5C39', tint: '#FFF0EC' }}
+                          size={isTablet ? 'tablet' : isSmallScreen ? 'compact' : 'phone'}
                           onPress={() => {
                             setCreateOrderInitialChannel('dine_in');
                             setCreateOrderModalVisible(true);
                           }}
-                          activeOpacity={0.7}
-                        >
-                          <View style={[styles.gridCardTextContainer, isSmallScreen && { paddingRight: 32 }]}>
-                            <View style={styles.orderBadgeWrapper}>
-                              <View style={[styles.channelBadge, { backgroundColor: '#FFF0EC', borderColor: '#FED7AA' }]}>
-                                <Text style={[styles.channelBadgeText, { color: '#EA580C' }]}>+ POS NEW</Text>
-                              </View>
-                            </View>
-                            <Text style={[styles.gridTitle, isTablet && styles.gridTitleTablet]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
-                              Create Order
-                            </Text>
-                            <Text style={[styles.gridSub, isTablet && styles.gridSubTablet]} numberOfLines={2} ellipsizeMode="tail">
-                              Instant POS terminal
-                            </Text>
-                          </View>
-                          <View style={[styles.gridIllustrationBadge, { backgroundColor: '#FFF0EC', borderColor: '#FED7AA' }, isTablet && styles.gridIllustrationBadgeTablet]}>
-                            <Plus size={isTablet ? 24 : 20} color="#EA580C" />
-                            </View>
-                        </TouchableOpacity>
-
-                        {/* 2. Instore Orders Card */}
-                        <TouchableOpacity
-                          style={[styles.gridCard, isSmallScreen && { padding: 11, minHeight: 80 }, isTablet && styles.gridCardTablet]}
+                        />
+                        <ChannelCard
+                          title="Dine-in"
+                          count={orderTerminalCounts.inStore}
+                          icon={UtensilsCrossed}
+                          tone={{ color: '#7C3AED', tint: '#F3EEFF' }}
+                          size={isTablet ? 'tablet' : isSmallScreen ? 'compact' : 'phone'}
                           onPress={() => router.push({ pathname: '/(tabs)/orders', params: { channel: 'dine_in' } })}
-                          activeOpacity={0.7}
-                        >
-                          <View style={[styles.gridCardTextContainer, isSmallScreen && { paddingRight: 32 }]}>
-                            <View style={styles.orderBadgeWrapper}>
-                              <View style={[styles.channelBadge, { backgroundColor: '#F5F3FF', borderColor: '#DDD6FE' }]}>
-                                <Text style={[styles.channelBadgeText, { color: '#7C3AED' }]}>IN-STORE</Text>
-                              </View>
-                            </View>
-                            <Text style={[styles.gridTitle, isTablet && styles.gridTitleTablet]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
-                              Instore Orders
-                            </Text>
-                            <Text style={[styles.gridSub, isTablet && styles.gridSubTablet]} numberOfLines={2} ellipsizeMode="tail">
-                              {orderTerminalCounts.inStore > 0
-                                ? `${orderTerminalCounts.inStore} active • Dine-in`
-                                : 'Dine-in service'}
-                            </Text>
-                          </View>
-                          <View style={[styles.gridIllustrationBadge, { backgroundColor: '#F5F3FF', borderColor: '#DDD6FE' }, isTablet && styles.gridIllustrationBadgeTablet]}>
-                              <UtensilsCrossed size={isTablet ? 24 : 20} color="#7C3AED" />
-                            </View>
-                        </TouchableOpacity>
+                        />
                       </View>
 
                       {/* Pair 2: Pickup Orders & Delivery Orders */}
                       <View style={[styles.gridContainer, isSmallScreen && { gap: 8 }, isTablet && styles.gridContainerTablet]}>
-                        {/* 3. Pickup Orders Card */}
-                        <TouchableOpacity
-                          style={[styles.gridCard, isSmallScreen && { padding: 11, minHeight: 80 }, isTablet && styles.gridCardTablet]}
+                        <ChannelCard
+                          title="Pickup"
+                          count={orderTerminalCounts.pickup}
+                          icon={ShoppingBag}
+                          tone={{ color: '#EA580C', tint: '#FFF4EA' }}
+                          size={isTablet ? 'tablet' : isSmallScreen ? 'compact' : 'phone'}
                           onPress={() => router.push({ pathname: '/(tabs)/orders', params: { channel: 'pickup' } })}
-                          activeOpacity={0.7}
-                        >
-                          <View style={[styles.gridCardTextContainer, isSmallScreen && { paddingRight: 32 }]}>
-                            <View style={styles.orderBadgeWrapper}>
-                              <View style={[styles.channelBadge, { backgroundColor: '#FFF7ED', borderColor: '#FED7AA' }]}>
-                                <Text style={[styles.channelBadgeText, { color: '#EA580C' }]}>PICKUP</Text>
-                              </View>
-                            </View>
-                            <Text style={[styles.gridTitle, isTablet && styles.gridTitleTablet]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
-                              Pickup Orders
-                            </Text>
-                            <Text style={[styles.gridSub, isTablet && styles.gridSubTablet]} numberOfLines={2} ellipsizeMode="tail">
-                              {orderTerminalCounts.pickup > 0
-                                ? `${orderTerminalCounts.pickup} active • Pickup`
-                                : 'Pickup & collection'}
-                            </Text>
-                          </View>
-                          <View style={[styles.gridIllustrationBadge, { backgroundColor: '#FFF7ED', borderColor: '#FED7AA' }, isTablet && styles.gridIllustrationBadgeTablet]}>
-                            <ShoppingBag size={isTablet ? 24 : 20} color="#EA580C" />
-                            </View>
-                        </TouchableOpacity>
-
-                        {/* 4. Delivery Orders Card */}
-                        <TouchableOpacity
-                          style={[styles.gridCard, isSmallScreen && { padding: 11, minHeight: 80 }, isTablet && styles.gridCardTablet]}
+                        />
+                        <ChannelCard
+                          title="Delivery"
+                          count={orderTerminalCounts.delivery}
+                          icon={Bike}
+                          tone={{ color: '#2563EB', tint: '#EEF4FF' }}
+                          size={isTablet ? 'tablet' : isSmallScreen ? 'compact' : 'phone'}
                           onPress={() => router.push({ pathname: '/(tabs)/orders', params: { channel: 'delivery' } })}
-                          activeOpacity={0.7}
-                        >
-                          <View style={[styles.gridCardTextContainer, isSmallScreen && { paddingRight: 32 }]}>
-                            <View style={styles.orderBadgeWrapper}>
-                              <View style={[styles.channelBadge, { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }]}>
-                                <Text style={[styles.channelBadgeText, { color: '#2563EB' }]}>DELIVERY</Text>
-                              </View>
-                            </View>
-                            <Text style={[styles.gridTitle, isTablet && styles.gridTitleTablet]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
-                              Delivery Orders
-                            </Text>
-                            <Text style={[styles.gridSub, isTablet && styles.gridSubTablet]} numberOfLines={2} ellipsizeMode="tail">
-                              {orderTerminalCounts.delivery > 0
-                                ? `${orderTerminalCounts.delivery} active • Fleet`
-                                : 'Direct & fleet'}
-                            </Text>
-                          </View>
-                          <View style={[styles.gridIllustrationBadge, { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }, isTablet && styles.gridIllustrationBadgeTablet]}>
-                        <Bike size={isTablet ? 24 : 20} color="#2563EB" />
-                      </View>
-                  </TouchableOpacity>
+                        />
                 </View>
                     </View>
             </View>
@@ -811,10 +633,26 @@ export default function DashboardScreen() {
                   </View>
 
                   {/* Quick Action Capsule Bar (Bookings, Tables, Fleet, Promo, Analytics) */}
-                  <View style={[styles.quickActionBar, isTablet && styles.quickActionBarTablet]}>
+                  <View style={[styles.quickActionBar, isTablet && styles.quickActionBarTablet, isCompact && styles.quickActionBarCompact]}>
+                    {/* Kitchen Mode */}
+                    <TouchableOpacity
+                      style={[styles.quickActionItem, isCompact && styles.quickActionItemCompact]}
+                      onPress={() => router.push('/kitchen')}
+                      activeOpacity={0.7}
+                      accessibilityRole="button"
+                      accessibilityLabel="Open Kitchen Mode"
+                    >
+                      <View style={[styles.quickActionCircle, { backgroundColor: '#11181C', borderColor: '#11181C' }, isTablet && styles.quickActionCircleTablet]}>
+                        <ChefHat size={isTablet ? 26 : 22} color="#FFFFFF" />
+                      </View>
+                      <Text style={[styles.quickActionLabel, isTablet && styles.quickActionLabelTablet]} numberOfLines={1}>
+                        Kitchen
+                      </Text>
+                    </TouchableOpacity>
+
                     {/* 1. Bookings */}
                     <TouchableOpacity
-                      style={styles.quickActionItem}
+                      style={[styles.quickActionItem, isCompact && styles.quickActionItemCompact]}
                       onPress={() => router.push('/bookings')}
                       activeOpacity={0.7}
                     >
@@ -828,7 +666,7 @@ export default function DashboardScreen() {
 
                     {/* 2. Tables */}
                     <TouchableOpacity
-                      style={styles.quickActionItem}
+                      style={[styles.quickActionItem, isCompact && styles.quickActionItemCompact]}
                       onPress={() => router.push('/tables')}
                       activeOpacity={0.7}
                     >
@@ -847,7 +685,7 @@ export default function DashboardScreen() {
 
                     {/* 3. Fleet */}
                     <TouchableOpacity
-                      style={styles.quickActionItem}
+                      style={[styles.quickActionItem, isCompact && styles.quickActionItemCompact]}
                       onPress={() => router.push('/fleet')}
                       activeOpacity={0.7}
                     >
@@ -866,8 +704,8 @@ export default function DashboardScreen() {
 
                     {/* 4. Promo */}
                     <TouchableOpacity
-                      style={styles.quickActionItem}
-                      onPress={() => router.push('/marketing')}
+                      style={[styles.quickActionItem, isCompact && styles.quickActionItemCompact]}
+                      onPress={() => router.push(isSuperAdmin ? '/broadcast' : '/marketing')}
                       activeOpacity={0.7}
                     >
                       <View style={[styles.quickActionCircle, { backgroundColor: '#eeeeee', borderColor: '#cccbc9' }, isTablet && styles.quickActionCircleTablet]}>
@@ -880,7 +718,7 @@ export default function DashboardScreen() {
 
                     {/* 5. Analytics */}
                     <TouchableOpacity
-                      style={styles.quickActionItem}
+                      style={[styles.quickActionItem, isCompact && styles.quickActionItemCompact]}
                       onPress={() => router.push('/analytics')}
                       activeOpacity={0.7}
                     >
@@ -897,128 +735,27 @@ export default function DashboardScreen() {
 
   
 
-        {/* Recent Orders Section (Restaurant Owner Only) */}
+        {/* Action Needed: orders past their expected / scheduled time (Restaurant Owner Only) */}
         {!isSuperAdmin && (
-          <View style={styles.section}>
-            <View style={styles.sectionHeaderRow}>
-              <Text style={styles.sectionHeader}>Recent Orders</Text>
-              <TouchableOpacity onPress={() => router.push('/(tabs)/orders')}>
-                <Text style={styles.seeAllText}>See All</Text>
-              </TouchableOpacity>
-            </View>
+          <ActionNeededOrders
+            orders={orders}
+            onOpenOrder={(order) =>
+              router.push({ pathname: '/order-details', params: { orderId: order._id } })
+            }
+          />
+        )}
 
-            {orders.length === 0 ? (
-              <View style={styles.emptyRecentBox}>
-                <ShoppingBag size={28} color={Colors.cardBorder} />
-                <Text style={styles.emptyRecentText}>No recent orders available</Text>
-              </View>
-            ) : (
-              <View style={[styles.recentOrdersList, isTablet && styles.recentOrdersListTablet]}>
-                      {orders.slice(0, 4).map((order) => {
-                    const restName =
-                      typeof order.restaurantId === 'object'
-                        ? order.restaurantId?.restaurantName || 'Restaurant'
-                        : 'Restaurant';
-
-                    const custName =
-                      typeof order.customerId === 'object'
-                        ? order.customerId?.fullName || order.customerDetails?.name || 'Customer'
-                        : order.customerDetails?.name || 'Customer';
-
-                    const totalAmt =
-                      order.pricing?.totalAmount ??
-                      order.pricing?.total ??
-                      order.totalAmount ??
-                      order.totalPrice ??
-                      (order.orderedItems || []).reduce(
-                        (acc, item) =>
-                          acc + (item.price || (item as any).basePrice || 0) * (item.quantity || 1),
-                        0
-                      );
-
-                    const nextAction = getOrderNextAction(order);
-
-                    return (
-                      <TouchableOpacity
-                        key={order._id}
-                        style={[styles.recentOrderCard, isTablet && styles.recentOrderCardTablet]}
-                        activeOpacity={0.7}
-                        onPress={() =>
-                          router.push({
-                            pathname: '/order-details',
-                            params: { orderId: order._id },
-                          })
-                        }
-                      >
-                        <View style={styles.recentOrderTop}>
-                          <View style={styles.recentOrderInfo}>
-                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                              <Text style={styles.recentOrderId}>
-                                #{order.orderNumber || order._id?.substring(0, 8)}
-                              </Text>
-                              <StatusBadge status={order.paymentStatus || 'pending'} type="payment" />
-                            </View>
-                            <Text style={styles.recentOrderSub} numberOfLines={1}>
-                              {restName} • {custName}
-                            </Text>
-                          </View>
-
-                          {nextAction ? (
-                            <TouchableOpacity
-                              style={[
-                                styles.orderActionBtn,
-                                { backgroundColor: nextAction.bgColor },
-                                updatingOrderId === order._id && styles.orderActionBtnDisabled,
-                              ]}
-                              onPress={(e: any) => {
-                                e.stopPropagation?.();
-                                handleUpdateOrderStatus(order, nextAction.nextStatus);
-                              }}
-                              onLongPress={(e: any) => {
-                                e.stopPropagation?.();
-                                setStatusPickerOrder(order);
-                              }}
-                              activeOpacity={0.8}
-                              disabled={updatingOrderId === order._id}
-                              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-                            >
-                              {updatingOrderId === order._id ? (
-                                <ActivityIndicator size="small" color="#FFFFFF" style={{ transform: [{ scale: 0.75 }] }} />
-                              ) : (
-                                <>
-                                  <nextAction.IconComponent size={12} color="#FFFFFF" strokeWidth={2.8} />
-                                  <Text style={styles.orderActionBtnText}>{nextAction.label}</Text>
-                                </>
-                              )}
-                            </TouchableOpacity>
-                          ) : (
-                            <TouchableOpacity
-                              activeOpacity={0.8}
-                              onPress={(e: any) => {
-                                e.stopPropagation?.();
-                                setStatusPickerOrder(order);
-                              }}
-                              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-                            >
-                              <StatusBadge status={order.status} type="order" />
-                            </TouchableOpacity>
-                          )}
-                        </View>
-
-                        <View style={styles.recentOrderBottom}>
-                          <Text style={styles.recentOrderItems} numberOfLines={1}>
-                            {(order.orderedItems || [])
-                              .map((i) => `${i.name || (i as any).itemName} x${i.quantity}`)
-                              .join(', ')}
-                          </Text>
-                          <Text style={styles.recentOrderPrice}>£{totalAmt.toFixed(2)}</Text>
-                        </View>
-                      </TouchableOpacity>
-                    );
-                  })}
-              </View>
-            )}
-          </View>
+        {/* Recent Orders (Restaurant Owner Only) */}
+        {!isSuperAdmin && (
+          <RecentOrders
+            orders={orders}
+            updatingOrderId={updatingOrderId}
+            isTablet={isTablet}
+            onOpenOrder={(order) => router.push({ pathname: '/order-details', params: { orderId: order._id } })}
+            onQuickAction={handleUpdateOrderStatus}
+            onPickStatus={setStatusPickerOrder}
+            onSeeAll={() => router.push('/(tabs)/orders')}
+          />
         )}
       </ScrollView>
       )}
@@ -1269,6 +1006,7 @@ export default function DashboardScreen() {
         presentationStyle="fullScreen"
         onRequestClose={() => setShowAnalyticsModal(false)}
       >
+        <SafeAreaProvider>
         <SafeAreaView style={styles.analyticsModalSafeArea} edges={['top', 'bottom']}>
           {/* Top Modal Header */}
           <View style={[styles.analyticsModalHeader, isTablet && styles.analyticsModalHeaderTablet]}>
@@ -1371,6 +1109,7 @@ export default function DashboardScreen() {
             />
           </ScrollView>
         </SafeAreaView>
+        </SafeAreaProvider>
       </Modal>
     </View>
   );
@@ -1422,14 +1161,6 @@ const styles = StyleSheet.create({
     height: 60,
     bottom: -4,
     right: -4,
-  },
-  recentOrdersListTablet: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 14,
-  },
-  recentOrderCardTablet: {
-    width: '48.8%',
   },
   welcomeSection: {
     marginBottom: 20,
@@ -1503,92 +1234,6 @@ const styles = StyleSheet.create({
     color: Colors.primary,
     fontSize: 13,
     fontWeight: '700',
-  },
-  emptyRecentBox: {
-    backgroundColor: Colors.card,
-    borderRadius: 14,
-    borderColor: Colors.cardBorder,
-    borderWidth: 1,
-    padding: 24,
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  emptyRecentText: {
-    color: Colors.textSubtle,
-    fontSize: 13,
-    marginTop: 8,
-  },
-  recentOrdersList: {
-    gap: 10,
-    marginBottom: 16,
-  },
-  recentOrderCard: {
-    backgroundColor: Colors.card,
-    borderRadius: 16,
-    borderColor: '#EEEEEE',
-    borderWidth: 1,
-    padding: 14,
-  },
-  recentOrderTop: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  recentOrderInfo: {
-    flex: 1,
-    marginRight: 8,
-  },
-  recentOrderId: {
-    color: Colors.text,
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  recentOrderSub: {
-    color: Colors.textSubtle,
-    fontSize: 12,
-    marginTop: 2,
-  },
-  recentOrderBottom: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 8,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: Colors.cardBorder,
-  },
-  recentOrderItems: {
-    color: Colors.textMuted,
-    fontSize: 12,
-    flex: 1,
-    marginRight: 8,
-  },
-  recentOrderPrice: {
-    color: Colors.text,
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  orderActionBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.12,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  orderActionBtnDisabled: {
-    opacity: 0.7,
-  },
-  orderActionBtnText: {
-    color: '#FFFFFF',
-    fontSize: 11.5,
-    fontWeight: '700',
-    letterSpacing: 0.2,
   },
   statusModalOverlay: {
     flex: 1,
@@ -2298,6 +1943,16 @@ const styles = StyleSheet.create({
     position: 'relative',
    
     marginBottom: 5,
+  },
+  quickActionBarCompact: {
+    flexWrap: 'wrap',
+    justifyContent: 'flex-start',
+    rowGap: 14,
+    paddingHorizontal: 4,
+  },
+  quickActionItemCompact: {
+    flex: 0,
+    width: '33.33%',
   },
   quickActionCircleTablet: {
     width: 62,

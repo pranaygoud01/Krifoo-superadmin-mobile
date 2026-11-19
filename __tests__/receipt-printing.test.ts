@@ -113,6 +113,24 @@ describe('receipt builder', () => {
     const doc = buildCustomizedReceiptDocument(baseOrder, { paperWidth: '80mm' }, tpl);
     expect(doc[1]).toMatchObject({ type: 'image' });
   });
+
+  it('hides the TOTAL line when "Total" is turned off, and shows it by default', () => {
+    const hasTotal = (doc: ReceiptCommand[]) => doc.some((c) => c.type === 'text' && c.value.includes('TOTAL:'));
+
+    const off = cloneTemplate(DEFAULT_RECEIPT_TEMPLATE);
+    off.content.showTotal = false;
+    const hidden = buildCustomizedReceiptDocument(baseOrder, { paperWidth: '80mm' }, off);
+    expect(hasTotal(hidden)).toBe(false);
+    // Other totals still print
+    expect(hidden.some((c) => c.type === 'text' && c.value.includes('Subtotal:'))).toBe(true);
+
+    expect(hasTotal(buildCustomizedReceiptDocument(baseOrder, { paperWidth: '80mm' }, DEFAULT_RECEIPT_TEMPLATE))).toBe(true);
+
+    // Templates saved before this option existed (no showTotal) keep printing the total
+    const legacy = cloneTemplate(DEFAULT_RECEIPT_TEMPLATE);
+    delete (legacy.content as any).showTotal;
+    expect(hasTotal(buildCustomizedReceiptDocument(baseOrder, { paperWidth: '80mm' }, legacy))).toBe(true);
+  });
 });
 
 describe('encoders', () => {

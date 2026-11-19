@@ -55,6 +55,8 @@ export interface ReceiptContentConfig {
   taxPercentage?: number;
   showDiscountLine: boolean;
   showPaymentMethod: boolean;
+  /** Print the TOTAL line (and the VAT-included line under it). Missing = shown. */
+  showTotal?: boolean;
   headerMessage: string;
   footerMessage: string;
   showQrCode: boolean;
@@ -137,6 +139,7 @@ export const DEFAULT_RECEIPT_TEMPLATE: ReceiptTemplate = {
     taxPercentage: 20,
     showDiscountLine: true,
     showPaymentMethod: true,
+    showTotal: true,
     headerMessage: 'Freshly Prepared For You',
     footerMessage: 'Thank you for your order! Visit us again soon.',
     showQrCode: false,
@@ -199,6 +202,7 @@ export const COMPACT_TAKEAWAY_TEMPLATE: ReceiptTemplate = {
     taxPercentage: 20,
     showDiscountLine: true,
     showPaymentMethod: true,
+    showTotal: true,
     headerMessage: 'Freshly Prepared For You',
     footerMessage: 'Thank you for your order! Visit us again soon.',
     showQrCode: false,
@@ -261,6 +265,7 @@ export const DINE_IN_INVOICE_TEMPLATE: ReceiptTemplate = {
     taxPercentage: 20,
     showDiscountLine: true,
     showPaymentMethod: true,
+    showTotal: true,
     headerMessage: 'Thank you for dining with us today!',
     footerMessage: 'Service charge not included. We appreciate your feedback!',
     showQrCode: true,

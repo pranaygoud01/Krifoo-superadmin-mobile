@@ -29,6 +29,7 @@ import {
   X,
   ShieldAlert,
 } from 'lucide-react-native';
+import { KEYBOARD_BEHAVIOR } from '../utils/keyboard';
 
 export default function DeliveryChargesScreen() {
   const { width } = useWindowDimensions();
@@ -264,7 +265,7 @@ export default function DeliveryChargesScreen() {
         statusBarTranslucent={true}
         onRequestClose={() => setModalVisible(false)}
       >
-        <KeyboardAvoidingView style={styles.modalBackdrop} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <KeyboardAvoidingView style={styles.modalBackdrop} behavior={KEYBOARD_BEHAVIOR}>
           <View style={styles.modalBox}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>{editingTier ? 'Edit Delivery Tier' : 'Add Delivery Tier'}</Text>

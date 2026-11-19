@@ -18,6 +18,9 @@ import {
   Clock,
   Sliders,
   ShieldCheck,
+  Wallet,
+  Mail,
+  BellRing,
 } from 'lucide-react-native';
 import { getSavedOrientation, applyOrientation, AppOrientation } from '../services/orientation.service';
 import RestaurantSettingsScreen from './restaurant-settings';
@@ -143,6 +146,42 @@ function SuperAdminSettingsScreen() {
             bg: '#FDF2F8',
             keywords: 'global commission email fees',
             onPress: () => router.push('/global-settings'),
+          },
+        ],
+      },
+      {
+        key: 'finance',
+        title: 'Finance & marketing',
+        items: [
+          {
+            key: 'payouts',
+            title: 'Payouts',
+            subtitle: 'What restaurants are owed and what is settled',
+            icon: Wallet,
+            color: '#EA580C',
+            bg: '#FFF7ED',
+            keywords: 'settlement payout bank transfer owed money finance',
+            onPress: () => router.push('/payouts'),
+          },
+          {
+            key: 'broadcast',
+            title: 'Restaurant updates',
+            subtitle: 'Push notifications to restaurant devices',
+            icon: BellRing,
+            color: '#EA580C',
+            bg: '#FFF7ED',
+            keywords: 'broadcast push notification announcement maintenance restaurants',
+            onPress: () => router.push('/broadcast'),
+          },
+          {
+            key: 'email-campaigns',
+            title: 'Email campaigns',
+            subtitle: 'Send offers to customers by email',
+            icon: Mail,
+            color: '#2563EB',
+            bg: '#EFF6FF',
+            keywords: 'marketing newsletter offers contacts unsubscribe',
+            onPress: () => router.push('/email-campaigns'),
           },
         ],
       },

@@ -21,6 +21,7 @@ import { Image } from 'expo-image';
 import { resolveImageUrl, resolveMediaImageSource } from '../../services/image.helper';
 import { Colors } from '../../constants/colors';
 import { ErrorState } from '../../components/ErrorState';
+import { FilterSheet, FilterSection, FilterChips } from '../../components/filters/FilterSheet';
 import { ApiErrorType } from '../../services/api';
 import { menuService } from '../../services/menu.service';
 import { MenuItem, Category } from '../../types';
@@ -51,6 +52,10 @@ import {
   PowerOff,
   House,
   ChevronDown,
+  Star,
+  Gift,
+  Bike,
+  UtensilsCrossed,
 } from 'lucide-react-native';
 
 type SortOption = 'default' | 'price_asc' | 'price_desc' | 'discount' | 'name_asc' | 'stock_asc';
@@ -356,6 +361,12 @@ export default function MenuScreen() {
     if (searchQuery.trim().length > 0) count++;
     return count;
   }, [typeFilter, selectedCategoryFilter, channelFilter, stockFilter, selectedSort, searchQuery]);
+
+  const sheetFilterCount =
+    (selectedSort !== 'default' ? 1 : 0) +
+    (typeFilter !== 'all' ? 1 : 0) +
+    (channelFilter !== 'all' ? 1 : 0) +
+    (stockFilter !== 'all' ? 1 : 0);
 
   const clearAllFilters = () => {
     setSearchQuery('');
@@ -992,222 +1003,94 @@ export default function MenuScreen() {
         </View>
       </Modal>
 
-      {/* Filter & Sort Bottom Sheet Modal */}
-      <Modal
+      {/* Filter & sort sheet (shared design with the Orders tab) */}
+      <FilterSheet
         visible={filterModalOpen}
-        animationType="slide"
-        transparent={true}
-        onRequestClose={() => setFilterModalOpen(false)}
+        onClose={() => setFilterModalOpen(false)}
+        title="Filter & sort menu"
+        subtitle={`Showing ${filteredItems.length} of ${menuItems.length} items`}
+        activeCount={sheetFilterCount}
+        onReset={() => {
+          setSelectedSort('default');
+          setChannelFilter('all');
+          setStockFilter('all');
+          setTypeFilter('all');
+        }}
+        applyLabel={`Show ${filteredItems.length} item${filteredItems.length !== 1 ? 's' : ''}`}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalSheet}>
-            {/* Header */}
-            <View style={styles.modalHeader}>
-              <View>
-                <Text style={styles.modalTitle}>Filter & Sort Menu</Text>
-                <Text style={styles.modalSubtitle}>Refine catalog items by channels, pricing, and stock</Text>
-              </View>
-              <TouchableOpacity
-                onPress={() => setFilterModalOpen(false)}
-                style={styles.modalCloseBtn}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              >
-                <X size={18} color="#475569" />
-              </TouchableOpacity>
-            </View>
+        <FilterSection title="Sort by">
+          <FilterChips
+            accessibilityLabel="Sort by"
+            value={selectedSort}
+            onChange={setSelectedSort}
+            options={[
+              { value: 'default', label: 'Default' },
+              { value: 'name_asc', label: 'Name A–Z' },
+              { value: 'price_asc', label: 'Price: low to high' },
+              { value: 'price_desc', label: 'Price: high to low' },
+              { value: 'discount', label: 'Biggest discount' },
+              { value: 'stock_asc', label: 'Low stock first' },
+            ]}
+          />
+        </FilterSection>
 
-            <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 460 }}>
-              {/* Sort By Section */}
-              <View style={styles.modalSection}>
-                <Text style={styles.modalSectionTitle}>Sort Dishes By</Text>
-                <View style={styles.modalOptionGrid}>
-                  {[
-                    { id: 'default', label: 'Default' },
-                    { id: 'price_asc', label: 'Price: Low to High' },
-                    { id: 'price_desc', label: 'Price: High to Low' },
-                    { id: 'discount', label: 'Highest Discount' },
-                    { id: 'name_asc', label: 'Name: A to Z' },
-                    { id: 'stock_asc', label: 'Low Stock First' },
-                  ].map((opt) => (
-                    <TouchableOpacity
-                      key={opt.id}
-                      style={[
-                        styles.modalOptionChip,
-                        selectedSort === opt.id && styles.modalOptionChipActive,
-                      ]}
-                      onPress={() => setSelectedSort(opt.id as SortOption)}
-                    >
-                      <Text
-                        style={[
-                          styles.modalOptionText,
-                          selectedSort === opt.id && styles.modalOptionTextActive,
-                        ]}
-                      >
-                        {opt.label}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
+        <FilterSection title="Availability" hint="Shown to customers">
+          <FilterChips
+            accessibilityLabel="Availability"
+            value={typeFilter === 'active' || typeFilter === 'inactive' ? typeFilter : 'all'}
+            onChange={setTypeFilter}
+            options={[
+              { value: 'all', label: 'All' },
+              { value: 'active', label: 'Online', dotColor: '#16A34A' },
+              { value: 'inactive', label: 'Offline', dotColor: '#9BA1A6' },
+            ]}
+          />
+        </FilterSection>
 
-              {/* Availability Status Section */}
-              <View style={styles.modalSection}>
-                <Text style={styles.modalSectionTitle}>Availability Status</Text>
-                <View style={styles.modalOptionGrid}>
-                  {[
-                    { id: 'all', label: 'All Items' },
-                    { id: 'active', label: '🟢 Online (Available)' },
-                    { id: 'inactive', label: '⚪ Offline (Unavailable)' },
-                  ].map((st) => {
-                    const isActive = typeFilter === st.id || (st.id === 'all' && typeFilter !== 'active' && typeFilter !== 'inactive');
-                    return (
-                      <TouchableOpacity
-                        key={st.id}
-                        style={[
-                          styles.modalOptionChip,
-                          isActive && styles.modalOptionChipActive,
-                        ]}
-                        onPress={() => setTypeFilter(st.id === 'all' ? 'all' : st.id)}
-                      >
-                        <Text
-                          style={[
-                            styles.modalOptionText,
-                            isActive && styles.modalOptionTextActive,
-                          ]}
-                        >
-                          {st.label}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              </View>
+        <FilterSection title="Dietary & specials">
+          <FilterChips
+            accessibilityLabel="Dietary and specials"
+            value={['all', 'active', 'inactive'].includes(typeFilter) ? 'all' : typeFilter}
+            onChange={setTypeFilter}
+            options={[
+              { value: 'all', label: 'All' },
+              { value: 'veg', label: 'Veg', dotColor: '#16A34A' },
+              { value: 'non_veg', label: 'Non-veg', dotColor: '#DC2626' },
+              { value: 'egg', label: 'Contains egg', dotColor: '#EAB308' },
+              { value: 'bestseller', label: 'Bestseller', Icon: Star },
+              { value: 'discount', label: 'On discount', Icon: Tag },
+              { value: 'bogo', label: 'Buy 1 get 1', Icon: Gift },
+            ]}
+          />
+        </FilterSection>
 
-              {/* Dietary & Specials Section */}
-              <View style={styles.modalSection}>
-                <Text style={styles.modalSectionTitle}>Dietary & Specials</Text>
-                <View style={styles.modalOptionGrid}>
-                  {[
-                    { id: 'all', label: 'All Dishes' },
-                    { id: 'veg', label: '🟢 Pure Veg' },
-                    { id: 'non_veg', label: '🔴 Non-Veg' },
-                    { id: 'egg', label: '🟡 Contains Egg' },
-                    { id: 'bestseller', label: '⭐ Bestseller' },
-                    { id: 'discount', label: '🏷️ On Discount' },
-                    { id: 'bogo', label: '🎁 Buy 1 Get 1 (BOGO)' },
-                  ].map((diet) => {
-                    const isActive = typeFilter === diet.id || (diet.id === 'all' && ['all', 'active', 'inactive'].includes(typeFilter));
-                    return (
-                      <TouchableOpacity
-                        key={diet.id}
-                        style={[
-                          styles.modalOptionChip,
-                          isActive && styles.modalOptionChipActive,
-                        ]}
-                        onPress={() => setTypeFilter(diet.id === 'all' ? 'all' : diet.id)}
-                      >
-                        <Text
-                          style={[
-                            styles.modalOptionText,
-                            isActive && styles.modalOptionTextActive,
-                          ]}
-                        >
-                          {diet.label}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              </View>
+        <FilterSection title="Channel" hint="Where the item is sold">
+          <FilterChips
+            accessibilityLabel="Channel"
+            value={channelFilter}
+            onChange={setChannelFilter}
+            options={[
+              { value: 'all', label: 'All' },
+              { value: 'delivery', label: 'Delivery', Icon: Bike },
+              { value: 'collection', label: 'Pickup', Icon: ShoppingBag },
+              { value: 'dine_in', label: 'Dine-in', Icon: UtensilsCrossed },
+            ]}
+          />
+        </FilterSection>
 
-              {/* Order Channel Section */}
-              <View style={styles.modalSection}>
-                <Text style={styles.modalSectionTitle}>Order Fulfillment Channel</Text>
-                <View style={styles.modalOptionGrid}>
-                  {[
-                    { id: 'all', label: 'All Channels' },
-                    { id: 'delivery', label: '🛵 Delivery Enabled' },
-                    { id: 'dine_in', label: '🍽️ Dine-in Enabled' },
-                    { id: 'collection', label: '🛍️ Pickup Enabled' },
-                  ].map((ch) => (
-                    <TouchableOpacity
-                      key={ch.id}
-                      style={[
-                        styles.modalOptionChip,
-                        channelFilter === ch.id && styles.modalOptionChipActive,
-                      ]}
-                      onPress={() => setChannelFilter(ch.id as any)}
-                    >
-                      <Text
-                        style={[
-                          styles.modalOptionText,
-                          channelFilter === ch.id && styles.modalOptionTextActive,
-                        ]}
-                      >
-                        {ch.label}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
-
-              {/* Stock Inventory Section */}
-              <View style={styles.modalSection}>
-                <Text style={styles.modalSectionTitle}>Inventory & Stock</Text>
-                <View style={styles.modalOptionGrid}>
-                  {[
-                    { id: 'all', label: 'All Items' },
-                    { id: 'in_stock', label: 'In Stock (> 0)' },
-                    { id: 'out_of_stock', label: 'Out of Stock (0)' },
-                  ].map((st) => (
-                    <TouchableOpacity
-                      key={st.id}
-                      style={[
-                        styles.modalOptionChip,
-                        stockFilter === st.id && styles.modalOptionChipActive,
-                      ]}
-                      onPress={() => setStockFilter(st.id as any)}
-                    >
-                      <Text
-                        style={[
-                          styles.modalOptionText,
-                          stockFilter === st.id && styles.modalOptionTextActive,
-                        ]}
-                      >
-                        {st.label}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
-            </ScrollView>
-
-            {/* Modal Bottom Actions */}
-            <View style={styles.modalFooter}>
-              <TouchableOpacity
-                style={styles.modalResetBtn}
-                onPress={() => {
-                  setSelectedSort('default');
-                  setChannelFilter('all');
-                  setStockFilter('all');
-                  setTypeFilter('all');
-                }}
-              >
-                <RotateCcw size={14} color="#64748B" />
-                <Text style={styles.modalResetBtnText}>Reset</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.modalApplyBtn}
-                onPress={() => setFilterModalOpen(false)}
-              >
-                <Check size={16} color="#FFFFFF" strokeWidth={2.5} />
-                <Text style={styles.modalApplyBtnText}>Apply Filters</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
+        <FilterSection title="Stock">
+          <FilterChips
+            accessibilityLabel="Stock"
+            value={stockFilter}
+            onChange={setStockFilter}
+            options={[
+              { value: 'all', label: 'All' },
+              { value: 'in_stock', label: 'In stock', dotColor: '#16A34A' },
+              { value: 'out_of_stock', label: 'Out of stock', dotColor: '#DC2626' },
+            ]}
+          />
+        </FilterSection>
+      </FilterSheet>
     </SafeAreaView>
   );
 }
@@ -1937,121 +1820,6 @@ const styles = StyleSheet.create({
     elevation: 8,
   },
   // Modal Styles
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'flex-end',
-  },
-  modalSheet: {
-    backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: Platform.OS === 'ios' ? 36 : 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 12,
-    elevation: 20,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingBottom: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
-  },
-  modalTitle: {
-    fontSize: 17,
-    fontWeight: '800',
-    color: '#0F172A',
-  },
-  modalSubtitle: {
-    fontSize: 11.5,
-    color: '#64748B',
-    marginTop: 2,
-  },
-  modalCloseBtn: {
-    padding: 6,
-    borderRadius: 20,
-    backgroundColor: '#F1F5F9',
-  },
-  modalSection: {
-    marginTop: 16,
-  },
-  modalSectionTitle: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#475569',
-    textTransform: 'uppercase',
-    letterSpacing: 0.3,
-    marginBottom: 9,
-  },
-  modalOptionGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  modalOptionChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 8,
-    backgroundColor: '#F8FAFC',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  modalOptionChipActive: {
-    backgroundColor: '#0F172A',
-    borderColor: '#0F172A',
-  },
-  modalOptionText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#334155',
-  },
-  modalOptionTextActive: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-  },
-  modalFooter: {
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 20,
-    paddingTop: 14,
-    borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
-  },
-  modalResetBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 10,
-    backgroundColor: '#F1F5F9',
-  },
-  modalResetBtnText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#475569',
-  },
-  modalApplyBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 12,
-    borderRadius: 10,
-    backgroundColor: '#0F172A',
-  },
-  modalApplyBtnText: {
-    fontSize: 13.5,
-    fontWeight: '800',
-    color: '#FFFFFF',
-  },
   confirmModalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(15, 23, 42, 0.65)',

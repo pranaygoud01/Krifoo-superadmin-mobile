@@ -47,6 +47,7 @@ import {
 import { RestaurantCardSkeleton } from '../../components/Skeleton';
 import { ErrorState } from '../../components/ErrorState';
 import { ApiErrorType } from '../../services/api';
+import { KEYBOARD_BEHAVIOR } from '../../utils/keyboard';
 
 /* ────────────────────────────────────────────────────────────────────────────
  * Config
@@ -631,7 +632,7 @@ function ActionModal({
 
   return (
     <Modal visible={!!action} transparent animationType="fade" statusBarTranslucent onRequestClose={onClose}>
-      <KeyboardAvoidingView style={styles.modalBackdrop} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardAvoidingView style={styles.modalBackdrop} behavior={KEYBOARD_BEHAVIOR}>
         <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={onClose} accessibilityLabel="Close" />
         <View style={styles.modalCard} accessibilityViewIsModal>
           <View style={[styles.modalIcon, { backgroundColor: copy.tint }]}>

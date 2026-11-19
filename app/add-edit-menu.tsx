@@ -11,14 +11,18 @@ import {
   Alert,
   Platform,
   KeyboardAvoidingView,
+  useWindowDimensions,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { resolveImageUrl, resolveMediaImageSource } from '../services/image.helper';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Header } from '../components/Header';
 import { SearchableSelect } from '../components/SearchableSelect';
+import { DietMark, DIET_META, type DietType } from '../components/DietMark';
 import { Colors } from '../constants/colors';
 import { menuService } from '../services/menu.service';
+import { settingsService } from '../services/settings.service';
 import { Category } from '../types';
 import {
   Save,
@@ -41,9 +45,11 @@ import {
   Info,
   Gift,
   Scale,
+  Star,
 } from 'lucide-react-native';
 import { useAuth } from '../context/AuthContext';
 import * as ImagePicker from 'expo-image-picker';
+import { KEYBOARD_BEHAVIOR } from '../utils/keyboard';
 
 export default function AddEditMenuScreen() {
   const router = useRouter();
@@ -480,81 +486,45 @@ export default function AddEditMenuScreen() {
 
   const totalCustomizationsCount = variantGroups.length + addonGroups.length;
 
-  return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      style={styles.container}
-    >
-      <Header
-        title={isEditMode ? 'Edit Menu Item' : 'Add New Item'}
-        showBackButton={true}
-        rightElement={
-          isEditMode ? (
-            <TouchableOpacity
-              onPress={handleDeleteThisItem}
-              disabled={deleting || submitting}
-              style={styles.headerDeleteBtn}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            >
-              <Trash2 size={17} color="#DC2626" />
-            </TouchableOpacity>
-          ) : undefined
-        }
-      />
+  /** "New category" from the category picker: create it, add it to the list and select it. */
+  const createCategoryFromPicker = async ({ name, description }: { name: string; description: string }) => {
+    const res =
+      user?.userType === 'super_admin'
+        ? await settingsService.createCategory({ categoryName: name, description, isActive: true })
+        : await menuService.createCategory({ categoryName: name, description });
+    if (!res.success || !res.data) throw new Error(res.message || 'Couldn’t create the category.');
+    const created = res.data;
+    setCategories((prev) =>
+      prev.some((c) => c._id === created._id || c.categoryName.toLowerCase() === created.categoryName.toLowerCase())
+        ? prev
+        : [...prev, created]
+    );
+    return created.categoryName; // the picker's value is the category name
+  };
 
-      {/* Modern Segmented Navigation Tabs */}
-      <View style={styles.tabsHeaderContainer}>
-        <View style={styles.tabsHeader}>
-          <TouchableOpacity
-            style={[styles.tabBtn, activeTab === 'basic' && styles.tabBtnActive]}
-            onPress={() => setActiveTab('basic')}
-            activeOpacity={0.8}
-          >
-            <Utensils size={14} color={activeTab === 'basic' ? '#FFFFFF' : '#64748B'} style={{ marginRight: 6 }} />
-            <Text style={[styles.tabLabel, activeTab === 'basic' && styles.tabLabelActive]}>
-              Basic & Pricing
-            </Text>
-          </TouchableOpacity>
+  // ── Responsive layout ──────────────────────────────────────────────────
+  // Phone: one column · Tablet (≥768): centred, roomier · Wide (≥1024): two columns.
+  const { width: screenWidth } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const isCompact = screenWidth < 360;
+  const isTablet = screenWidth >= 768;
+  const isWide = screenWidth >= 1024;
+  const gutter = isCompact ? 12 : isTablet ? 24 : 16;
+  const frameStyle = { width: '100%' as const, maxWidth: isWide ? 1180 : isTablet ? 820 : undefined, alignSelf: 'center' as const };
+  const imageHeight = isWide ? 220 : isTablet ? 240 : isCompact ? 160 : 190;
 
-          <TouchableOpacity
-            style={[styles.tabBtn, activeTab === 'custom' && styles.tabBtnActive]}
-            onPress={() => setActiveTab('custom')}
-            activeOpacity={0.8}
-          >
-            <Layers size={14} color={activeTab === 'custom' ? '#FFFFFF' : '#64748B'} style={{ marginRight: 6 }} />
-            <Text style={[styles.tabLabel, activeTab === 'custom' && styles.tabLabelActive]}>
-              Variants & Addons
-            </Text>
-            {totalCustomizationsCount > 0 && (
-              <View style={[styles.tabBadge, activeTab === 'custom' ? styles.tabBadgeActive : styles.tabBadgeInactive]}>
-                <Text style={[styles.tabBadgeText, activeTab === 'custom' && { color: '#0F172A' }]}>
-                  {totalCustomizationsCount}
-                </Text>
-              </View>
-            )}
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      {loading ? (
-        <View style={styles.centerBox}>
-          <ActivityIndicator size="large" color="#FF5C39" />
-          <Text style={styles.loadingText}>Fetching dish details...</Text>
-        </View>
-      ) : (
-        <ScrollView style={styles.formBody} contentContainerStyle={{ paddingBottom: 70 }} showsVerticalScrollIndicator={false}>
-          {/* TAB 1: BASIC INFO & PRICING */}
-          {activeTab === 'basic' && (
-            <View style={styles.tabContent}>
-              {/* CARD 1: Image Upload Box */}
+  /* ── Cards (arranged per screen size below) ─────────────────────────── */
+  const cardPhoto = (
               <View style={styles.cardSection}>
                 <View style={styles.sectionHeaderRow}>
-                  <Camera size={16} color="#FF5C39" />
-                  <Text style={styles.sectionHeading}>Dish Photograph</Text>
+                  <View style={[styles.sectionIcon, { backgroundColor: '#FFF1EC' }]}>
+                    <Camera size={17} color="#FF5C39" />
+                  </View>
+                  <Text style={styles.sectionHeading}>Photo</Text>
                 </View>
-                <Text style={styles.sectionSub}>Upload a crisp, mouth-watering photo for customer app display</Text>
+                <Text style={styles.sectionSub}>A clear, well-lit photo helps customers choose. Square or landscape works best.</Text>
 
-                <TouchableOpacity style={styles.imageBox} onPress={pickImage} activeOpacity={0.88}>
+                <TouchableOpacity style={[styles.imageBox, { height: imageHeight }]} onPress={pickImage} activeOpacity={0.88}>
                   {imageUri ? (
                     <Image source={{ uri: imageUri }} style={styles.imagePreview} contentFit="cover" transition={200} />
                   ) : resolveMediaImageSource(existingImageUrl) ? (
@@ -590,17 +560,20 @@ export default function AddEditMenuScreen() {
                   </TouchableOpacity>
                 )}
               </View>
+  );
 
-              {/* CARD 2: General Details */}
+  const cardInfo = (
               <View style={styles.cardSection}>
                 <View style={styles.sectionHeaderRow}>
-                  <Utensils size={16} color="#0F172A" />
-                  <Text style={styles.sectionHeading}>Dish Information</Text>
+                  <View style={[styles.sectionIcon, { backgroundColor: '#F1F5F9' }]}>
+                    <Utensils size={17} color="#0F172A" />
+                  </View>
+                  <Text style={styles.sectionHeading}>Dish details</Text>
                 </View>
 
                 <View style={styles.inputGroup}>
                   <Text style={styles.inputLabel}>
-                    Dish / Item Name <Text style={styles.requiredMark}>*</Text>
+                    Dish name <Text style={styles.requiredMark}>*</Text>
                   </Text>
                   <TextInput
                     style={styles.input}
@@ -624,7 +597,12 @@ export default function AddEditMenuScreen() {
                     options={[...categories]
                       .sort((x, y) => (x.sortOrder ?? 0) - (y.sortOrder ?? 0) || x.categoryName.localeCompare(y.categoryName))
                       .map((cat) => ({ value: cat.categoryName, label: cat.categoryName, description: cat.description }))}
-                    footerAction={{ label: 'Manage categories', onPress: () => router.push('/categories') }}
+                    create={{
+                      noun: 'category',
+                      namePlaceholder: 'e.g. Starters, Biryani, Desserts',
+                      maxNameLength: 50,
+                      onCreate: createCategoryFromPicker,
+                    }}
                   />
                 </View>
 
@@ -641,52 +619,59 @@ export default function AddEditMenuScreen() {
                   />
                 </View>
               </View>
+  );
 
-              {/* CARD 3: Dietary Classification */}
+  const cardDietary = (
               <View style={styles.cardSection}>
                 <View style={styles.sectionHeaderRow}>
-                  <Tag size={16} color="#16A34A" />
-                  <Text style={styles.sectionHeading}>Dietary Classification</Text>
+                  <View style={[styles.sectionIcon, { backgroundColor: '#DCFCE7' }]}>
+                    <Tag size={17} color="#16A34A" />
+                  </View>
+                  <Text style={styles.sectionHeading}>Food type</Text>
                 </View>
-                <Text style={styles.sectionSub}>Indicates food badge color and filtering options for customers</Text>
+                <Text style={styles.sectionSub}>Shown as a symbol next to the dish, and used by customers to filter the menu.</Text>
 
                 <View style={styles.dietaryRow}>
-                  {[
-                    { id: 'veg', label: 'Pure Veg', color: '#16A34A', bg: '#DCFCE7', border: '#86EFAC', icon: '🟢' },
-                    { id: 'non-veg', label: 'Non-Veg', color: '#DC2626', bg: '#FEE2E2', border: '#FCA5A5', icon: '🔴' },
-                    { id: 'egg', label: 'Contains Egg', color: '#D97706', bg: '#FEF3C7', border: '#FDE68A', icon: '🟡' },
-                  ].map((diet) => {
-                    const isSelected = formState.itemType === diet.id;
+                  {(['veg', 'non-veg', 'egg'] as DietType[]).map((diet) => {
+                    const meta = DIET_META[diet];
+                    const isSelected = formState.itemType === diet;
                     return (
                       <TouchableOpacity
-                        key={diet.id}
+                        key={diet}
                         style={[
                           styles.dietaryCard,
-                          isSelected && { borderColor: diet.color, backgroundColor: diet.bg },
+                          isSelected && { borderColor: meta.color, backgroundColor: meta.tint, borderWidth: 2, padding: 11 },
                         ]}
-                        onPress={() => handleChange('itemType', diet.id)}
-                        activeOpacity={0.75}
+                        onPress={() => handleChange('itemType', diet)}
+                        activeOpacity={0.8}
+                        accessibilityRole="radio"
+                        accessibilityState={{ selected: isSelected }}
+                        accessibilityLabel={`${meta.label}: ${meta.description}`}
                       >
-                        <Text style={{ fontSize: 18, marginBottom: 4 }}>{diet.icon}</Text>
-                        <Text style={[styles.dietaryCardLabel, isSelected && { color: diet.color, fontWeight: '800' }]}>
-                          {diet.label}
-                        </Text>
-                        {isSelected && (
-                          <View style={[styles.dietarySelectedDot, { backgroundColor: diet.color }]}>
-                            <Check size={10} color="#FFFFFF" strokeWidth={3} />
+                        <View style={styles.dietaryTop}>
+                          <DietMark type={diet} size={22} />
+                          <View style={[styles.dietRadio, isSelected && { borderColor: meta.color }]}>
+                            {isSelected ? <View style={[styles.dietRadioDot, { backgroundColor: meta.color }]} /> : null}
                           </View>
-                        )}
+                        </View>
+                        <Text style={[styles.dietaryCardLabel, isSelected && { color: meta.color }]} numberOfLines={1}>
+                          {meta.label}
+                        </Text>
+                        <Text style={styles.dietaryCardSub} numberOfLines={2}>{meta.description}</Text>
                       </TouchableOpacity>
                     );
                   })}
                 </View>
               </View>
+  );
 
-              {/* CARD 4: Pricing Scheme & Live Price Preview */}
+  const cardPricing = (
               <View style={styles.cardSection}>
                 <View style={styles.sectionHeaderRow}>
-                  <Coins size={16} color="#0F172A" />
-                  <Text style={styles.sectionHeading}>Pricing & Channels</Text>
+                  <View style={[styles.sectionIcon, { backgroundColor: '#F1F5F9' }]}>
+                    <Coins size={17} color="#0F172A" />
+                  </View>
+                  <Text style={styles.sectionHeading}>Pricing</Text>
                 </View>
 
                 {/* Scheme Segmented Buttons */}
@@ -774,8 +759,8 @@ export default function AddEditMenuScreen() {
 
                     {/* Specific Channel Overrides */}
                     <Text style={[styles.inputLabel, { marginTop: 6 }]}>Channel-Specific Prices (Optional)</Text>
-                    <View style={styles.rowInputs}>
-                      <View style={[styles.inputGroup, { flex: 1 }]}>
+                    <View style={styles.wrapRow}>
+                      <View style={[styles.inputGroup, styles.wrapCell]}>
                         <View style={styles.channelLabelRow}>
                           <Truck size={11} color="#64748B" />
                           <Text style={styles.channelInputLabel}>Delivery</Text>
@@ -790,7 +775,7 @@ export default function AddEditMenuScreen() {
                         />
                       </View>
 
-                      <View style={[styles.inputGroup, { flex: 1 }]}>
+                      <View style={[styles.inputGroup, styles.wrapCell]}>
                         <View style={styles.channelLabelRow}>
                           <ShoppingBag size={11} color="#64748B" />
                           <Text style={styles.channelInputLabel}>Pickup</Text>
@@ -805,7 +790,7 @@ export default function AddEditMenuScreen() {
                         />
                       </View>
 
-                      <View style={[styles.inputGroup, { flex: 1 }]}>
+                      <View style={[styles.inputGroup, styles.wrapCell]}>
                         <View style={styles.channelLabelRow}>
                           <Store size={11} color="#64748B" />
                           <Text style={styles.channelInputLabel}>Dine-in</Text>
@@ -903,22 +888,29 @@ export default function AddEditMenuScreen() {
                   </View>
                 )}
               </View>
+  );
 
-              {/* CARD 5: Marketing & Promotional Tags */}
+  const cardPromotions = (
               <View style={styles.cardSection}>
                 <View style={styles.sectionHeaderRow}>
-                  <Sparkles size={16} color="#D97706" />
-                  <Text style={styles.sectionHeading}>Promotions & Badges</Text>
+                  <View style={[styles.sectionIcon, { backgroundColor: '#FEF3C7' }]}>
+                    <Sparkles size={17} color="#D97706" />
+                  </View>
+                  <Text style={styles.sectionHeading}>Promotions</Text>
                 </View>
 
                 {/* Bestseller Toggle Card */}
                 <View style={styles.promoToggleCard}>
                   <View style={{ flex: 1, paddingRight: 10 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                      <Text style={{ fontSize: 15 }}>⭐</Text>
-                      <Text style={styles.promoToggleTitle}>Platform Bestseller</Text>
+                    <View style={styles.promoTitleRow}>
+                      <View style={[styles.channelIconBox, { backgroundColor: '#FEF3C7' }]}>
+                        <Star size={16} color="#D97706" />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.promoToggleTitle}>Bestseller</Text>
+                        <Text style={styles.promoToggleSub}>Show a “Bestseller” badge on this dish</Text>
+                      </View>
                     </View>
-                    <Text style={styles.promoToggleSub}>Highlight this dish with a glowing Bestseller badge in the catalog</Text>
                   </View>
                   <Switch
                     value={formState.isBestseller}
@@ -931,11 +923,15 @@ export default function AddEditMenuScreen() {
                 {/* BOGO Toggle Card */}
                 <View style={[styles.promoToggleCard, { marginTop: 10 }]}>
                   <View style={{ flex: 1, paddingRight: 10 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                      <Gift size={16} color="#7C3AED" />
-                      <Text style={styles.promoToggleTitle}>Buy 1 Get 1 Free (BOGO)</Text>
+                    <View style={styles.promoTitleRow}>
+                      <View style={[styles.channelIconBox, { backgroundColor: '#F3E8FF' }]}>
+                        <Gift size={16} color="#7C3AED" />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.promoToggleTitle}>Buy 1, get 1 free</Text>
+                        <Text style={styles.promoToggleSub}>2-for-1 applied automatically at checkout</Text>
+                      </View>
                     </View>
-                    <Text style={styles.promoToggleSub}>Applies promotional 2-for-1 discount automatically at checkout</Text>
                   </View>
                   <Switch
                     value={formState.isBuyOneGetOne}
@@ -957,12 +953,15 @@ export default function AddEditMenuScreen() {
                   />
                 </View>
               </View>
+  );
 
-              {/* CARD 6: Stock & Limits */}
+  const cardInventory = (
               <View style={styles.cardSection}>
                 <View style={styles.sectionHeaderRow}>
-                  <Package size={16} color="#0F172A" />
-                  <Text style={styles.sectionHeading}>Inventory & Order Limits</Text>
+                  <View style={[styles.sectionIcon, { backgroundColor: '#F1F5F9' }]}>
+                    <Package size={17} color="#0F172A" />
+                  </View>
+                  <Text style={styles.sectionHeading}>Stock & limits</Text>
                 </View>
 
                 <View style={styles.inputGroup}>
@@ -977,8 +976,8 @@ export default function AddEditMenuScreen() {
                   />
                 </View>
 
-                <View style={styles.rowInputs}>
-                  <View style={[styles.inputGroup, { flex: 1 }]}>
+                <View style={styles.wrapRow}>
+                  <View style={[styles.inputGroup, styles.wrapCell]}>
                     <Text style={styles.inputLabel}>Min Order Qty</Text>
                     <TextInput
                       style={styles.input}
@@ -987,7 +986,7 @@ export default function AddEditMenuScreen() {
                       onChangeText={(val) => handleChange('minimumQuantity', val)}
                     />
                   </View>
-                  <View style={[styles.inputGroup, { flex: 1 }]}>
+                  <View style={[styles.inputGroup, styles.wrapCell]}>
                     <Text style={styles.inputLabel}>Max Order Qty</Text>
                     <TextInput
                       style={styles.input}
@@ -998,14 +997,17 @@ export default function AddEditMenuScreen() {
                   </View>
                 </View>
               </View>
+  );
 
-              {/* CARD 7: Fulfillment Channels */}
+  const cardChannels = (
               <View style={styles.cardSection}>
                 <View style={styles.sectionHeaderRow}>
-                  <Truck size={16} color="#0F172A" />
-                  <Text style={styles.sectionHeading}>Order Fulfillment Channels</Text>
+                  <View style={[styles.sectionIcon, { backgroundColor: '#F1F5F9' }]}>
+                    <Truck size={17} color="#0F172A" />
+                  </View>
+                  <Text style={styles.sectionHeading}>Available for</Text>
                 </View>
-                <Text style={styles.sectionSub}>Enable or disable which customer channels can order this dish</Text>
+                <Text style={styles.sectionSub}>Choose how customers can order this dish.</Text>
 
                 <View style={{ gap: 8 }}>
                   <View style={styles.channelToggleRow}>
@@ -1063,13 +1065,9 @@ export default function AddEditMenuScreen() {
                   </View>
                 </View>
               </View>
-            </View>
-          )}
+  );
 
-          {/* TAB 2: OPTIONS & CUSTOMIZATIONS */}
-          {activeTab === 'custom' && (
-            <View style={styles.tabContent}>
-              {/* Variant Groups (Sizes) Section */}
+  const cardSizes = (
               <View style={styles.cardSection}>
                 <View style={styles.arrayHeader}>
                   <View style={styles.arrayTitleRow}>
@@ -1139,8 +1137,9 @@ export default function AddEditMenuScreen() {
                   ))
                 )}
               </View>
+  );
 
-              {/* Addon Groups (Extras) Section */}
+  const cardAddons = (
               <View style={styles.cardSection}>
                 <View style={styles.arrayHeader}>
                   <View style={styles.arrayTitleRow}>
@@ -1260,54 +1259,214 @@ export default function AddEditMenuScreen() {
                   ))
                 )}
               </View>
+  );
+
+  return (
+    <KeyboardAvoidingView
+      behavior={KEYBOARD_BEHAVIOR}
+      style={styles.container}
+    >
+      <Header
+        title={isEditMode ? 'Edit Menu Item' : 'Add New Item'}
+        showBackButton={true}
+        rightElement={
+          isEditMode ? (
+            <TouchableOpacity
+              onPress={handleDeleteThisItem}
+              disabled={deleting || submitting}
+              style={styles.headerDeleteBtn}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Trash2 size={17} color="#DC2626" />
+            </TouchableOpacity>
+          ) : undefined
+        }
+      />
+
+      {/* Modern Segmented Navigation Tabs */}
+      <View style={[styles.tabsHeaderContainer, { paddingHorizontal: gutter }]}>
+        <View style={[styles.tabsHeader, frameStyle, isTablet && { maxWidth: 520 }]}>
+          <TouchableOpacity
+            style={[styles.tabBtn, activeTab === 'basic' && styles.tabBtnActive]}
+            onPress={() => setActiveTab('basic')}
+            activeOpacity={0.8}
+          >
+            <Utensils size={14} color={activeTab === 'basic' ? '#FFFFFF' : '#64748B'} style={{ marginRight: 6 }} />
+            <Text style={[styles.tabLabel, activeTab === 'basic' && styles.tabLabelActive]} numberOfLines={1}>
+              {isCompact ? 'Basics' : 'Basic & Pricing'}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.tabBtn, activeTab === 'custom' && styles.tabBtnActive]}
+            onPress={() => setActiveTab('custom')}
+            activeOpacity={0.8}
+          >
+            <Layers size={14} color={activeTab === 'custom' ? '#FFFFFF' : '#64748B'} style={{ marginRight: 6 }} />
+            <Text style={[styles.tabLabel, activeTab === 'custom' && styles.tabLabelActive]} numberOfLines={1}>
+              {isCompact ? 'Options' : 'Variants & Addons'}
+            </Text>
+            {totalCustomizationsCount > 0 && (
+              <View style={[styles.tabBadge, activeTab === 'custom' ? styles.tabBadgeActive : styles.tabBadgeInactive]}>
+                <Text style={[styles.tabBadgeText, activeTab === 'custom' && { color: '#0F172A' }]}>
+                  {totalCustomizationsCount}
+                </Text>
+              </View>
+            )}
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {loading ? (
+        <View style={styles.centerBox}>
+          <ActivityIndicator size="large" color="#FF5C39" />
+          <Text style={styles.loadingText}>Fetching dish details...</Text>
+        </View>
+      ) : (
+        <ScrollView
+          style={styles.formBody}
+          contentContainerStyle={{ paddingHorizontal: gutter, paddingTop: gutter, paddingBottom: 130 }}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          <View style={frameStyle}>
+          {/* TAB 1: BASIC INFO & PRICING */}
+          {activeTab === 'basic' && (
+            <View style={styles.tabContent}>
+              {isWide ? (
+                <View style={styles.columns}>
+                  <View style={styles.sideColumn}>
+                    {cardPhoto}
+                    {cardDietary}
+                    {cardChannels}
+                    {cardPromotions}
+                  </View>
+                  <View style={styles.mainColumn}>
+                    {cardInfo}
+                    {cardPricing}
+                    {cardInventory}
+                  </View>
+                </View>
+              ) : (
+                <>
+                  {cardPhoto}
+                  {cardInfo}
+                  {cardDietary}
+                  {cardPricing}
+                  {cardPromotions}
+                  {cardInventory}
+                  {cardChannels}
+                </>
+              )}
             </View>
           )}
 
-          {/* Form Actions Footer */}
-          <View style={styles.formFooterActions}>
+          {/* TAB 2: OPTIONS & CUSTOMIZATIONS */}
+          {activeTab === 'custom' && (
+            <View style={styles.tabContent}>
+              {isWide ? (
+                <View style={styles.columns}>
+                  <View style={styles.halfColumn}>{cardSizes}</View>
+                  <View style={styles.halfColumn}>{cardAddons}</View>
+                </View>
+              ) : (
+                <>
+                  {cardSizes}
+                  {cardAddons}
+                </>
+              )}
+            </View>
+          )}
+
+          {/* Delete (edit mode) — kept at the end of the form, away from Save */}
+          {isEditMode && (
             <TouchableOpacity
-              style={[styles.saveBtn, (submitting || deleting) && { opacity: 0.7 }]}
+              style={[styles.deleteItemBtn, (deleting || submitting) && { opacity: 0.6 }]}
+              disabled={deleting || submitting}
+              onPress={handleDeleteThisItem}
+              activeOpacity={0.8}
+            >
+              {deleting ? (
+                <ActivityIndicator size="small" color="#DC2626" />
+              ) : (
+                <>
+                  <Trash2 size={16} color="#DC2626" style={{ marginRight: 6 }} />
+                  <Text style={styles.deleteItemBtnText}>Delete this dish</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          )}
+          </View>
+        </ScrollView>
+      )}
+
+      {/* Sticky save bar — always reachable without scrolling to the end */}
+      {!loading && (
+        <View style={[styles.saveBar, { paddingBottom: Math.max(insets.bottom, 12), paddingHorizontal: gutter }]}>
+          <View style={[styles.saveBarInner, frameStyle]}>
+            {isTablet ? (
+              <TouchableOpacity style={styles.cancelBtn} onPress={() => router.back()} disabled={submitting} activeOpacity={0.8}>
+                <Text style={styles.cancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+            ) : null}
+            <TouchableOpacity
+              style={[styles.saveBtn, isTablet && styles.saveBtnTablet, (submitting || deleting) && { opacity: 0.7 }]}
               disabled={submitting || deleting}
               onPress={handleSaveItem}
               activeOpacity={0.85}
+              accessibilityRole="button"
             >
               {submitting ? (
                 <ActivityIndicator color="#FFFFFF" />
               ) : (
                 <>
                   <Save size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
-                  <Text style={styles.saveBtnText}>
-                    {isEditMode ? 'Update Dish Details' : 'Publish Dish to Catalog'}
+                  <Text style={styles.saveBtnText} numberOfLines={1}>
+                    {isEditMode ? 'Save changes' : 'Publish dish'}
                   </Text>
                 </>
               )}
             </TouchableOpacity>
-
-            {isEditMode && (
-              <TouchableOpacity
-                style={[styles.deleteItemBtn, (deleting || submitting) && { opacity: 0.6 }]}
-                disabled={deleting || submitting}
-                onPress={handleDeleteThisItem}
-                activeOpacity={0.8}
-              >
-                {deleting ? (
-                  <ActivityIndicator size="small" color="#DC2626" />
-                ) : (
-                  <>
-                    <Trash2 size={16} color="#DC2626" style={{ marginRight: 6 }} />
-                    <Text style={styles.deleteItemBtnText}>Permanently Delete This Dish</Text>
-                  </>
-                )}
-              </TouchableOpacity>
-            )}
           </View>
-        </ScrollView>
+        </View>
       )}
     </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
+  sectionIcon: { width: 32, height: 32, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
+  dietaryTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  dietaryCardSub: { fontSize: 12, color: '#64748B', lineHeight: 16 },
+  dietRadio: { width: 20, height: 20, borderRadius: 10, borderWidth: 2, borderColor: '#CBD5E1', alignItems: 'center', justifyContent: 'center' },
+  dietRadioDot: { width: 10, height: 10, borderRadius: 5 },
+  promoTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  /* Responsive layout */
+  columns: { flexDirection: 'row', alignItems: 'flex-start', gap: 16 },
+  sideColumn: { width: 400, gap: 16 },
+  mainColumn: { flex: 1, minWidth: 0, gap: 16 },
+  halfColumn: { flex: 1, minWidth: 0 },
+  wrapRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  wrapCell: { flexGrow: 1, flexBasis: 92, minWidth: 92 },
+  saveBar: {
+    backgroundColor: '#FFFFFF',
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+    paddingTop: 12,
+  },
+  saveBarInner: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 10 },
+  saveBtnTablet: { flex: 0, minWidth: 240 },
+  cancelBtn: {
+    height: 52,
+    paddingHorizontal: 22,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+  },
+  cancelBtnText: { fontSize: 15, fontWeight: '700', color: '#475569' },
   container: {
     flex: 1,
     backgroundColor: '#F8FAFC',
@@ -1332,7 +1491,6 @@ const styles = StyleSheet.create({
   },
   tabsHeaderContainer: {
     backgroundColor: '#FFFFFF',
-    paddingHorizontal: 16,
     paddingVertical: 10,
     borderBottomWidth: 1,
     borderBottomColor: '#F1F5F9',
@@ -1361,7 +1519,7 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   tabLabel: {
-    fontSize: 12.5,
+    fontSize: 13.5,
     fontWeight: '700',
     color: '#64748B',
   },
@@ -1390,7 +1548,6 @@ const styles = StyleSheet.create({
   },
   formBody: {
     flex: 1,
-    padding: 16,
   },
   tabContent: {
     gap: 16,
@@ -1410,29 +1567,29 @@ const styles = StyleSheet.create({
   sectionHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    marginBottom: 4,
+    gap: 10,
+    marginBottom: 6,
   },
   sectionHeading: {
-    fontSize: 14.5,
+    fontSize: 16.5,
     fontWeight: '800',
     color: '#0F172A',
     letterSpacing: -0.2,
   },
   sectionSub: {
-    fontSize: 12,
+    fontSize: 13,
     color: '#64748B',
-    lineHeight: 16,
+    lineHeight: 18,
     marginBottom: 14,
   },
   inputGroup: {
     marginBottom: 12,
   },
   inputLabel: {
-    fontSize: 12.5,
+    fontSize: 13.5,
     fontWeight: '700',
     color: '#334155',
-    marginBottom: 6,
+    marginBottom: 7,
   },
   requiredMark: {
     color: '#DC2626',
@@ -1444,8 +1601,8 @@ const styles = StyleSheet.create({
     borderWidth: 1.2,
     borderRadius: 11,
     paddingHorizontal: 13,
-    height: 46,
-    fontSize: 13.5,
+    height: 48,
+    fontSize: 15,
     color: '#0F172A',
   },
   textArea: {
@@ -1460,22 +1617,25 @@ const styles = StyleSheet.create({
   },
   dietaryRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 10,
   },
   dietaryCard: {
-    flex: 1,
-    backgroundColor: '#F8FAFC',
-    borderWidth: 1.5,
+    flexGrow: 1,
+    flexBasis: 150,
+    minWidth: 96,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
     borderColor: '#E2E8F0',
-    borderRadius: 12,
-    paddingVertical: 12,
-    alignItems: 'center',
-    position: 'relative',
+    borderRadius: 14,
+    padding: 12,
+    gap: 4,
   },
   dietaryCardLabel: {
-    fontSize: 11.5,
-    fontWeight: '700',
-    color: '#475569',
+    fontSize: 14.5,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginTop: 8,
   },
   dietarySelectedDot: {
     position: 'absolute',
@@ -1674,6 +1834,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    gap: 10,
     backgroundColor: '#F8FAFC',
     borderWidth: 1,
     borderColor: '#E2E8F0',
@@ -1681,15 +1842,15 @@ const styles = StyleSheet.create({
     padding: 12,
   },
   promoToggleTitle: {
-    fontSize: 13,
+    fontSize: 14.5,
     fontWeight: '800',
     color: '#0F172A',
   },
   promoToggleSub: {
-    fontSize: 11,
+    fontSize: 12.5,
     color: '#64748B',
     marginTop: 2,
-    lineHeight: 15,
+    lineHeight: 17,
   },
   channelToggleRow: {
     flexDirection: 'row',
@@ -1702,21 +1863,21 @@ const styles = StyleSheet.create({
     padding: 12,
   },
   channelIconBox: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
+    width: 36,
+    height: 36,
+    borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
   },
   channelRowTitle: {
-    fontSize: 13,
+    fontSize: 14.5,
     fontWeight: '700',
     color: '#0F172A',
   },
   channelRowSub: {
-    fontSize: 11,
+    fontSize: 12.5,
     color: '#64748B',
-    marginTop: 1,
+    marginTop: 2,
   },
   arrayHeader: {
     marginBottom: 14,
@@ -1766,8 +1927,11 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   groupTrashBtn: {
-    padding: 6,
-    borderRadius: 8,
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: '#FEE2E2',
   },
   optionsLabel: {
@@ -1782,7 +1946,11 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   optionRemoveBtn: {
-    padding: 6,
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   addOptionBtn: {
     flexDirection: 'row',
@@ -1910,17 +2078,14 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   saveBtn: {
+    flex: 1,
     backgroundColor: '#0F172A',
     borderRadius: 14,
     height: 52,
+    paddingHorizontal: 20,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#0F172A',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 10,
-    elevation: 4,
   },
   saveBtnText: {
     color: '#FFFFFF',
@@ -1928,6 +2093,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   deleteItemBtn: {
+    marginTop: 16,
     backgroundColor: '#FEF2F2',
     borderWidth: 1.5,
     borderColor: '#FECACA',

@@ -757,14 +757,17 @@ export function buildCustomizedReceiptDocument(
   if (totals.tip > 0) pushRow('Tip:', formatMoney(totals.tip));
   if (content.showDiscountLine && totals.discount > 0) pushRow('Discount:', formatMoney(-totals.discount));
 
-  commands.push(line());
-  const totalValue = formatMoney(totals.total);
-  const half = Math.floor(cols / 2);
-  const useDoubleTotal = layout.fontSize !== 'small' && 'TOTAL:'.length + totalValue.length + 1 <= half;
-  for (const r of summaryRow('TOTAL:', totalValue, useDoubleTotal ? half : cols)) {
-    text(r, { bold: layout.boldElements.totalAmount, align: 'left', size: useDoubleTotal ? 'double' : 'tall' });
+  // TOTAL can be hidden in Receipt customization (e.g. kitchen copies or gift receipts).
+  if (content.showTotal !== false) {
+    commands.push(line());
+    const totalValue = formatMoney(totals.total);
+    const half = Math.floor(cols / 2);
+    const useDoubleTotal = layout.fontSize !== 'small' && 'TOTAL:'.length + totalValue.length + 1 <= half;
+    for (const r of summaryRow('TOTAL:', totalValue, useDoubleTotal ? half : cols)) {
+      text(r, { bold: layout.boldElements.totalAmount, align: 'left', size: useDoubleTotal ? 'double' : 'tall' });
+    }
+    if (totals.includedVat) pushRow(totals.includedVat.label, formatMoney(totals.includedVat.amount));
   }
-  if (totals.includedVat) pushRow(totals.includedVat.label, formatMoney(totals.includedVat.amount));
   commands.push(line());
 
   // 6. Payment

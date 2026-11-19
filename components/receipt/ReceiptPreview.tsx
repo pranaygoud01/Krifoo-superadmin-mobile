@@ -66,7 +66,11 @@ export function ReceiptPreview({
                     fontWeight: l.bold ? '700' : '400',
                     fontStyle: l.italic ? 'italic' : 'normal',
                     color: '#111',
-                    transform: l.size === 'tall' ? [{ scaleY: 1.7 }] : undefined,
+                    // Always pass a transform (identity when not tall). Switching a line between
+                    // "has transform" and `undefined` makes Fabric send `null`, which crashes
+                    // processTransform ("Cannot read property 'forEach' of null") — e.g. when the
+                    // TOTAL line is toggled off and the lines below shift up.
+                    transform: [{ scaleY: l.size === 'tall' ? 1.7 : 1 }],
                   }}
                 >
                   {l.text || ' '}
