@@ -12,7 +12,6 @@ import { Colors } from '../constants/colors';
 import { Order } from '../types';
 import { orderService } from '../services/order.service';
 import {
-  RefreshCw,
   CalendarDays,
   ChevronLeft,
   ChevronRight,
@@ -275,7 +274,10 @@ export interface AnalyticsRestaurantProps {
   onClose?: () => void;
 }
 
-export type RestaurantAnalyticsProps = AnalyticsRestaurantProps;
+export type RestaurantAnalyticsProps = AnalyticsRestaurantProps & {
+  /** Bump to reload (the Analytics screen's refresh button / pull-to-refresh) */
+  refreshKey?: number;
+};
 
 const TIMEFRAMES: Array<{ id: TimeframeKey; label: string }> = [
   { id: 'today', label: 'Today' },
@@ -283,15 +285,59 @@ const TIMEFRAMES: Array<{ id: TimeframeKey; label: string }> = [
   { id: 'custom', label: 'Select Date' },
 ];
 
+/** Single-series bar chart of sales per day. Tap a bar to read it; the best day is shown by default. */
+function SalesTrend({ days, money }: { days: DashboardAnalytics['dailyBreakdown']; money: (n: number) => string }) {
+  const [active, setActive] = useState<string | null>(null);
+  const shown = days.slice(-31); // up to a month of bars
+  const max = Math.max(1, ...shown.map((d) => d.revenue));
+  const best = shown.reduce((b, d) => (d.revenue > b.revenue ? d : b), shown[0]);
+  const current = shown.find((d) => d.date === active) || best;
+  const label = (d: { rawDate: Date }) => new Date(d.rawDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+  const step = shown.length > 14 ? Math.ceil(shown.length / 7) : 1; // keep axis labels readable
+  return (
+    <View>
+      <Text style={styles.trendReadout} accessibilityLiveRegion="polite">
+        <Text style={styles.trendReadoutStrong}>{money(current.revenue)}</Text>
+        {`  ${label(current)} · ${current.orders} ${current.orders === 1 ? 'order' : 'orders'}${current === best && !active ? ' · best day' : ''}`}
+      </Text>
+      <View style={styles.trendBars}>
+        {shown.map((d, i) => {
+          const on = d === current;
+          return (
+            <TouchableOpacity
+              key={d.date}
+              style={styles.trendCol}
+              onPress={() => setActive((a) => (a === d.date ? null : d.date))}
+              accessibilityRole="button"
+              accessibilityLabel={`${label(d)}: ${money(d.revenue)}, ${d.orders} orders`}
+            >
+              <View style={styles.trendTrack}>
+                <View style={[styles.trendBar, { height: `${Math.max(2, (d.revenue / max) * 100)}%` }, !on && styles.trendBarMuted]} />
+              </View>
+              <Text style={styles.trendLabel} numberOfLines={1}>
+                {i % step === 0 ? new Date(d.rawDate).getDate() : ' '}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
 export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
   initialOrders,
   ownerStats,
   restaurantName = 'Restaurant',
   restaurantId,
   onNavigateOrders,
+  refreshKey = 0,
 }) => {
-  const { width: windowWidth } = useWindowDimensions();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const isTablet = windowWidth >= 768;
+  // Landscape tablets: two columns (numbers + trends | status, payments, dishes)
+  const wide = windowWidth >= 900 && windowWidth > windowHeight;
+  const pairInRow = isTablet && !wide;
 
   const [timeframe, setTimeframe] = useState<TimeframeKey>('today');
   const [loading, setLoading] = useState(false);
@@ -546,7 +592,8 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
 
   useEffect(() => {
     fetchAnalyticsData(timeframe);
-  }, [timeframe, fetchAnalyticsData, restaurantId]);
+    // refreshKey: the screen's refresh button
+  }, [timeframe, fetchAnalyticsData, restaurantId, refreshKey]);
 
   useEffect(() => {
     if (initialOrders && initialOrders.length > 0) {
@@ -632,53 +679,20 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
   const channelIcon = (id: string) =>
     id === 'dine_in' ? UtensilsCrossed : id === 'pickup' ? ShoppingBag : Bike;
 
-  return (
-    <View style={styles.container}>
-      {/* Header */}
-      <View style={styles.headerRow}>
-        <View style={styles.headerText}>
-          <Text style={styles.headerTitle}>Overview</Text>
-          <Text style={styles.headerSubtitle} numberOfLines={1}>{periodLabel}</Text>
-        </View>
-        <TouchableOpacity
-          style={styles.iconButton}
-          onPress={() => fetchAnalyticsData(timeframe)}
-          disabled={loading}
-          activeOpacity={0.7}
-          accessibilityRole="button"
-          accessibilityLabel="Refresh"
-        >
-          {loading ? <ActivityIndicator size="small" color={Colors.primary} /> : <RefreshCw size={16} color="#475569" />}
-        </TouchableOpacity>
+  // Sales leads; the other three sit beside it (tablets) or below it (phones)
+  const [hero, ...restKpis] = kpis;
+  const kpiBlock = (
+    <View style={[styles.kpiArea, isTablet && styles.kpiAreaTablet]}>
+      <View style={[styles.heroCard, isTablet && styles.heroCardTablet]}>
+        <Text style={styles.heroLabel}>{hero.label}</Text>
+        <Text style={styles.heroValue} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>
+          {hero.value}
+        </Text>
+        <Text style={styles.heroSub} numberOfLines={1}>{hero.sub}</Text>
       </View>
-
-      {/* Period */}
-      <View style={styles.segment}>
-        {TIMEFRAMES.map((tf) => {
-          const active = timeframe === tf.id;
-          const isCustom = tf.id === 'custom';
-          return (
-            <TouchableOpacity
-              key={tf.id}
-              style={[styles.segmentBtn, active && styles.segmentBtnActive]}
-              onPress={() => (isCustom ? openCustomRange() : setTimeframe(tf.id))}
-              activeOpacity={0.8}
-              accessibilityRole="button"
-              accessibilityState={{ selected: active }}
-            >
-              {isCustom && <CalendarDays size={14} color={active ? Colors.text : '#64748B'} />}
-              <Text style={[styles.segmentText, active && styles.segmentTextActive]} numberOfLines={1}>
-                {isCustom ? (active ? customRangeLabel : 'Dates') : tf.label}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-
-      {/* Key numbers */}
-      <View style={styles.kpiGrid}>
-        {kpis.map((k) => (
-          <View key={k.label} style={[styles.kpiCard, isTablet ? styles.kpiCardTablet : styles.kpiCardPhone]}>
+      <View style={[styles.kpiGrid, isTablet && styles.kpiGridTablet]}>
+        {restKpis.map((k) => (
+          <View key={k.label} style={[styles.kpiCard, isTablet ? styles.kpiCardStacked : styles.kpiCardPhone]}>
             <Text style={styles.kpiLabel}>{k.label}</Text>
             <Text style={styles.kpiValue} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
               {k.value}
@@ -689,7 +703,23 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
           </View>
         ))}
       </View>
+    </View>
+  );
 
+  // Sales per day across the period (2+ days); one hue, the best day highlighted
+  const trendBlock =
+    analytics.dailyBreakdown.length >= 2 ? (
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <Text style={styles.cardTitle}>Sales trend</Text>
+          <Text style={styles.cardMeta}>{analytics.dailyBreakdown.length} days</Text>
+        </View>
+        <SalesTrend days={analytics.dailyBreakdown} money={money} />
+      </View>
+    ) : null;
+
+  const statusBlock = (
+    <>
       {/* Order status */}
       <View style={styles.card}>
         <View style={styles.cardHeader}>
@@ -715,78 +745,85 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
           ))}
         </View>
       </View>
-
-      <View style={[styles.pairRow, isTablet && styles.pairRowTablet]}>
-        {/* Payments */}
-        <View style={[styles.card, isTablet && styles.pairCol]}>
-          <View style={styles.cardHeader}>
-            <Text style={styles.cardTitle}>Payments</Text>
-          </View>
-          <View style={styles.splitBar}>
-            {totalCashAndOnline > 0 ? (
-              <>
-                {cashPct > 0 && <View style={{ flex: cashPct, backgroundColor: PAY_CASH }} />}
-                {onlinePct > 0 && <View style={{ flex: onlinePct, backgroundColor: PAY_CARD }} />}
-              </>
-            ) : null}
-          </View>
-          <View style={styles.payRow}>
-            {[
-              { label: 'Cash', color: PAY_CASH, amount: analytics.cashRevenue, count: analytics.cashOrdersCount, pct: cashPct },
-              { label: 'Card / online', color: PAY_CARD, amount: analytics.onlineRevenue, count: analytics.onlineOrdersCount, pct: onlinePct },
-            ].map((p, i) => (
-              <View key={p.label} style={[styles.payCol, i === 1 && styles.payColRight]}>
-                <View style={styles.payLabelRow}>
-                  <View style={[styles.statusDot, { backgroundColor: p.color }]} />
-                  <Text style={styles.payLabel}>{p.label}</Text>
-                </View>
-                <Text style={styles.payAmount} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>
-                  {money(p.amount)}
-                </Text>
-                <Text style={styles.paySub}>
-                  {p.count} {p.count === 1 ? 'order' : 'orders'} · {p.pct}%
-                </Text>
-              </View>
-            ))}
-          </View>
+    </>
+  );
+  const paymentsBlock = (
+    <>
+      {/* Payments */}
+      <View style={[styles.card, pairInRow && styles.pairCol]}>
+        <View style={styles.cardHeader}>
+          <Text style={styles.cardTitle}>Payments</Text>
         </View>
-
-        {/* Top dishes */}
-        <View style={[styles.card, isTablet && styles.pairCol]}>
-          <View style={styles.cardHeader}>
-            <Text style={styles.cardTitle}>Top dishes</Text>
-            {dishesAllTime && topDishes.length > 0 ? <Text style={styles.cardMeta}>All time</Text> : null}
-          </View>
-          {topDishes.length === 0 ? (
-            <Text style={styles.emptyText}>No dishes sold in this period.</Text>
-          ) : (
-            topDishes.map((dish, idx) => (
-              <View key={dish.itemName + idx} style={styles.dishRow}>
-                <Text style={styles.dishRank}>{idx + 1}</Text>
-                <View style={styles.dishBody}>
-                  <View style={styles.dishTop}>
-                    <Text style={styles.dishName} numberOfLines={1}>{dish.itemName}</Text>
-                    <Text style={styles.dishQty}>
-                      {dish.totalQuantitySold} sold
-                      {dish.totalRevenue > 0 ? <Text style={styles.dishRev}>{`  ${money(dish.totalRevenue)}`}</Text> : null}
-                    </Text>
-                  </View>
-                  <View style={styles.dishTrack}>
-                    <View
-                      style={[
-                        styles.dishFill,
-                        { width: `${Math.round((dish.totalQuantitySold / maxDishQty) * 100)}%` },
-                        idx > 0 && styles.dishFillMuted,
-                      ]}
-                    />
-                  </View>
-                </View>
+        <View style={styles.splitBar}>
+          {totalCashAndOnline > 0 ? (
+            <>
+              {cashPct > 0 && <View style={{ flex: cashPct, backgroundColor: PAY_CASH }} />}
+              {onlinePct > 0 && <View style={{ flex: onlinePct, backgroundColor: PAY_CARD }} />}
+            </>
+          ) : null}
+        </View>
+        <View style={styles.payRow}>
+          {[
+            { label: 'Cash', color: PAY_CASH, amount: analytics.cashRevenue, count: analytics.cashOrdersCount, pct: cashPct },
+            { label: 'Card / online', color: PAY_CARD, amount: analytics.onlineRevenue, count: analytics.onlineOrdersCount, pct: onlinePct },
+          ].map((p, i) => (
+            <View key={p.label} style={[styles.payCol, i === 1 && styles.payColRight]}>
+              <View style={styles.payLabelRow}>
+                <View style={[styles.statusDot, { backgroundColor: p.color }]} />
+                <Text style={styles.payLabel}>{p.label}</Text>
               </View>
-            ))
-          )}
+              <Text style={styles.payAmount} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>
+                {money(p.amount)}
+              </Text>
+              <Text style={styles.paySub}>
+                {p.count} {p.count === 1 ? 'order' : 'orders'} · {p.pct}%
+              </Text>
+            </View>
+          ))}
         </View>
       </View>
-
+    </>
+  );
+  const dishesBlock = (
+    <>
+      {/* Top dishes */}
+      <View style={[styles.card, pairInRow && styles.pairCol]}>
+        <View style={styles.cardHeader}>
+          <Text style={styles.cardTitle}>Top dishes</Text>
+          {dishesAllTime && topDishes.length > 0 ? <Text style={styles.cardMeta}>All time</Text> : null}
+        </View>
+        {topDishes.length === 0 ? (
+          <Text style={styles.emptyText}>No dishes sold in this period.</Text>
+        ) : (
+          topDishes.map((dish, idx) => (
+            <View key={dish.itemName + idx} style={styles.dishRow}>
+              <Text style={styles.dishRank}>{idx + 1}</Text>
+              <View style={styles.dishBody}>
+                <View style={styles.dishTop}>
+                  <Text style={styles.dishName} numberOfLines={1}>{dish.itemName}</Text>
+                  <Text style={styles.dishQty}>
+                    {dish.totalQuantitySold} sold
+                    {dish.totalRevenue > 0 ? <Text style={styles.dishRev}>{`  ${money(dish.totalRevenue)}`}</Text> : null}
+                  </Text>
+                </View>
+                <View style={styles.dishTrack}>
+                  <View
+                    style={[
+                      styles.dishFill,
+                      { width: `${Math.round((dish.totalQuantitySold / maxDishQty) * 100)}%` },
+                      idx > 0 && styles.dishFillMuted,
+                    ]}
+                  />
+                </View>
+              </View>
+            </View>
+          ))
+        )}
+      </View>
+    </>
+  );
+  const channelBlock = (
+    <>
       {/* Sales by channel */}
       <View style={styles.card}>
         <View style={styles.cardHeader}>
@@ -824,6 +861,64 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
           </Text>
         ) : null}
       </View>
+    </>
+  );
+
+  return (
+    <View style={styles.container}>
+      {/* Period */}
+      <View style={styles.segment}>
+        {TIMEFRAMES.map((tf) => {
+          const active = timeframe === tf.id;
+          const isCustom = tf.id === 'custom';
+          return (
+            <TouchableOpacity
+              key={tf.id}
+              style={[styles.segmentBtn, active && styles.segmentBtnActive]}
+              onPress={() => (isCustom ? openCustomRange() : setTimeframe(tf.id))}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityState={{ selected: active }}
+            >
+              {isCustom && <CalendarDays size={14} color={active ? Colors.text : '#64748B'} />}
+              <Text style={[styles.segmentText, active && styles.segmentTextActive]} numberOfLines={1}>
+                {isCustom ? (active ? customRangeLabel : 'Dates') : tf.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
+      <View style={styles.periodRow}>
+        <Text style={styles.periodLabel} numberOfLines={1}>{periodLabel}</Text>
+        {loading ? <ActivityIndicator size="small" color={Colors.primary} /> : null}
+      </View>
+
+      {wide ? (
+        <View style={styles.wideRow}>
+          <View style={styles.wideCol}>
+            {kpiBlock}
+            {trendBlock}
+            {channelBlock}
+          </View>
+          <View style={styles.wideCol}>
+            {statusBlock}
+            {paymentsBlock}
+            {dishesBlock}
+          </View>
+        </View>
+      ) : (
+        <>
+          {kpiBlock}
+          {trendBlock}
+          {statusBlock}
+          <View style={[styles.pairRow, pairInRow && styles.pairRowTablet]}>
+            {paymentsBlock}
+            {dishesBlock}
+          </View>
+          {channelBlock}
+        </>
+      )}
 
       {/* Date Range Picker Modal */}
       <Modal
@@ -1174,20 +1269,6 @@ const styles = StyleSheet.create({
   },
   container: { marginTop: 4, marginBottom: 8 },
 
-  headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, gap: 12 },
-  headerText: { flex: 1, minWidth: 0 },
-  headerTitle: { fontSize: 18, fontWeight: '800', color: Colors.text, letterSpacing: -0.3 },
-  headerSubtitle: { fontSize: 13, color: Colors.textMuted, marginTop: 2, fontWeight: '500' },
-  iconButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    backgroundColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
 
   segment: { flexDirection: 'row', alignSelf: 'flex-start', backgroundColor: '#F1F3F5', borderRadius: 10, padding: 3, marginBottom: 14 },
   segmentBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, minHeight: 34, borderRadius: 8 },
@@ -1212,7 +1293,27 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   kpiCardPhone: { flexBasis: '46%', flexGrow: 1 },
-  kpiCardTablet: { flexBasis: '22%', flexGrow: 1 },
+  kpiCardStacked: { flexBasis: '30%', flexGrow: 1 },
+  kpiArea: { gap: 10, marginBottom: 12 },
+  kpiAreaTablet: { flexDirection: 'row', alignItems: 'stretch' },
+  kpiGridTablet: { flex: 1, marginBottom: 0 },
+  heroCard: { padding: 16, borderRadius: 16, backgroundColor: Colors.primary },
+  heroCardTablet: { flexBasis: '34%', justifyContent: 'center' },
+  heroLabel: { fontSize: 13, fontWeight: '700', color: 'rgba(255,255,255,0.85)' },
+  heroValue: { fontSize: 32, fontWeight: '800', color: '#FFFFFF', marginTop: 4, letterSpacing: -0.6, fontVariant: ['tabular-nums'] },
+  heroSub: { fontSize: 13, color: 'rgba(255,255,255,0.85)', marginTop: 2 },
+  periodRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: -6, marginBottom: 12 },
+  periodLabel: { fontSize: 13, fontWeight: '600', color: Colors.textMuted },
+  wideRow: { flexDirection: 'row', gap: 12, alignItems: 'flex-start' },
+  wideCol: { flex: 1, minWidth: 0 },
+  trendReadout: { fontSize: 13, color: Colors.textMuted, marginBottom: 8 },
+  trendReadoutStrong: { fontSize: 16, fontWeight: '800', color: Colors.text },
+  trendBars: { flexDirection: 'row', alignItems: 'flex-end', height: 140, gap: 3 },
+  trendCol: { flex: 1, height: '100%', alignItems: 'center' },
+  trendTrack: { flex: 1, width: '100%', justifyContent: 'flex-end', borderBottomWidth: 1, borderBottomColor: '#E5E7EB' },
+  trendBar: { width: '100%', maxWidth: 26, alignSelf: 'center', backgroundColor: '#3B6FD8', borderTopLeftRadius: 4, borderTopRightRadius: 4 },
+  trendBarMuted: { opacity: 0.45 },
+  trendLabel: { fontSize: 10, color: Colors.textMuted, marginTop: 4 },
   kpiLabel: { fontSize: 13, fontWeight: '600', color: Colors.textMuted },
   kpiValue: { fontSize: 22, fontWeight: '800', color: Colors.text, marginTop: 4, letterSpacing: -0.4, fontVariant: ['tabular-nums'] },
   kpiSub: { fontSize: 12.5, color: Colors.textMuted, marginTop: 2 },

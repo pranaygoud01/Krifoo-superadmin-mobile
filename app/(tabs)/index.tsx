@@ -21,13 +21,17 @@ import { SuperAdminDashboard } from '../../components/admin/SuperAdminDashboard'
 import { CreateOrderModal } from '../../components/CreateOrderModal';
 import { ActionNeededOrders } from '../../components/ActionNeededOrders';
 import { RecentOrders } from '../../components/home/RecentOrders';
+import { QuickActions } from '../../components/home/QuickActions';
 import { ErrorState } from '../../components/ErrorState';
 import { ApiErrorType } from '../../services/api';
 import { Colors } from '../../constants/colors';
 import { restaurantService } from '../../services/restaurant.service';
 import { orderService } from '../../services/order.service';
 import { userService } from '../../services/user.service';
+import { floorService } from '../../services/floor.service';
 import { restaurantOwnerService } from '../../services/restaurant-owner.service';
+import { upcomingBookingCount } from '../../utils/bookings';
+import { ukToday } from '../../components/bookings/dayModel';
 import { Restaurant, Order } from '../../types';
 import { printThermalReceipt } from '../../services/thermal-print.service';
 import {
@@ -55,6 +59,7 @@ import {
   CalendarDays,
   BarChart3,
   ChefHat,
+  Armchair,
 } from 'lucide-react-native';
 import { useAuth } from '../../context/AuthContext';
 
@@ -74,7 +79,6 @@ export default function DashboardScreen() {
 
   const { width: windowWidth } = useWindowDimensions();
   const isSmallScreen = windowWidth < 375;
-  const isCompact = windowWidth < 360; // small Android phones: quick actions wrap to 2 rows
   const isTablet = windowWidth >= 768;
   const insets = useSafeAreaInsets();
   const sidePad = isTablet ? 28 : 16;
@@ -86,6 +90,7 @@ export default function DashboardScreen() {
   const [totalUsersCount, setTotalUsersCount] = useState(0);
   const [deliveryPartnersCount, setDeliveryPartnersCount] = useState(0);
   const [tablesCount, setTablesCount] = useState(0);
+  const [upcomingBookings, setUpcomingBookings] = useState(0);
   const [activeSlotsCount, setActiveSlotsCount] = useState(0);
 
   const [ownerStats, setOwnerStats] = useState({
@@ -249,7 +254,7 @@ export default function DashboardScreen() {
         const [statsRes, orderRes, tablesRes] = await Promise.all([
           orderService.getRestaurantStats(),
           orderService.fetchAllOrders(),
-          restaurantOwnerService.getTables(),
+          floorService.getStatus(),
         ]);
 
         const anySuccess = statsRes.success || orderRes.success || tablesRes.success;
@@ -278,12 +283,9 @@ export default function DashboardScreen() {
           setOrders(ownerOrderList);
         }
         if (tablesRes.success && tablesRes.data) {
-          setTablesCount(tablesRes.data.length);
-          const totalSlots = tablesRes.data.reduce(
-            (sum: number, t: any) => sum + (t.availableHours?.length || 0),
-            0
-          );
-          setActiveSlotsCount(totalSlots);
+          // Tables guests can book online (set once on the Tables screen)
+          const bookable = tablesRes.data.floors.flatMap((f) => f.tables).filter((t) => t.bookable);
+          setTablesCount(bookable.length);
         }
       }
     } catch (e: any) {
@@ -298,8 +300,20 @@ export default function DashboardScreen() {
     }
   };
 
+  // Upcoming reservations for the Bookings tile (same rule as the Bookings screen's "Upcoming")
+  const loadUpcomingBookings = async () => {
+    if (isSuperAdmin) return;
+    try {
+      const res = await restaurantOwnerService.getBookings();
+      if (res.success && Array.isArray(res.data)) setUpcomingBookings(upcomingBookingCount(res.data, ukToday()));
+    } catch {
+      // the tile simply shows no count
+    }
+  };
+
   useEffect(() => {
     loadDashboardData();
+    loadUpcomingBookings();
 
     // Listen for WebSocket updates from the backend
     const sub = DeviceEventEmitter.addListener('websocket_message', (data) => {
@@ -311,6 +325,7 @@ export default function DashboardScreen() {
         console.log('[Dashboard] Reloading metrics due to WebSocket event');
         loadDashboardData();
       }
+      if (data.type === 'RESTAURANT_BOOKING_UPDATE') loadUpcomingBookings();
     });
 
     return () => sub.remove();
@@ -518,7 +533,10 @@ export default function DashboardScreen() {
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
-              onRefresh={loadDashboardData}
+              onRefresh={() => {
+                loadDashboardData();
+                loadUpcomingBookings();
+              }}
               tintColor={Colors.primary}
             />
           }
@@ -625,111 +643,19 @@ export default function DashboardScreen() {
                     </View>
             </View>
 
-                  {/* Quick Action Section Title */}
-                  <View style={[styles.quickActionHeaderRow, isTablet && styles.quickActionHeaderRowTablet]}>
-                    <Text style={[styles.quickActionSectionTitle, isTablet && styles.quickActionSectionTitleTablet]}>
-                      Quick Action
-                    </Text>
-                  </View>
-
-                  {/* Quick Action Capsule Bar (Bookings, Tables, Fleet, Promo, Analytics) */}
-                  <View style={[styles.quickActionBar, isTablet && styles.quickActionBarTablet, isCompact && styles.quickActionBarCompact]}>
-                    {/* Kitchen Mode */}
-                    <TouchableOpacity
-                      style={[styles.quickActionItem, isCompact && styles.quickActionItemCompact]}
-                      onPress={() => router.push('/kitchen')}
-                      activeOpacity={0.7}
-                      accessibilityRole="button"
-                      accessibilityLabel="Open Kitchen Mode"
-                    >
-                      <View style={[styles.quickActionCircle, { backgroundColor: '#11181C', borderColor: '#11181C' }, isTablet && styles.quickActionCircleTablet]}>
-                        <ChefHat size={isTablet ? 26 : 22} color="#FFFFFF" />
-                      </View>
-                      <Text style={[styles.quickActionLabel, isTablet && styles.quickActionLabelTablet]} numberOfLines={1}>
-                        Kitchen
-                      </Text>
-                    </TouchableOpacity>
-
-                    {/* 1. Bookings */}
-                    <TouchableOpacity
-                      style={[styles.quickActionItem, isCompact && styles.quickActionItemCompact]}
-                      onPress={() => router.push('/bookings')}
-                      activeOpacity={0.7}
-                    >
-                      <View style={[styles.quickActionCircle, { backgroundColor: '#eeeeee', borderColor: '#cccbc9' }, isTablet && styles.quickActionCircleTablet]}>
-                        <CalendarDays size={isTablet ? 26 : 22} color="#807e7d" />
-                      </View>
-                      <Text style={[styles.quickActionLabel, isTablet && styles.quickActionLabelTablet]} numberOfLines={1}>
-                        Bookings
-                      </Text>
-                    </TouchableOpacity>
-
-                    {/* 2. Tables */}
-                    <TouchableOpacity
-                      style={[styles.quickActionItem, isCompact && styles.quickActionItemCompact]}
-                      onPress={() => router.push('/tables')}
-                      activeOpacity={0.7}
-                    >
-                      <View style={[styles.quickActionCircle, { backgroundColor: '#eeeeee', borderColor: '#cccbc9' }, isTablet && styles.quickActionCircleTablet]}>
-                        {tablesCount > 0 && (
-                          <View style={styles.quickActionBadge}>
-                            <Text style={styles.quickActionBadgeText}>{tablesCount}</Text>
-                          </View>
-                        )}
-                        <UtensilsCrossed size={isTablet ? 26 : 22} color="#807e7d" />
-                      </View>
-                      <Text style={[styles.quickActionLabel, isTablet && styles.quickActionLabelTablet]} numberOfLines={1}>
-                        Tables
-                      </Text>
-                    </TouchableOpacity>
-
-                    {/* 3. Fleet */}
-                    <TouchableOpacity
-                      style={[styles.quickActionItem, isCompact && styles.quickActionItemCompact]}
-                      onPress={() => router.push('/fleet')}
-                      activeOpacity={0.7}
-                    >
-                      <View style={[styles.quickActionCircle, { backgroundColor: '#eeeeee', borderColor: '#cccbc9' }, isTablet && styles.quickActionCircleTablet]}>
-                        {deliveryPartnersCount > 0 && (
-                          <View style={styles.quickActionBadge}>
-                            <Text style={styles.quickActionBadgeText}>{deliveryPartnersCount}</Text>
-                          </View>
-                        )}
-                        <Bike size={isTablet ? 26 : 22} color="#807e7d" />
-                      </View>
-                      <Text style={[styles.quickActionLabel, isTablet && styles.quickActionLabelTablet]} numberOfLines={1}>
-                        Fleet
-                      </Text>
-                    </TouchableOpacity>
-
-                    {/* 4. Promo */}
-                    <TouchableOpacity
-                      style={[styles.quickActionItem, isCompact && styles.quickActionItemCompact]}
-                      onPress={() => router.push(isSuperAdmin ? '/broadcast' : '/marketing')}
-                      activeOpacity={0.7}
-                    >
-                      <View style={[styles.quickActionCircle, { backgroundColor: '#eeeeee', borderColor: '#cccbc9' }, isTablet && styles.quickActionCircleTablet]}>
-                        <Sparkles size={isTablet ? 26 : 22} color="#807e7d" />
-                      </View>
-                      <Text style={[styles.quickActionLabel, isTablet && styles.quickActionLabelTablet]} numberOfLines={1}>
-                        Promo
-                      </Text>
-                    </TouchableOpacity>
-
-                    {/* 5. Analytics */}
-                    <TouchableOpacity
-                      style={[styles.quickActionItem, isCompact && styles.quickActionItemCompact]}
-                      onPress={() => router.push('/analytics')}
-                      activeOpacity={0.7}
-                    >
-                      <View style={[styles.quickActionCircle, { backgroundColor: '#eeeeee', borderColor: '#cccbc9' }, isTablet && styles.quickActionCircleTablet]}>
-                        <BarChart3 size={isTablet ? 26 : 22} color="#807e7d" />
-                      </View>
-                      <Text style={[styles.quickActionLabel, isTablet && styles.quickActionLabelTablet]} numberOfLines={1}>
-                        Analytics
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
+                  {/* Quick actions */}
+                  <QuickActions
+                    isTablet={isTablet}
+                    items={[
+                      { key: 'kitchen', label: 'Kitchen', hint: 'Live tickets', icon: ChefHat, onPress: () => router.push('/kitchen') },
+                      { key: 'floor', label: 'Live floor', hint: 'Seat & serve', icon: Armchair, onPress: () => router.push('/floor') },
+                      { key: 'bookings', label: 'Bookings', hint: upcomingBookings ? `${upcomingBookings} upcoming` : 'Reservations', icon: CalendarDays, badge: upcomingBookings, onPress: () => router.push('/bookings') },
+                      { key: 'tables', label: 'Table setup', hint: 'Add & arrange', icon: UtensilsCrossed, badge: tablesCount, onPress: () => router.push('/tables') },
+                      { key: 'fleet', label: 'Riders', hint: 'Delivery fleet', icon: Bike, badge: deliveryPartnersCount, onPress: () => router.push('/fleet') },
+                      { key: 'promo', label: 'Marketing', hint: 'Offers & campaigns', icon: Sparkles, onPress: () => router.push(isSuperAdmin ? '/broadcast' : '/marketing') },
+                      { key: 'analytics', label: 'Reports', hint: 'Sales & trends', icon: BarChart3, onPress: () => router.push('/analytics') },
+                    ]}
+                  />
           </>
         )}
 
@@ -1889,115 +1815,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFAF8',
   },
   // Quick Action Capsule Bar styling (matching user sketch)
-  quickActionHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 10,
-    paddingHorizontal: 2,
-    marginTop: 2,
-  },
-  quickActionHeaderRowTablet: {
-    marginBottom: 12,
-  },
-  quickActionSectionTitle: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: Colors.text,
-    letterSpacing: -0.3,
-  },
-  quickActionSectionTitleTablet: {
-    fontSize: 17,
-  },
-  quickActionBar: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 24,
-    paddingVertical: 13,
-    paddingHorizontal: 6,
-    marginBottom: 18,
-    borderWidth: 1,
-    borderColor: '#F1F5F9',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  quickActionBarTablet: {
-    paddingVertical: 18,
-    paddingHorizontal: 28,
-    borderRadius: 28,
-    marginBottom: 22,
-  },
-  quickActionItem: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 2,
-  },
-  quickActionCircle: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1.5,
-    position: 'relative',
-   
-    marginBottom: 5,
-  },
-  quickActionBarCompact: {
-    flexWrap: 'wrap',
-    justifyContent: 'flex-start',
-    rowGap: 14,
-    paddingHorizontal: 4,
-  },
-  quickActionItemCompact: {
-    flex: 0,
-    width: '33.33%',
-  },
-  quickActionCircleTablet: {
-    width: 62,
-    height: 62,
-    borderRadius: 31,
-    marginBottom: 8,
-  },
-  quickActionIconImg: {
-    width: 28,
-    height: 28,
-  },
-  quickActionIconImgTablet: {
-    width: 36,
-    height: 36,
-  },
-  quickActionLabel: {
-    fontSize: 10.5,
-    fontWeight: '700',
-    color: '#1E293B',
-    textAlign: 'center',
-    letterSpacing: -0.3,
-  },
-  quickActionLabelTablet: {
-    fontSize: 12.5,
-  },
-  quickActionBadge: {
-    position: 'absolute',
-    top: -2,
-    right: -2,
-    backgroundColor: '#FF5C39',
-    borderRadius: 9,
-    minWidth: 17,
-    height: 17,
-    paddingHorizontal: 4,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1.5,
-    borderColor: '#FFFFFF',
-    zIndex: 3,
-  },
-  quickActionBadgeText: {
-    fontSize: 8.5,
-    fontWeight: '800',
-    color: '#FFFFFF',
-  },
   // Control center styling
   controlCenterSection: {
     marginBottom: 20,

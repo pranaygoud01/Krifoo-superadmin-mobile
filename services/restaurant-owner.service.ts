@@ -53,6 +53,31 @@ export const restaurantOwnerService = {
   async expireBooking(bookingId: string): Promise<{ success: boolean; message?: string }> {
     return apiRequest(`/api/bookings/restaurant/${bookingId}/expire`, { method: 'PATCH' });
   },
+  /** One day's bookable tables and bookings (timeline). */
+  async getBookingDay(date: string): Promise<{ success: boolean; data?: BookingDay; message?: string }> {
+    return apiRequest(`/api/bookings/restaurant/day?date=${date}`, { method: 'GET' });
+  },
+  /** Add a phone / walk-in booking (confirmed straight away, no payment). */
+  async createBooking(body: {
+    tableId: string;
+    /** The day (Floor tables are bookable any day; old daily posts carry their own) */
+    date?: string;
+    slots: string[];
+    guests: number;
+    customerName: string;
+    customerPhone?: string;
+    specialRequests?: string;
+    source: 'phone' | 'walk_in';
+    allowOverCapacity?: boolean;
+  }): Promise<{ success: boolean; data?: any; message?: string; statusCode?: number }> {
+    return apiRequest('/api/bookings/restaurant', { method: 'POST', body });
+  },
+  async moveBooking(bookingId: string, body: { tableId: string; date?: string; slots: string[]; allowOverCapacity?: boolean }): Promise<{ success: boolean; data?: any; message?: string; statusCode?: number }> {
+    return apiRequest(`/api/bookings/restaurant/${bookingId}/move`, { method: 'PATCH', body });
+  },
+  async markNoShow(bookingId: string): Promise<{ success: boolean; message?: string }> {
+    return apiRequest(`/api/bookings/restaurant/${bookingId}/no-show`, { method: 'PATCH' });
+  },
 
   // --- Marketing / Campaigns ---
   async getAnnouncements(): Promise<{ success: boolean; data?: any[]; message?: string }> {
@@ -179,3 +204,41 @@ export const restaurantOwnerService = {
     return apiRequest('/api/restaurants/me', { method: 'DELETE' });
   },
 };
+
+export interface BookingDayTable {
+  _id: string;
+  tableNumber: string;
+  capacity: number;
+  area?: string;
+  availableHours: string[];
+  isActive: boolean;
+  /** Floor table offered online (staff can book any table) */
+  online?: boolean;
+  kind?: 'floor' | 'legacy';
+  priceModel?: 'free' | 'per_booking' | 'per_hour';
+  bookingPrice?: number;
+  maxBookingHours?: number;
+}
+
+export interface BookingDayEntry {
+  _id: string;
+  bookingNumber?: string;
+  tableId: string;
+  slots: string[];
+  guests: number;
+  status: 'pending' | 'confirmed' | 'completed' | 'no_show';
+  source: 'app' | 'phone' | 'walk_in';
+  customerName: string;
+  customerPhone: string;
+  specialRequests: string;
+  paymentDetails: { paymentStatus?: string; bookingFee: number };
+  seating?: { tableLabel?: string } | null;
+}
+
+export interface BookingDay {
+  date: string;
+  /** Weekly booking hours are set up */
+  setUp?: boolean;
+  tables: BookingDayTable[];
+  bookings: BookingDayEntry[];
+}

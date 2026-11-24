@@ -104,7 +104,10 @@ function KitchenTicketBase({ order, stage, palette, scale, action, busy, tickedI
   const now = useNow();
   const type = getOrderFulfillmentType(order);
   const { label: typeLabel, Icon: TypeIcon } = TYPE_META[type];
-  const tableNumber = (order as any).tableNumber;
+  // Floor-managed orders carry their table (label + floor); older dine-in orders only a number
+  const seatedTable = (order as any).table as { label?: string; floorName?: string } | undefined;
+  const tableNumber = seatedTable?.label || (order as any).tableNumber;
+  const tableFloor = seatedTable?.floorName;
   const items = getKitchenItems(order);
   const notes = getSanitizedOrderNotes(order.notes);
   const schedule = getOrderScheduleInfo(order);
@@ -141,7 +144,7 @@ function KitchenTicketBase({ order, stage, palette, scale, action, busy, tickedI
         <View style={[styles.typeChip, { backgroundColor: palette.chipBg, borderColor: palette.cardBorder }]}>
           <TypeIcon size={16 * scale} color={palette.text} />
           <Text style={[styles.typeText, { color: palette.text, fontSize: 14 * scale }]} numberOfLines={1}>
-            {type === 'dine_in' && tableNumber ? `Table ${tableNumber}` : typeLabel}
+            {type === 'dine_in' && tableNumber ? `Table ${tableNumber}${tableFloor ? ` · ${tableFloor}` : ''}` : typeLabel}
           </Text>
         </View>
       </View>

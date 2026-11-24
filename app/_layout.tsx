@@ -124,6 +124,10 @@ export default function RootLayout() {
                 <Stack.Screen name="restaurant-details" options={{ animation: 'slide_from_right' }} />
                 <Stack.Screen name="notifications" options={{ animation: 'slide_from_right' }} />
                 <Stack.Screen name="tables" options={{ animation: 'slide_from_right' }} />
+                <Stack.Screen name="booking-settings" options={{ animation: 'slide_from_right' }} />
+                <Stack.Screen name="floor" options={{ animation: 'fade', gestureEnabled: false }} />
+                <Stack.Screen name="floor-setup" options={{ animation: 'slide_from_right' }} />
+                <Stack.Screen name="floor-reports" options={{ animation: 'slide_from_right' }} />
                 <Stack.Screen name="bookings" options={{ animation: 'slide_from_right' }} />
                 <Stack.Screen name="marketing" options={{ animation: 'slide_from_right' }} />
                 <Stack.Screen name="create-post" options={{ animation: 'slide_from_right' }} />

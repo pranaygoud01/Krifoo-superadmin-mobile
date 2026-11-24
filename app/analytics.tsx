@@ -10,12 +10,12 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
-import { ArrowLeft, BarChart3, RefreshCw } from 'lucide-react-native';
-import { Colors } from '../constants/colors';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { ArrowLeft, RefreshCw } from 'lucide-react-native';
 import { useAuth } from '../context/AuthContext';
 import { orderService } from '../services/order.service';
 import { RestaurantAnalytics } from '../components/RestaurantAnalytics';
+import { FloorReport } from '../components/analytics/FloorReport';
 import { Order } from '../types';
 
 export default function AnalyticsScreen() {
@@ -23,6 +23,11 @@ export default function AnalyticsScreen() {
   const { user } = useAuth();
   const { width: windowWidth } = useWindowDimensions();
   const isTablet = windowWidth >= 768;
+  // Sales & orders, or Tables & floor (the Floor screen's Reports opens the second)
+  const params = useLocalSearchParams<{ tab?: string }>();
+  const [tab, setTab] = useState<'sales' | 'tables'>(params.tab === 'tables' ? 'tables' : 'sales');
+  const [floorRefreshKey, setFloorRefreshKey] = useState(0);
+  const [salesRefreshKey, setSalesRefreshKey] = useState(0);
 
   const [orders, setOrders] = useState<Order[]>([]);
   const [ownerStats, setOwnerStats] = useState({
@@ -69,7 +74,11 @@ export default function AnalyticsScreen() {
 
   const onRefresh = () => {
     setRefreshing(true);
-    loadData();
+    if (tab === 'tables') setFloorRefreshKey((k) => k + 1);
+    else {
+      setSalesRefreshKey((k) => k + 1);
+      loadData();
+    }
   };
 
   const restaurantName = user?.restaurantName || (user as any)?.name || 'Restaurant';
@@ -89,8 +98,8 @@ export default function AnalyticsScreen() {
           </TouchableOpacity>
           <View>
             <View style={styles.titleRow}>
-              <Text style={[styles.headerTitle, isTablet && styles.headerTitleTablet]}>
-                Analytics & Insights
+              <Text style={[styles.headerTitle, isTablet && styles.headerTitleTablet]} accessibilityRole="header">
+                Analytics
               </Text>
               <View style={styles.liveBadge}>
                 <View style={styles.liveDot} />
@@ -106,6 +115,8 @@ export default function AnalyticsScreen() {
           onPress={onRefresh}
           disabled={refreshing}
           activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel="Refresh"
         >
           {refreshing ? (
             <ActivityIndicator size="small" color="#FF5C39" />
@@ -115,8 +126,39 @@ export default function AnalyticsScreen() {
         </TouchableOpacity>
       </View>
 
+      {/* Sales & orders | Tables & floor */}
+      <View style={[styles.tabs, isTablet && styles.tabsTablet]} accessibilityRole="tablist">
+        {([
+          { key: 'sales', label: 'Sales & orders' },
+          { key: 'tables', label: 'Tables & floor' },
+        ] as const).map((o) => {
+          const on = tab === o.key;
+          return (
+            <TouchableOpacity
+              key={o.key}
+              style={[styles.tab, on && styles.tabOn]}
+              onPress={() => setTab(o.key)}
+              activeOpacity={0.8}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: on }}
+            >
+              <Text style={[styles.tabText, on && styles.tabTextOn]}>{o.label}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
       {/* Main Analytics Content */}
-      {loading && !refreshing ? (
+      {tab === 'tables' ? (
+        <ScrollView
+          style={styles.scrollView}
+          contentContainerStyle={[styles.scrollContent, isTablet && styles.scrollContentTablet]}
+          showsVerticalScrollIndicator={false}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#FF5C39']} tintColor="#FF5C39" />}
+        >
+          <FloorReport refreshKey={floorRefreshKey} onLoaded={() => setRefreshing(false)} />
+        </ScrollView>
+      ) : loading && !refreshing ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#FF5C39" />
           <Text style={styles.loadingText}>Loading performance analytics...</Text>
@@ -139,6 +181,7 @@ export default function AnalyticsScreen() {
             initialOrders={orders}
             ownerStats={ownerStats}
             restaurantName={restaurantName}
+            refreshKey={salesRefreshKey}
             onNavigateOrders={() => router.push('/(tabs)/orders')}
           />
         </ScrollView>
@@ -148,6 +191,12 @@ export default function AnalyticsScreen() {
 }
 
 const styles = StyleSheet.create({
+  tabs: { flexDirection: 'row', gap: 4, padding: 4, marginHorizontal: 16, marginTop: 12, borderRadius: 12, backgroundColor: '#EEF2F6' },
+  tabsTablet: { alignSelf: 'center', width: '100%', maxWidth: 560 },
+  tab: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 10, borderRadius: 9 },
+  tabOn: { backgroundColor: '#FFFFFF', shadowColor: '#0F172A', shadowOpacity: 0.08, shadowRadius: 4, shadowOffset: { width: 0, height: 1 }, elevation: 1 },
+  tabText: { fontSize: 14, fontWeight: '700', color: '#64748B' },
+  tabTextOn: { color: '#0F172A' },
   safeArea: {
     flex: 1,
     backgroundColor: '#F8FAFC',

@@ -83,6 +83,12 @@ export async function configureAudio() {
   }
 }
 
+/** Android refuses audio focus to apps in the background (expo-av AudioFocusNotAcquiredException). */
+function isBackgroundAudioError(error: unknown): boolean {
+  const text = String((error as any)?.message || (error as any)?.code || error || '');
+  return /AudioFocusNotAcquired|audio focus could not be acquired|currently in the background/i.test(text);
+}
+
 /**
  * Immediately stop playing the order buzz sound and cancel vibration.
  */
@@ -139,6 +145,13 @@ export async function playOrderBuzzSound(
   if (eventType === 'order' && !settings.notifyOrders) return false;
   if (eventType === 'booking' && !settings.notifyBookings) return false;
   if (eventType === 'cancellation' && !settings.notifyCancellations) return false;
+
+  // In-app sound only while the app is on screen. In the background the OS won't give us audio focus
+  // (we don't keep audio running in the background); the push notification carries the alert instead.
+  if (AppState.currentState !== 'active') {
+    console.log('[SoundService] App is in the background; skipping in-app buzz (the push notification alerts instead).');
+    return false;
+  }
 
   const durationMs = overrideDurationMs || (settings.durationSeconds * 1000);
   const now = Date.now();
@@ -273,6 +286,12 @@ export async function playOrderBuzzSound(
 
     return true;
   } catch (error) {
+    // The app went to the background while the sound was loading: expected, not an error
+    if (isBackgroundAudioError(error) || AppState.currentState !== 'active') {
+      console.log('[SoundService] Audio focus not available (app in background); skipping buzz.');
+      await stopOrderBuzzSound().catch(() => {});
+      return false;
+    }
     console.error('[SoundService] Error playing order buzz sound:', error);
     // Fallback vibration if enabled
     if (settings.vibrationEnabled) {

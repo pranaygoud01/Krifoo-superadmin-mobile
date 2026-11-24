@@ -13,7 +13,7 @@ import {
   KeyboardAvoidingView,
   StatusBar,
 } from 'react-native';
-import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   X,
   Plus,
@@ -36,6 +36,9 @@ import {
   LogOut,
   Bike,
   MapPin,
+  Armchair,
+  ChevronDown,
+  Users,
 } from 'lucide-react-native';
 import { Image } from 'expo-image';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
@@ -54,6 +57,10 @@ import { getCachedStoreProfile, setCachedStoreProfile, getItemOptionsList } from
 import { restaurantOwnerService } from '../services/restaurant-owner.service';
 import { restaurantService } from '../services/restaurant.service';
 import { KEYBOARD_BEHAVIOR } from '../utils/keyboard';
+import { TablePicker } from './pos/TablePicker';
+import { posLayout, gridColumns } from '../utils/pos-layout';
+import { floorService } from '../services/floor.service';
+import type { PosTablePick } from '../utils/pos-tables';
 
 
 /**
@@ -115,6 +122,11 @@ interface CreateOrderModalProps {
   restaurantId?: string;
   restaurantName?: string;
   restaurantPhone?: string;
+  /**
+   * Ordering for a seated table (Floor screen): locks the order to dine-in at this table and links
+   * it to the table's visit, so it appears on the table's timeline and bill. Closes after placing.
+   */
+  tableContext?: { sessionId: string; label: string; floorName?: string } | null;
 }
 
 const OTHER_CATEGORY = 'Other';
@@ -169,18 +181,41 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
   restaurantId,
   restaurantName,
   restaurantPhone: propRestaurantPhone,
+  tableContext = null,
 }) => {
   const { user } = useAuth();
   const [storePhone, setStorePhone] = useState<string>('');
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
-  const isTablet = windowWidth >= 768;
-  const isWideTablet = windowWidth >= 1024;
+  // Layout for this screen size (phone tabs / split / split + category sidebar), see utils/pos-layout
+  const layout = posLayout(windowWidth, windowHeight);
+  // Home-indicator space: added inside each column so the sidebar, menu and ticket reach the bottom edge
+  const bottomInset = useSafeAreaInsets().bottom;
+  const isTablet = layout.split;
+  const [gridWidth, setGridWidth] = useState(0);
+  const { tileWidth } = gridColumns(gridWidth, layout.minTile, 12);
 
   const [mobileTab, setMobileTab] = useState<'menu' | 'cart'>('menu');
   const [channel, setChannel] = useState<PosChannel>(initialChannel);
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [tableNumber, setTableNumber] = useState('');
+  // Dine-in: the real table from the floor (seated on order if free), or typed by hand
+  const [posTable, setPosTable] = useState<PosTablePick | null>(null);
+  const [posGuests, setPosGuests] = useState(2);
+  const [tablePickerOpen, setTablePickerOpen] = useState(false);
+  const [typingTable, setTypingTable] = useState(false);
+  const pickTable = (p: PosTablePick) => {
+    setPosTable(p);
+    setTableNumber(p.label);
+    setPosGuests(Math.min(2, p.seats || 2));
+    setTypingTable(false);
+    setTablePickerOpen(false);
+  };
+  const clearPosTable = () => {
+    setPosTable(null);
+    setTableNumber('');
+    setPosGuests(2);
+  };
   // Delivery details (POS delivery orders)
   const [addressQuery, setAddressQuery] = useState('');
   const [addressResults, setAddressResults] = useState<AddressMatch[]>([]);
@@ -196,6 +231,18 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
   const [banner, setBanner] = useState<{ text: string; tone: 'info' | 'success' } | null>(null);
   const [paymentType, setPaymentType] = useState<'cash' | 'card'>('cash');
   const [autoPrint, setAutoPrint] = useState(true);
+
+  // Ordering for a seated table: dine-in at that table only
+  useEffect(() => {
+    if (visible && tableContext) {
+      setChannel('dine_in');
+      setTableNumber(tableContext.label);
+    }
+  }, [visible, tableContext?.sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const chooseChannel = (next: PosChannel) => {
+    if (tableContext) return; // locked to the table's dine-in order
+    setChannel(next);
+  };
 
   // Menu items state
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
@@ -257,6 +304,8 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
       setCustomerName('');
       setCustomerPhone('');
       setTableNumber('');
+      setPosTable(null);
+      setTypingTable(false);
       setNotes('');
       setSearchQuery('');
       setCustomizingItem(null);
@@ -766,6 +815,25 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
     setSubmitting(true);
     setErrorMsg(null);
 
+    // Dine-in at a real table: a table with guests takes the order onto their visit; a free table is
+    // seated first (starting its visit) so the order shows on the floor, the table timeline and the bill.
+    let tableSessionId: string | null = channel === 'dine_in' ? tableContext?.sessionId ?? posTable?.sessionId ?? null : null;
+    let seatedNow = false;
+    if (channel === 'dine_in' && !tableContext && posTable && !tableSessionId) {
+      try {
+        const seat = await floorService.seat(posTable.tableId, posGuests);
+        if (!seat.success || !seat.data?._id) throw new Error(seat.message || 'Please check the table on the Floor screen.');
+        tableSessionId = seat.data._id;
+        seatedNow = true;
+        // Remember it, so a retry adds to this visit instead of seating the table again
+        setPosTable({ ...posTable, sessionId: seat.data._id, partySize: posGuests });
+      } catch (e: any) {
+        setErrorMsg(`Couldn’t seat Table ${posTable.label}: ${e?.message || 'please try again.'}`);
+        setSubmitting(false);
+        return;
+      }
+    }
+
     try {
       const orderPayload: any = {
         cartType: 'foodCart',
@@ -792,6 +860,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
           .filter(Boolean)
           .join(' • '),
         paymentType: paymentType,
+        ...(tableSessionId ? { tableSessionId } : {}),
         items: cartEntries.map((e) => ({
           menuItemId: e.item._id || (e.item as any).id,
           quantity: e.quantity,
@@ -818,11 +887,22 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
           }
         }
         onOrderCreated();
+        if (tableContext) {
+          // Table order placed: go back to the floor (the table's timeline shows it)
+          setCart({});
+          setNotes('');
+          setShowNotes(false);
+          onClose();
+          return;
+        }
         // Full-screen POS: stay open and get ready for the next order.
         setCart({});
         setCustomerName('');
         setCustomerPhone('');
         setTableNumber('');
+        setPosTable(null);
+        setPosGuests(2);
+        setTypingTable(false);
         resetDeliveryDetails();
         setNotes('');
         setShowNotes(false);
@@ -835,7 +915,11 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
           tone: 'success',
         });
       } else {
-        setErrorMsg(res.message || 'Failed to place order. Please verify input.');
+        setErrorMsg(
+          seatedNow && posTable
+            ? `Table ${posTable.label} is now seated, but the order didn’t go through: ${res.message || 'please try again.'} Placing it again adds it to this table.`
+            : res.message || 'Failed to place order. Please verify input.'
+        );
       }
     } catch (e: any) {
       setErrorMsg(e?.message || 'Error occurred while creating order.');
@@ -843,6 +927,34 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
       setSubmitting(false);
     }
   };
+
+  // Order type — applies to the whole order, so it lives in the top bar
+  const orderTypeSwitch = (
+    <View style={[styles.otSwitch, isTablet ? styles.otSwitchTablet : styles.otSwitchPhone]} accessibilityRole="radiogroup" accessibilityLabel="Order type">
+      {([
+        { key: 'dine_in', label: 'Dine-in', Icon: UtensilsCrossed },
+        { key: 'takeaway', label: 'Takeaway', Icon: ShoppingBag },
+        { key: 'delivery', label: 'Delivery', Icon: Bike },
+      ] as const).map(({ key, label, Icon }) => {
+        const on = channel === key;
+        const locked = Boolean(tableContext) && key !== 'dine_in';
+        return (
+          <TouchableOpacity
+            key={key}
+            style={[styles.otOption, on && styles.otOptionOn, locked && styles.otOptionLocked]}
+            onPress={() => chooseChannel(key)}
+            disabled={locked}
+            activeOpacity={0.85}
+            accessibilityRole="radio"
+            accessibilityState={{ selected: on, disabled: locked }}
+          >
+            <Icon size={16} color={on ? '#FFFFFF' : '#475569'} />
+            <Text style={[styles.otText, on && styles.otTextOn]} numberOfLines={1}>{label}</Text>
+          </TouchableOpacity>
+        );
+      })}
+    </View>
+  );
 
   return (
     <Modal
@@ -854,7 +966,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
       {/* Own provider: a Modal is a separate native window, so it must measure its own safe areas
           (otherwise the top inset can come through as 0 and content slides under the status bar). */}
       <SafeAreaProvider>
-      <SafeAreaView style={styles.safeArea} edges={['top', 'bottom', 'left', 'right']}>
+      <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
         <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
         <KeyboardAvoidingView
           style={styles.fullScreenContainer}
@@ -862,7 +974,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
         >
           {/* Top bar — full-screen POS mode (exit is press-and-hold, like Kitchen Mode) */}
           <View style={styles.posTopBar}>
-            <View style={styles.posBrand}>
+            <View style={[styles.posBrand, isTablet && styles.posBrandTablet]}>
               <View style={styles.posBrandIcon}>
                 <ShoppingCart size={20} color="#FF5C39" />
               </View>
@@ -874,12 +986,14 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                     <Text style={styles.posLiveText}>LIVE</Text>
                   </View>
                 </View>
-                {restaurantName ? (
+                {restaurantName && layout.showName ? (
                   <Text style={styles.posSub} numberOfLines={1}>{restaurantName}</Text>
                 ) : null}
               </View>
-              <PosClock />
+              {layout.showClock ? <PosClock /> : null}
             </View>
+
+            {isTablet ? orderTypeSwitch : null}
 
             <View style={styles.posControls}>
               {cartEntries.length > 0 && (
@@ -891,7 +1005,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                   accessibilityLabel="Clear order"
                 >
                   <Trash2 size={18} color="#DC2626" />
-                  {isTablet && <Text style={styles.posClearText}>Clear order</Text>}
+                  {layout.buttonLabels && <Text style={styles.posClearText}>Clear order</Text>}
                 </TouchableOpacity>
               )}
               <TouchableOpacity
@@ -905,10 +1019,12 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                 accessibilityHint="Press and hold to exit"
               >
                 <LogOut size={18} color="#0F172A" />
-                {isTablet && <Text style={styles.posExitText}>Hold to exit</Text>}
+                {layout.buttonLabels && <Text style={styles.posExitText}>Hold to exit</Text>}
               </TouchableOpacity>
             </View>
           </View>
+
+          {!isTablet ? <View style={styles.otPhoneRow}>{orderTypeSwitch}</View> : null}
 
           {banner ? (
             <View style={[styles.posBanner, banner.tone === 'success' ? styles.posBannerSuccess : styles.posBannerInfo]}>
@@ -958,9 +1074,9 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
           {/* Main Body */}
           <View style={[styles.modalBody, isTablet && styles.modalBodyTablet]}>
             {/* Category rail (tablet / POS): single column on the far left */}
-            {isTablet && categories.length > 1 && (
-              <View style={[styles.categoryRail, isWideTablet && styles.categoryRailWide]}>
-                <ScrollView contentContainerStyle={styles.categoryRailContent} showsVerticalScrollIndicator={false}>
+            {layout.rail && categories.length > 1 && (
+              <View style={[styles.categoryRail, { width: layout.railWidth }]}>
+                <ScrollView contentContainerStyle={[styles.categoryRailContent, { paddingBottom: 12 + bottomInset }]} showsVerticalScrollIndicator={false}>
                   {categories.map((cat) => {
                     const active = selectedCategory === cat;
                     return (
@@ -989,70 +1105,38 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
             {/* Left Column: Menu Items Browser (Shown on Tablet OR Mobile 'menu' tab) */}
             {(isTablet || mobileTab === 'menu') && (
               <View style={[styles.leftColumn, isTablet && styles.leftColumnTablet]}>
-                {/* Channel Selector */}
-                <View style={styles.channelRow}>
-                  <TouchableOpacity
-                    style={[styles.channelChip, channel === 'dine_in' && styles.channelChipDineInActive]}
-                    onPress={() => setChannel('dine_in')}
-                    activeOpacity={0.8}
-                  >
-                    <UtensilsCrossed size={14} color={channel === 'dine_in' ? '#7C3AED' : '#64748B'} />
-                    <Text
-                      style={[styles.channelChipText, channel === 'dine_in' && styles.channelChipTextDineInActive]}
-                      numberOfLines={1}
-                    >
-                      {isTablet ? 'In-Store (Dine-In)' : 'Dine-In'}
+              {/* Search (and, on tablets, the category heading beside it) */}
+              <View style={[styles.menuHead, isTablet && styles.menuHeadTablet]}>
+                {isTablet ? (
+                  <View style={styles.categoryHeading}>
+                    <Text style={styles.categoryHeadingText} numberOfLines={1}>
+                      {searchQuery.trim() ? `“${searchQuery.trim()}”` : selectedCategory === 'all' ? 'All dishes' : selectedCategory}
                     </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={[styles.channelChip, channel === 'takeaway' && styles.channelChipTakeawayActive]}
-                    onPress={() => setChannel('takeaway')}
-                    activeOpacity={0.8}
-                  >
-                    <ShoppingBag size={14} color={channel === 'takeaway' ? '#EA580C' : '#64748B'} />
-                    <Text
-                      style={[styles.channelChipText, channel === 'takeaway' && styles.channelChipTextTakeawayActive]}
-                      numberOfLines={1}
-                    >
-                      Takeaway
+                    <Text style={styles.categoryHeadingCount}>
+                      {filteredItems.length} {filteredItems.length === 1 ? 'item' : 'items'}
                     </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={[styles.channelChip, channel === 'delivery' && styles.channelChipDeliveryActive]}
-                    onPress={() => setChannel('delivery')}
-                    activeOpacity={0.8}
-                  >
-                    <Bike size={14} color={channel === 'delivery' ? '#1D4ED8' : '#64748B'} />
-                    <Text
-                      style={[styles.channelChipText, channel === 'delivery' && styles.channelChipTextDeliveryActive]}
-                      numberOfLines={1}
-                    >
-                      Delivery
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-
-              {/* Menu Search & Categories */}
-              <View style={styles.searchRow}>
-                <Search size={16} color="#94A3B8" />
-                <TextInput
-                  style={styles.searchInput}
-                  placeholder="Search dishes or menu items..."
-                  placeholderTextColor="#94A3B8"
-                  value={searchQuery}
-                  onChangeText={setSearchQuery}
-                />
-                {searchQuery ? (
-                  <TouchableOpacity onPress={() => setSearchQuery('')}>
-                    <X size={15} color="#94A3B8" />
-                  </TouchableOpacity>
+                  </View>
                 ) : null}
+                <View style={[styles.searchRow, isTablet && styles.searchRowTablet]}>
+                  <Search size={17} color="#94A3B8" />
+                  <TextInput
+                    style={styles.searchInput}
+                    placeholder="Search the menu"
+                    placeholderTextColor="#94A3B8"
+                    value={searchQuery}
+                    onChangeText={setSearchQuery}
+                    accessibilityLabel="Search the menu"
+                  />
+                  {searchQuery ? (
+                    <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={8} accessibilityLabel="Clear search">
+                      <X size={16} color="#94A3B8" />
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
               </View>
 
               {/* Category Pills */}
-              {!isTablet && categories.length > 1 && (
+              {!layout.rail && categories.length > 1 && (
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.categoryScroll}>
                   {categories.map((cat) => (
                     <TouchableOpacity
@@ -1067,17 +1151,6 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                     </TouchableOpacity>
                   ))}
                 </ScrollView>
-              )}
-
-              {isTablet && categories.length > 1 && (
-                <View style={styles.categoryHeading}>
-                  <Text style={styles.categoryHeadingText} numberOfLines={1}>
-                    {selectedCategory === 'all' ? 'All Dishes' : selectedCategory}
-                  </Text>
-                  <Text style={styles.categoryHeadingCount}>
-                    {filteredItems.length} {filteredItems.length === 1 ? 'item' : 'items'}
-                  </Text>
-                </View>
               )}
 
               {/* Menu Items List */}
@@ -1095,11 +1168,11 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                   style={styles.itemsScrollView}
                   contentContainerStyle={[
                     styles.itemsScrollContent,
-                    !isTablet && { paddingBottom: 92 },
+                    { paddingBottom: (isTablet ? 24 : 92) + bottomInset },
                   ]}
                   showsVerticalScrollIndicator={true}
                 >
-                  <View style={styles.itemsGrid}>
+                  <View style={styles.itemsGrid} onLayout={(e) => setGridWidth(e.nativeEvent.layout.width)}>
                     {filteredItems.map((item) => {
                       const id = item._id || (item as any).id;
                       const cartCount = getItemCartCount(id);
@@ -1113,7 +1186,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                           key={id}
                           style={[
                             styles.itemCard,
-                            isWideTablet && styles.itemCardWide,
+                            { width: tileWidth || '48%' },
                             cartCount > 0 && styles.itemCardSelected,
                           ]}
                           onPress={() => handleItemPress(item)}
@@ -1181,7 +1254,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                 <View
                   style={[
                     styles.mobileFloatingBar,
-                    { paddingBottom: 16 },
+                    { paddingBottom: 16 + bottomInset },
                   ]}
                 >
                   <View style={styles.mobileFloatingInfo}>
@@ -1211,7 +1284,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
 
           {/* Right Column: Order Details & Cart (Shown on Tablet OR Mobile 'cart' tab) */}
           {(isTablet || mobileTab === 'cart') && (
-            <View style={[styles.rightColumn, isTablet && styles.rightColumnTablet]}>
+            <View testID="pos-ticket" style={[styles.rightColumn, isTablet && styles.rightColumnTablet, isTablet && { width: layout.ticketWidth }]}>
               {!isTablet && (
                 <TouchableOpacity
                   style={styles.mobileBackBtn}
@@ -1232,40 +1305,53 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                     </View>
                   )}
                   <View style={styles.ctFlex} />
-                  <View
-                    style={[
-                      styles.ctChannelTag,
-                      channel === 'dine_in' ? styles.ctChannelDineIn : channel === 'delivery' ? styles.ctChannelDelivery : styles.ctChannelTakeaway,
-                    ]}
-                  >
-                    {channel === 'dine_in' ? (
-                      <UtensilsCrossed size={13} color="#6D28D9" />
-                    ) : channel === 'delivery' ? (
-                      <Bike size={13} color="#1D4ED8" />
-                    ) : (
-                      <ShoppingBag size={13} color="#C2410C" />
-                    )}
-                    <Text style={[styles.ctChannelText, { color: channel === 'dine_in' ? '#6D28D9' : channel === 'delivery' ? '#1D4ED8' : '#C2410C' }]}>
-                      {channel === 'dine_in' ? 'Dine-in' : channel === 'delivery' ? 'Delivery' : 'Takeaway'}
-                    </Text>
-                  </View>
+                  <Text style={styles.ctFor} numberOfLines={1}>
+                    {channel === 'dine_in'
+                      ? posTable || tableContext || tableNumber.trim()
+                        ? `Table ${posTable?.label || tableContext?.label || tableNumber.trim()}`
+                        : 'Dine-in'
+                      : channel === 'delivery'
+                        ? 'Delivery'
+                        : 'Takeaway'}
+                  </Text>
                 </View>
 
                 <View style={styles.ctFieldRow}>
                   {channel === 'dine_in' ? (
                     <>
-                      <View style={[styles.ctField, styles.ctFieldTable]}>
-                        <Hash size={15} color="#94A3B8" />
-                        <TextInput
-                          style={styles.ctInput}
-                          placeholder="Table"
-                          placeholderTextColor="#94A3B8"
-                          value={tableNumber}
-                          onChangeText={setTableNumber}
-                          autoCapitalize="characters"
-                          accessibilityLabel="Table number"
-                        />
-                      </View>
+                      {tableContext || typingTable ? (
+                        <View style={[styles.ctField, styles.ctFieldTable]}>
+                          <Hash size={15} color="#94A3B8" />
+                          <TextInput
+                            style={styles.ctInput}
+                            placeholder="Table"
+                            placeholderTextColor="#94A3B8"
+                            value={tableNumber}
+                            onChangeText={setTableNumber}
+                            editable={!tableContext}
+                            autoCapitalize="characters"
+                            accessibilityLabel="Table number"
+                          />
+                          {!tableContext ? (
+                            <TouchableOpacity onPress={() => setTablePickerOpen(true)} hitSlop={8} accessibilityRole="button" accessibilityLabel="Pick a table from the floor">
+                              <Armchair size={16} color="#6D28D9" />
+                            </TouchableOpacity>
+                          ) : null}
+                        </View>
+                      ) : (
+                        <TouchableOpacity
+                          style={[styles.ctField, styles.ctFieldTablePick, posTable && styles.ctFieldTableOn]}
+                          onPress={() => setTablePickerOpen(true)}
+                          accessibilityRole="button"
+                          accessibilityLabel={posTable ? `Table ${posTable.label}. Change table` : 'Choose a table'}
+                        >
+                          <Armchair size={15} color={posTable ? '#6D28D9' : '#94A3B8'} />
+                          <Text style={[styles.ctTablePickText, !posTable && styles.ctTablePickPlaceholder]} numberOfLines={1}>
+                            {posTable ? posTable.label : 'Table'}
+                          </Text>
+                          <ChevronDown size={15} color="#94A3B8" />
+                        </TouchableOpacity>
+                      )}
                       <View style={[styles.ctField, styles.ctFlex]}>
                         <User size={15} color="#94A3B8" />
                         <TextInput
@@ -1312,6 +1398,41 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                     </>
                   )}
                 </View>
+
+                {channel === 'dine_in' && !tableContext && posTable ? (
+                  <View style={styles.ctTableInfo}>
+                    {posTable.sessionId ? (
+                      <>
+                        <Users size={14} color="#6D28D9" />
+                        <Text style={styles.ctTableInfoText} numberOfLines={2}>
+                          Adds to Table {posTable.label}’s bill{posTable.partySize ? ` · ${posTable.partySize} guest${posTable.partySize === 1 ? '' : 's'}` : ''}
+                          {posTable.floorName ? ` · ${posTable.floorName}` : ''}
+                        </Text>
+                      </>
+                    ) : (
+                      <>
+                        <Text style={styles.ctTableInfoText} numberOfLines={1}>
+                          Seats Table {posTable.label}
+                          {posTable.floorName ? ` · ${posTable.floorName}` : ''}
+                        </Text>
+                        <View style={styles.ctGuests}>
+                          <TouchableOpacity onPress={() => setPosGuests((g) => Math.max(1, g - 1))} style={styles.ctGuestBtn} accessibilityRole="button" accessibilityLabel="Fewer guests">
+                            <Minus size={14} color="#334155" />
+                          </TouchableOpacity>
+                          <Text style={styles.ctGuestValue} accessibilityLabel={`${posGuests} guests`}>
+                            {posGuests} guest{posGuests === 1 ? '' : 's'}
+                          </Text>
+                          <TouchableOpacity onPress={() => setPosGuests((g) => Math.min(30, g + 1))} style={styles.ctGuestBtn} accessibilityRole="button" accessibilityLabel="More guests">
+                            <Plus size={14} color="#334155" />
+                          </TouchableOpacity>
+                        </View>
+                      </>
+                    )}
+                    <TouchableOpacity onPress={clearPosTable} hitSlop={8} accessibilityRole="button" accessibilityLabel="Remove table">
+                      <X size={15} color="#94A3B8" />
+                    </TouchableOpacity>
+                  </View>
+                ) : null}
 
                 {channel === 'delivery' && (
                   <View style={styles.dlBox}>
@@ -1474,24 +1595,27 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
               )}
 
               {/* ── Checkout ───────────────────────────────────────── */}
-              <View style={[styles.ctFooter, !isTablet && { paddingBottom: 18 }]}>
-                <View style={styles.ctPaySegment} accessibilityRole="radiogroup" accessibilityLabel="Payment method">
+              <View style={[styles.ctFooter, { paddingBottom: (isTablet ? 16 : 18) + bottomInset }]}>
+                <View style={styles.ctPayRadios} accessibilityRole="radiogroup" accessibilityLabel="Payment method">
+                  <Text style={styles.ctPayLabel}>Payment</Text>
                   {([
-                    { key: 'cash', label: 'Cash', Icon: Banknote, color: '#047857' },
-                    { key: 'card', label: 'Card', Icon: CreditCard, color: '#1D4ED8' },
-                  ] as const).map(({ key, label, Icon, color }) => {
+                    { key: 'cash', label: 'Cash' },
+                    { key: 'card', label: 'Card' },
+                  ] as const).map(({ key, label }) => {
                     const active = paymentType === key;
                     return (
                       <TouchableOpacity
                         key={key}
-                        style={[styles.ctPayBtn, active && styles.ctPayBtnActive]}
+                        style={styles.ctRadioOption}
                         onPress={() => setPaymentType(key)}
-                        activeOpacity={0.8}
+                        hitSlop={8}
+                        activeOpacity={0.7}
                         accessibilityRole="radio"
                         accessibilityState={{ selected: active }}
+                        accessibilityLabel={label}
                       >
-                        <Icon size={17} color={active ? color : '#64748B'} />
-                        <Text style={[styles.ctPayText, active && { color, fontWeight: '800' }]}>{label}</Text>
+                        <View style={[styles.ctRadio, active && styles.ctRadioOn]}>{active ? <View style={styles.ctRadioDot} /> : null}</View>
+                        <Text style={[styles.ctRadioText, active && styles.ctRadioTextOn]}>{label}</Text>
                       </TouchableOpacity>
                     );
                   })}
@@ -1942,6 +2066,17 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
             </View>
           </Modal>
         ) : null}
+      <TablePicker
+        visible={tablePickerOpen}
+        selectedTableId={posTable?.tableId}
+        onPick={pickTable}
+        onTypeInstead={() => {
+          clearPosTable();
+          setTypingTable(true);
+          setTablePickerOpen(false);
+        }}
+        onClose={() => setTablePickerOpen(false)}
+      />
     </SafeAreaView>
       </SafeAreaProvider>
   </Modal>
@@ -1949,175 +2084,35 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
 };
 
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-  },
-  fullScreenContainer: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-  },
+  safeArea: { flex: 1, backgroundColor: '#FFFFFF' },
+  fullScreenContainer: { flex: 1, backgroundColor: '#F4F5F7' },
   modalBody: {
     flex: 1,
   },
   modalBodyTablet: {
     flexDirection: 'row',
   },
-  leftColumn: {
-    flex: 1,
-    paddingHorizontal: 16,
-    paddingTop: 4,
-    borderBottomWidth: 0,
-    backgroundColor: '#FFFFFF',
-  },
-  leftColumnTablet: {
-    flex: 1.35,
-    padding: 18,
-    borderRightWidth: 1,
-    borderRightColor: '#E2E8F0',
-    borderBottomWidth: 0,
-  },
-  channelRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 12,
-  },
-  channelChip: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 8,
-    borderRadius: 10,
-    backgroundColor: '#F8FAFC',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  channelChipDineInActive: {
-    backgroundColor: '#F5F3FF',
-    borderColor: '#DDD6FE',
-  },
-  channelChipTakeawayActive: {
-    backgroundColor: '#FFF7ED',
-    borderColor: '#FED7AA',
-  },
-  channelChipText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#64748B',
-  },
-  channelChipTextDineInActive: {
-    color: '#7C3AED',
-  },
-  channelChipTextTakeawayActive: {
-    color: '#EA580C',
-  },
-  channelChipDeliveryActive: {
-    backgroundColor: '#EFF6FF',
-    borderColor: '#BFDBFE',
-  },
-  channelChipTextDeliveryActive: {
-    color: '#1D4ED8',
-  },
-  searchRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F8FAFC',
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    paddingHorizontal: 10,
-    marginBottom: 10,
-    height: 40,
-    gap: 8,
-  },
-  searchInput: {
-    flex: 1,
-    fontSize: 12.5,
-    color: '#0F172A',
-    fontWeight: '500',
-  },
-  categoryRail: {
-    width: 128,
-    backgroundColor: '#F1F5F9',
-    borderRightWidth: 1,
-    borderRightColor: '#E2E8F0',
-  },
-  categoryRailWide: {
-    width: 150,
-  },
-  categoryRailContent: {
-    padding: 10,
-    gap: 8,
-  },
-  railTile: {
-    minHeight: 68,
-    borderRadius: 8,
-    backgroundColor: '#1E293B',
-    paddingHorizontal: 10,
-    paddingVertical: 10,
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 4,
-  },
-  railTileActive: {
-    backgroundColor: '#FF5C39',
-  },
-  railTileText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '700',
-    textAlign: 'center',
-    lineHeight: 18,
-  },
-  railTileCount: {
-    color: '#94A3B8',
-    fontSize: 11.5,
-    fontWeight: '700',
-  },
-  railTileCountActive: {
-    color: '#FFE4DC',
-  },
-  categoryHeading: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    justifyContent: 'space-between',
-    gap: 8,
-    marginBottom: 10,
-  },
-  categoryHeadingText: {
-    flex: 1,
-    fontSize: 17,
-    fontWeight: '800',
-    color: '#0F172A',
-    letterSpacing: -0.3,
-  },
-  categoryHeadingCount: {
-    fontSize: 12.5,
-    fontWeight: '600',
-    color: '#64748B',
-  },
+  leftColumn: { flex: 1, paddingHorizontal: 14, paddingTop: 8, backgroundColor: '#F4F5F7' },
+  leftColumnTablet: { flex: 1, minWidth: 0, paddingHorizontal: 18, paddingTop: 16 },
+  searchRow: { flexDirection: 'row', alignItems: 'center', gap: 8, height: 46, paddingHorizontal: 14, marginBottom: 12, borderRadius: 12, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E5E7EB' },
+  searchInput: { flex: 1, fontSize: 15, color: '#0F172A', fontWeight: '500' },
+  categoryRail: { backgroundColor: '#111827' },
+  categoryRailContent: { paddingVertical: 12, paddingHorizontal: 10, gap: 6 },
+  railTile: { minHeight: 60, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 10, justifyContent: 'center', gap: 3 },
+  railTileActive: { backgroundColor: '#FF5C39' },
+  railTileText: { color: '#F9FAFB', fontSize: 14, fontWeight: '700', lineHeight: 18 },
+  railTileCount: { color: '#9CA3AF', fontSize: 12, fontWeight: '700' },
+  railTileCountActive: { color: '#FFE4DC' },
+  categoryHeading: { flex: 1, flexDirection: 'row', alignItems: 'baseline', gap: 10, minWidth: 0 },
+  categoryHeadingText: { flexShrink: 1, fontSize: 22, fontWeight: '800', color: '#0F172A', letterSpacing: -0.4 },
+  categoryHeadingCount: { fontSize: 13, fontWeight: '600', color: '#6B7280' },
   categoryScroll: {
     flexGrow: 0,
     marginBottom: 10,
   },
-  catChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 8,
-    backgroundColor: '#F1F5F9',
-    marginRight: 6,
-  },
-  catChipActive: {
-    backgroundColor: '#0F172A',
-  },
-  catChipText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#64748B',
-  },
+  catChip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E5E7EB', marginRight: 8 },
+  catChipActive: { backgroundColor: '#111827', borderColor: '#111827' },
+  catChipText: { fontSize: 13, fontWeight: '700', color: '#374151' },
   catChipTextActive: {
     color: '#FFFFFF',
   },
@@ -2127,33 +2122,14 @@ const styles = StyleSheet.create({
   itemsScrollContent: {
     paddingBottom: 24,
   },
-  itemsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  itemCard: {
-    flexBasis: '48%',
-    flexGrow: 1,
-    maxWidth: '49%',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    borderWidth: 1.5,
-    borderColor: '#E2E8F0',
-    overflow: 'hidden',
-  },
-  itemCardWide: {
-    flexBasis: '31.5%',
-    maxWidth: '32.5%',
-  },
+  itemsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
+  itemCard: { backgroundColor: '#FFFFFF', borderRadius: 16, borderWidth: 2, borderColor: 'transparent', overflow: 'hidden', shadowColor: '#0F172A', shadowOpacity: 0.06, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
   itemImageBox: {
     width: '100%',
     aspectRatio: 4 / 3,
     backgroundColor: '#F1F5F9',
   },
-  itemImageBoxTablet: {
-    aspectRatio: 16 / 11,
-  },
+  itemImageBoxTablet: { aspectRatio: 16 / 10 },
   itemImage: {
     width: '100%',
     height: '100%',
@@ -2168,53 +2144,21 @@ const styles = StyleSheet.create({
     top: 8,
     left: 8,
   },
-  itemTitleTablet: {
-    fontSize: 14,
-    lineHeight: 18,
-    minHeight: 36,
-  },
+  itemTitleTablet: { fontSize: 15, lineHeight: 19, minHeight: 38 },
   itemPriceRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
   },
-  itemPriceTextTablet: {
-    fontSize: 15,
-  },
+  itemPriceTextTablet: { fontSize: 17 },
   itemAddIconActive: {
     backgroundColor: '#FF5C39',
   },
-  itemCardSelected: {
-    borderColor: '#FF5C39',
-    backgroundColor: '#FFF9F7',
-  },
-  itemContent: {
-    paddingHorizontal: 10,
-    paddingTop: 8,
-    paddingBottom: 10,
-    gap: 6,
-  },
-  itemTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#1E293B',
-    lineHeight: 17,
-    minHeight: 34,
-  },
-  itemPriceText: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#0F172A',
-    fontVariant: ['tabular-nums'],
-  },
-  itemAddIcon: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    backgroundColor: '#FFF0EC',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  itemCardSelected: { borderColor: '#FF5C39' },
+  itemContent: { paddingHorizontal: 12, paddingTop: 10, paddingBottom: 12, gap: 8 },
+  itemTitle: { fontSize: 14, fontWeight: '700', color: '#111827', lineHeight: 18, minHeight: 36 },
+  itemPriceText: { fontSize: 16, fontWeight: '800', color: '#111827', fontVariant: ['tabular-nums'] },
+  itemAddIcon: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#FFF0EC', alignItems: 'center', justifyContent: 'center' },
   itemQtyBadge: {
     position: 'absolute',
     top: 8,
@@ -2257,23 +2201,11 @@ const styles = StyleSheet.create({
   },
   /* ── Order / cart panel ─────────────────────────────────── */
   ctFlex: { flex: 1, minWidth: 0 },
-  ctTop: {
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 16,
-    paddingTop: 14,
-    paddingBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E2E8F0',
-    gap: 10,
-  },
+  ctTop: { backgroundColor: '#FFFFFF', paddingHorizontal: 16, paddingTop: 16, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: '#F1F5F9', gap: 10 },
   ctTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  ctTitle: { fontSize: 18, fontWeight: '800', color: '#0F172A', letterSpacing: -0.3 },
+  ctTitle: { fontSize: 20, fontWeight: '800', color: '#0F172A', letterSpacing: -0.4 },
   ctCountBadge: { minWidth: 24, height: 22, borderRadius: 11, backgroundColor: '#FF5C39', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 7 },
   ctCountText: { color: '#FFFFFF', fontSize: 12, fontWeight: '800' },
-  ctChannelTag: { flexDirection: 'row', alignItems: 'center', gap: 5, borderRadius: 6, paddingHorizontal: 9, paddingVertical: 4 },
-  ctChannelDineIn: { backgroundColor: '#EDE9FE' },
-  ctChannelTakeaway: { backgroundColor: '#FFEDD5' },
-  ctChannelDelivery: { backgroundColor: '#DBEAFE' },
   dlBox: { gap: 8, marginTop: 8 },
   dlChosen: {
     flexDirection: 'row',
@@ -2304,20 +2236,18 @@ const styles = StyleSheet.create({
   },
   dlResultText: { flex: 1, fontSize: 13.5, color: '#0F172A' },
   dlHint: { fontSize: 12.5, color: '#64748B' },
-  ctChannelText: { fontSize: 12.5, fontWeight: '700' },
   ctFieldRow: { flexDirection: 'row', gap: 8 },
-  ctField: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    minHeight: 44,
-    paddingHorizontal: 12,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    backgroundColor: '#F8FAFC',
-  },
+  ctField: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 46, paddingHorizontal: 12, borderRadius: 12, borderWidth: 1, borderColor: '#E5E7EB', backgroundColor: '#F9FAFB' },
   ctFieldTable: { width: 112 },
+  ctFieldTablePick: { width: 112 },
+  ctFieldTableOn: { borderColor: '#C4B5FD', backgroundColor: '#F5F3FF' },
+  ctTablePickText: { flex: 1, fontSize: 14.5, fontWeight: '700', color: '#0F172A' },
+  ctTablePickPlaceholder: { color: '#94A3B8', fontWeight: '600' },
+  ctTableInfo: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, backgroundColor: '#F5F3FF', borderWidth: 1, borderColor: '#DDD6FE' },
+  ctTableInfoText: { flex: 1, fontSize: 13, fontWeight: '600', color: '#5B21B6' },
+  ctGuests: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  ctGuestBtn: { width: 28, height: 28, borderRadius: 14, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#DDD6FE', alignItems: 'center', justifyContent: 'center' },
+  ctGuestValue: { fontSize: 13, fontWeight: '700', color: '#0F172A', minWidth: 64, textAlign: 'center' },
   ctInput: { flex: 1, fontSize: 14.5, color: '#0F172A', paddingVertical: 8, fontWeight: '600' },
   ctNoteField: { backgroundColor: '#FFFBEB', borderColor: '#FDE68A' },
   ctAddNote: { flexDirection: 'row', alignItems: 'center', gap: 5, alignSelf: 'flex-start', minHeight: 32 },
@@ -2351,26 +2281,15 @@ const styles = StyleSheet.create({
   ctEmptyTitle: { fontSize: 16, fontWeight: '800', color: '#0F172A' },
   ctEmptyText: { fontSize: 13.5, color: '#64748B', marginTop: 4, textAlign: 'center' },
 
-  ctFooter: {
-    backgroundColor: '#FFFFFF',
-    borderTopWidth: 1,
-    borderTopColor: '#E2E8F0',
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 14,
-    gap: 10,
-  },
-  ctPaySegment: { flexDirection: 'row', backgroundColor: '#F1F5F9', borderRadius: 10, padding: 3 },
-  ctPayBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, minHeight: 40, borderRadius: 8 },
-  ctPayBtnActive: {
-    backgroundColor: '#FFFFFF',
-    shadowColor: '#000',
-    shadowOpacity: 0.08,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 1 },
-    elevation: 1,
-  },
-  ctPayText: { fontSize: 14.5, fontWeight: '700', color: '#64748B' },
+  ctFooter: { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 16, gap: 12, backgroundColor: '#FFFFFF', borderTopWidth: 1, borderTopColor: '#E5E7EB' },
+  ctPayRadios: { flexDirection: 'row', alignItems: 'center', gap: 22 },
+  ctPayLabel: { fontSize: 14, fontWeight: '700', color: '#64748B', marginRight: 2 },
+  ctRadioOption: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 4 },
+  ctRadio: { width: 20, height: 20, borderRadius: 10, borderWidth: 2, borderColor: '#CBD5E1', alignItems: 'center', justifyContent: 'center' },
+  ctRadioOn: { borderColor: '#FF5C39' },
+  ctRadioDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#FF5C39' },
+  ctRadioText: { fontSize: 15, fontWeight: '600', color: '#0F172A' },
+  ctRadioTextOn: { color: '#FF5C39', fontWeight: '700' },
   ctPrintRow: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 32 },
   ctPrintText: { flex: 1, fontSize: 13.5, color: '#475569', fontWeight: '600' },
   ctSwitch: { width: 40, height: 24, borderRadius: 12, backgroundColor: '#CBD5E1', padding: 2, justifyContent: 'center' },
@@ -2419,19 +2338,10 @@ const styles = StyleSheet.create({
   pcConfirmText: { color: '#FFFFFF', fontSize: 16, fontWeight: '800' },
 
   /* ── POS top bar ────────────────────────────────────────── */
-  posTopBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E2E8F0',
-  },
-  posBrand: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 },
-  posBrandIcon: { width: 40, height: 40, borderRadius: 10, backgroundColor: '#FFF0EC', alignItems: 'center', justifyContent: 'center' },
+  posTopBar: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 16, paddingVertical: 10, backgroundColor: '#FFFFFF', borderBottomWidth: 1, borderBottomColor: '#E5E7EB' },
+  posBrandTablet: { flexShrink: 0, maxWidth: 300 },
+  posBrand: { flexDirection: 'row', alignItems: 'center', gap: 10, flexShrink: 1, minWidth: 0 },
+  posBrandIcon: { width: 40, height: 40, borderRadius: 12, backgroundColor: '#FF5C39', alignItems: 'center', justifyContent: 'center' },
   posBrandTextCol: { flexShrink: 1, minWidth: 0 },
   posBrandRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   posBrandText: { fontSize: 20, fontWeight: '900', color: '#0F172A', letterSpacing: 2 },
@@ -2440,49 +2350,34 @@ const styles = StyleSheet.create({
   posLiveText: { fontSize: 10.5, fontWeight: '800', color: '#047857', letterSpacing: 0.6 },
   posSub: { fontSize: 12.5, color: '#64748B', fontWeight: '600', marginTop: 1 },
   posClock: { fontSize: 20, fontWeight: '800', color: '#64748B', fontVariant: ['tabular-nums'], marginLeft: 6 },
-  posControls: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  posClearBtn: {
-    height: 44,
-    minWidth: 44,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#FECACA',
-    backgroundColor: '#FEF2F2',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-  },
+  posControls: { flexDirection: 'row', alignItems: 'center', gap: 8, marginLeft: 'auto', flexShrink: 0 },
+  posClearBtn: { height: 44, minWidth: 44, paddingHorizontal: 12, borderRadius: 12, backgroundColor: '#FEF2F2', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
   posClearText: { fontSize: 14, fontWeight: '700', color: '#DC2626' },
-  posExitBtn: {
-    height: 44,
-    minWidth: 44,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-  },
+  posExitBtn: { height: 44, minWidth: 44, paddingHorizontal: 12, borderRadius: 12, backgroundColor: '#F1F5F9', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
   posExitText: { fontSize: 14, fontWeight: '700', color: '#0F172A' },
+  otSwitch: { flexDirection: 'row', gap: 4, padding: 4, borderRadius: 14, backgroundColor: '#F1F5F9' },
+  otSwitchPhone: { flex: 1 },
+  // Tablets: fills the space between the brand and the buttons, but never pushes them out
+  otSwitchTablet: { flex: 1, maxWidth: 560, minWidth: 0 },
+  otPhoneRow: { flexDirection: 'row', paddingHorizontal: 14, paddingTop: 10, backgroundColor: '#F4F5F7' },
+  otOption: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, minHeight: 40, paddingHorizontal: 10, borderRadius: 10, flexGrow: 1, flexBasis: 0, minWidth: 0 },
+  otOptionOn: { backgroundColor: '#111827' },
+  otOptionLocked: { opacity: 0.4 },
+  otText: { fontSize: 14, fontWeight: '700', color: '#475569' },
+  otTextOn: { color: '#FFFFFF' },
+  menuHead: {},
+  menuHeadTablet: { flexDirection: 'row', alignItems: 'center', gap: 14, marginBottom: 2 },
+  searchRowTablet: { width: 320, flexShrink: 1, minWidth: 180, marginBottom: 12 },
+  ctFor: { fontSize: 14, fontWeight: '700', color: '#475569', maxWidth: 160 },
   posBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 9, borderBottomWidth: 1 },
   posBannerInfo: { backgroundColor: '#EFF6FF', borderBottomColor: '#BFDBFE' },
   posBannerSuccess: { backgroundColor: '#ECFDF5', borderBottomColor: '#A7F3D0' },
   posBannerText: { flex: 1, fontSize: 13.5, fontWeight: '700' },
 
-  rightColumn: {
-    flex: 1,
-    backgroundColor: '#F8FAFC',
-    justifyContent: 'space-between',
-  },
-  rightColumnTablet: {
-    flex: 1,
-    backgroundColor: '#F8FAFC',
-    maxHeight: '100%',
-  },
+  rightColumn: { flex: 1, backgroundColor: '#FFFFFF', justifyContent: 'space-between' },
+  // Set width beside the menu. `flex: 0` + `flexBasis: 'auto'` undo the base `flex: 1` (whose flexBasis 0 would
+  // otherwise win over `width` and collapse the ticket to nothing).
+  rightColumnTablet: { flex: 0, flexBasis: 'auto', flexGrow: 0, flexShrink: 0, backgroundColor: '#FFFFFF', maxHeight: '100%', borderLeftWidth: 1, borderLeftColor: '#E5E7EB' },
   // Mobile Specific Bar & Tab Styles
   mobileSegmentBar: {
     flexDirection: 'row',
