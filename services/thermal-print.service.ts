@@ -52,6 +52,8 @@ import {
 } from './printer/receipt-document';
 import { resolvePrinter } from './printer/printer-registry';
 import { PrintQueueService } from './printer/print-queue.service';
+import { orderService } from './order.service';
+import { claimOrderAlert } from './order-alert-registry';
 import {
   getActiveReceiptTemplate,
   ReceiptTemplate,
@@ -138,22 +140,188 @@ async function readAutoPrinted(): Promise<Record<string, number>> {
   }
 }
 
-async function markAutoPrinted(orderKey: string): Promise<void> {
+/**
+ * Runs read-modify-write updates of the print bookkeeping one at a time.
+ * AsyncStorage has no transactions: when 10–20 orders print together, parallel
+ * "read map → add id → write map" updates overwrite each other (in a 20-order burst only
+ * 2 orders stayed recorded as printed), so orders could re-print or never be retried.
+ */
+let printStoreChain: Promise<unknown> = Promise.resolve();
+function withPrintStore<T>(update: () => Promise<T>): Promise<T> {
+  const run = printStoreChain.then(update, update);
+  printStoreChain = run.catch(() => {});
+  return run;
+}
+
+function markAutoPrinted(orderKey: string): Promise<void> {
+  return withPrintStore(async () => {
+    try {
+      const map = await readAutoPrinted();
+      map[orderKey] = Date.now();
+      await AsyncStorage.setItem(AUTO_PRINTED_KEY, JSON.stringify(map));
+    } catch {}
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Retry for failed automatic prints.
+// Every channel (socket, push, polling, background task) claims an order before printing, so a
+// failed auto-print used to be lost for good: nothing would ever try that order again. Failed
+// orders are remembered here (survives restarts) and retried with backoff from the live loop.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const AUTO_PRINT_RETRY_KEY = '@krifoo_auto_print_retry';
+const RETRY_MAX_ATTEMPTS = 5;
+const RETRY_MAX_AGE_MS = 2 * 60 * 60 * 1000;
+const RETRY_BASE_DELAY_MS = 30 * 1000;
+/** Orders in these states no longer need a kitchen ticket. */
+const RETRY_SKIP_STATUSES = new Set(['cancelled', 'delivered', 'awaiting_payment']);
+
+type RetryEntry = { attempts: number; firstFailedAt: number; lastTriedAt: number };
+
+/** Orders currently being re-printed by retryFailedAutoPrints (their failures stay quiet until the last attempt). */
+const retryingNow = new Map<string, number>();
+let retryRunning = false;
+
+async function readRetryList(): Promise<Record<string, RetryEntry>> {
   try {
-    const map = await readAutoPrinted();
-    map[orderKey] = Date.now();
-    await AsyncStorage.setItem(AUTO_PRINTED_KEY, JSON.stringify(map));
+    const raw = await AsyncStorage.getItem(AUTO_PRINT_RETRY_KEY);
+    return raw ? JSON.parse(raw) || {} : {};
+  } catch {
+    return {};
+  }
+}
+
+async function writeRetryList(map: Record<string, RetryEntry>): Promise<void> {
+  try {
+    await AsyncStorage.setItem(AUTO_PRINT_RETRY_KEY, JSON.stringify(map));
   } catch {}
+}
+
+function recordAutoPrintFailure(orderId: string): Promise<void> {
+  if (!orderId) return Promise.resolve();
+  return withPrintStore(async () => {
+    const map = await readRetryList();
+    const now = Date.now();
+    const prev = map[orderId];
+    map[orderId] = { attempts: (prev?.attempts || 0) + 1, firstFailedAt: prev?.firstFailedAt || now, lastTriedAt: now };
+    await writeRetryList(map);
+  });
+}
+
+function clearAutoPrintFailure(orderId: string): Promise<void> {
+  return withPrintStore(async () => {
+    const map = await readRetryList();
+    if (!map[orderId]) return;
+    delete map[orderId];
+    await writeRetryList(map);
+  });
+}
+
+/**
+ * Re-tries automatic prints that failed (printer off, out of range, Wi-Fi drop…).
+ * Safe to call often: it backs off per order, re-fetches the order so the ticket is current,
+ * drops orders that were cancelled/completed, and never prints an order twice.
+ */
+export async function retryFailedAutoPrints(): Promise<void> {
+  if (retryRunning) return;
+  retryRunning = true;
+  try {
+    const map = await readRetryList();
+    const ids = Object.keys(map);
+    if (ids.length === 0) return;
+    const now = Date.now();
+    const printed = await readAutoPrinted();
+    const drop = new Set<string>();
+
+    for (const id of ids) {
+      const entry = map[id];
+      if (printed[id] || entry.attempts >= RETRY_MAX_ATTEMPTS || now - entry.firstFailedAt > RETRY_MAX_AGE_MS) {
+        drop.add(id);
+        continue;
+      }
+      // 30s, 60s, 120s, 240s… between attempts
+      if (now - entry.lastTriedAt < RETRY_BASE_DELAY_MS * 2 ** (entry.attempts - 1)) continue;
+
+      let order: any = null;
+      try {
+        const res = await orderService.getOrderById(id);
+        order = res?.success ? res.data : null;
+      } catch {
+        continue; // offline: try again on a later tick
+      }
+      if (!order || RETRY_SKIP_STATUSES.has(String(order.status))) {
+        drop.add(id);
+        continue;
+      }
+      retryingNow.set(id, entry.attempts + 1);
+      try {
+        // No trigger: this order already passed the trigger check when it first failed.
+        // The print job itself updates the list (clears on success, counts the attempt on failure).
+        await printThermalReceipt(order, false);
+      } finally {
+        retryingNow.delete(id);
+      }
+    }
+    if (drop.size) {
+      // Re-read inside the lock: the print jobs above have written to the list meanwhile
+      await withPrintStore(async () => {
+        const latest = await readRetryList();
+        drop.forEach((id) => delete latest[id]);
+        await writeRetryList(latest);
+      });
+    }
+  } finally {
+    retryRunning = false;
+  }
+}
+
+/**
+ * Print a just-created POS order exactly once on this device.
+ * The order's own socket event / push can arrive before the POS gets its HTTP response, and both
+ * paths used to print — so POS orders came out twice. This claims the order (so the live alert
+ * skips it), reuses an auto-print that is already running, and records the print.
+ */
+export async function printNewPosOrderOnce(order: any): Promise<boolean> {
+  const orderId = String(order?._id || order?.id || '');
+  if (orderId) {
+    claimOrderAlert(orderId);
+    const running = inFlight.get(`${orderId}|a`);
+    if (running && (await running)) return true;
+    const printed = await readAutoPrinted();
+    if (printed[orderId]) return true;
+  }
+  const ok = await printThermalReceipt(order, true);
+  if (ok && orderId) await markAutoPrinted(orderId);
+  return ok;
 }
 
 /**
  * Resolves any logo URI (remote http/https, file://, content://) into an inline base64 data URI.
  * Times out after 8s so a slow image never blocks printing.
  */
-export async function resolveLogoAsBase64(uri?: string): Promise<string> {
-  if (!uri || !uri.trim()) return '';
+/**
+ * One download per logo URL, shared by every receipt. In a rush (10–20 orders at once) each
+ * print used to download the logo again — up to 8s each — before it could even join the
+ * printer queue. Failures are not cached, so a later print tries again.
+ */
+const logoCache = new Map<string, Promise<string>>();
+
+export function resolveLogoAsBase64(uri?: string): Promise<string> {
+  if (!uri || !uri.trim()) return Promise.resolve('');
   const clean = uri.trim();
-  if (clean.startsWith('data:image/')) return clean;
+  if (clean.startsWith('data:image/')) return Promise.resolve(clean);
+  const cached = logoCache.get(clean);
+  if (cached) return cached;
+  const pending = downloadLogoAsBase64(clean).then((logo) => {
+    if (!logo) logoCache.delete(clean);
+    return logo;
+  });
+  logoCache.set(clean, pending);
+  return pending;
+}
+
+async function downloadLogoAsBase64(clean: string): Promise<string> {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 8000);
@@ -488,7 +656,7 @@ async function runPrintJob(
     trigger: (isManual ? 'manual_click' : 'auto_print') as PrintJobReport['trigger'],
   };
 
-  const finish = (partial: Partial<PrintJobReport> & Pick<PrintJobReport, 'success'>): boolean => {
+  const finish = async (partial: Partial<PrintJobReport> & Pick<PrintJobReport, 'success'>): Promise<boolean> => {
     const report: PrintJobReport = {
       ...baseReport,
       brand: 'unknown',
@@ -503,8 +671,17 @@ async function runPrintJob(
       ...partial,
     };
     storeReport(report);
-    if (!report.success && !report.skipped && !isManual && report.error !== 'Print cancelled.') {
-      DeviceEventEmitter.emit(PRINT_FAILED_EVENT, report);
+    if (!isManual && !report.skipped && report.error !== 'Print cancelled.') {
+      if (report.success) {
+        await clearAutoPrintFailure(orderId);
+      } else {
+        await recordAutoPrintFailure(orderId);
+        // Tell staff on the first failure and when retries give up — not on every quiet retry
+        const attempt = retryingNow.get(orderId);
+        if (attempt === undefined || attempt >= RETRY_MAX_ATTEMPTS) {
+          DeviceEventEmitter.emit(PRINT_FAILED_EVENT, report);
+        }
+      }
     }
     console.log(
       `[Print] ${orderNum} ${report.trigger} → ${report.skipped ? 'SKIPPED' : report.success ? 'PRINTED' : 'FAILED'}` +

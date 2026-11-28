@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Tabs } from 'expo-router';
 import { Colors } from '../../constants/colors';
 import { Home, Store, Receipt, Users, Menu as MenuIcon, Settings } from 'lucide-react-native';
@@ -11,6 +11,7 @@ import {
   Platform,
   Animated,
   useWindowDimensions,
+  Keyboard,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
@@ -177,11 +178,25 @@ function AdminTabBar({ state, descriptors, navigation }: any) {
   const groupMaxWidth = isLargeTablet ? 720 : isTablet ? 600 : undefined;
   const maxItemWidth = isTablet ? 168 : undefined;
 
+  // Android resizes the window for the keyboard, which would push the bar up on top of it while typing
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    const show = Keyboard.addListener('keyboardDidShow', () => setKeyboardOpen(true));
+    const hide = Keyboard.addListener('keyboardDidHide', () => setKeyboardOpen(false));
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
+
   const visibleRoutes = state.routes.filter((route: any) => {
     if (isSuperAdmin && route.name === 'menu') return false;
     if (!isSuperAdmin && (route.name === 'restaurants' || route.name === 'users')) return false;
     return true;
   });
+
+  if (keyboardOpen) return null;
 
   return (
     <View

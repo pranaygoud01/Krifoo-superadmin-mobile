@@ -4,7 +4,7 @@ import { Bike, Check, ChevronRight, Inbox, ShoppingBag, UtensilsCrossed } from '
 import type { Order } from '../../types';
 import { Colors } from '../../constants/colors';
 import { getOrderFulfillmentType } from '../../utils/order-fulfillment';
-import { getOrderStatusColor, getOrderStatusLabel, getOrderStatusSurface } from '../../utils/order-status';
+import { getOrderStatusColor, getOrderStatusLabel, getOrderStatusSurface, isActiveOrder } from '../../utils/order-status';
 import { formatDuration, getOrderTiming, useNow } from '../../utils/order-timing';
 
 /* ── Quick action (one tap moves the order to its next step) ───────────── */
@@ -48,7 +48,8 @@ const TYPE_ICON = {
   dine_in: { Icon: UtensilsCrossed, color: '#6D28D9', bg: '#EDE9FE', label: 'Dine-in' },
 } as const;
 
-const isActive = (o: Order) => o.status !== 'delivered' && o.status !== 'cancelled';
+// Same rule as the home channel cards: rejected orders and unpaid card checkouts aren't active either
+const isActive = (o: Order) => isActiveOrder(o as any);
 
 const customerOf = (o: Order) =>
   (typeof o.customerId === 'object' && o.customerId?.fullName) || o.customerDetails?.name || 'Customer';

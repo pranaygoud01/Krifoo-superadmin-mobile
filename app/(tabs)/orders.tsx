@@ -33,8 +33,17 @@ import { Skeleton } from '../../components/Skeleton';
 import { OrderCountdownBadge } from '../../components/OrderCountdownBadge';
 import { EditExpectedTimeModal } from '../../components/order/EditExpectedTimeModal';
 import { FilterSheet, FilterSection, FilterChips } from '../../components/filters/FilterSheet';
-import { getOrderFulfillmentType } from '../../utils/order-fulfillment';
-import { getOrderStatusColor, getOrderStatusSurface } from '../../utils/order-status';
+import { getOrderFulfillmentType, matchesOrderTypeFilter, ORDER_TYPE_FILTER_VALUES } from '../../utils/order-fulfillment';
+import { getOrderStatusColor, getOrderStatusSurface, ACTIVE_ORDER_STATUSES } from '../../utils/order-status';
+import { facetedFilter } from '../../utils/faceted-filter';
+import {
+  DatePresetKey,
+  PeriodRange,
+  getPeriodRange,
+  isInPeriod as isInPeriodBase,
+  isOrderPaid,
+  paymentKindOf,
+} from '../../utils/order-filters';
 import { useAuth } from '../../context/AuthContext';
 import {
   Search,
@@ -112,7 +121,10 @@ const STATUS_TABS = [
   { id: 'all', label: 'All Orders', subtitle: 'All Statuses', statuses: [] as OrderStatus[], accentColor: '#11181C', Icon: List },
   { id: 'new', label: 'New Orders', subtitle: 'Awaiting Acceptance', statuses: ['placed'] as OrderStatus[], accentColor: '#F59E0B', Icon: Inbox },
   { id: 'kitchen', label: 'In Kitchen', subtitle: 'Preparing & Cooking', statuses: ['confirmed', 'preparing'] as OrderStatus[], accentColor: '#3B82F6', Icon: ChefHat },
-  { id: 'pickup', label: 'Self Pickup / Takeaway', subtitle: 'Ready for Collection', statuses: ['ready_for_pickup'] as OrderStatus[], accentColor: '#FF5C39', Icon: ShoppingBag },
+  // Pickup & takeaway orders that are ready (see tabCounts / activeTabOrders: isOrderPickup).
+  // Only those go through "ready": dine-in goes kitchen → served, delivery → out for delivery.
+  // Same words as the status badge on these cards.
+  { id: 'pickup', label: 'Ready for Collection', subtitle: 'Pickup & takeaway', statuses: ['ready_for_pickup'] as OrderStatus[], accentColor: '#FF5C39', Icon: ShoppingBag },
   { id: 'delivery', label: 'Out for Delivery', subtitle: 'Rider on the Way', statuses: ['out_for_delivery'] as OrderStatus[], accentColor: '#8B5CF6', Icon: Bike },
   { id: 'completed', label: 'Completed', subtitle: 'Delivered Successfully', statuses: ['delivered'] as OrderStatus[], accentColor: '#10B981', Icon: CheckCircle2 },
   { id: 'cancelled', label: 'Cancelled', subtitle: 'Not Fulfilled', statuses: ['cancelled'] as OrderStatus[], accentColor: '#EF4444', Icon: CircleX },
@@ -353,6 +365,9 @@ function formatPaymentLabel(order: Order) {
 }
 
 
+
+/** In the chosen period, with this screen's "still in progress" rule (see utils/order-filters). */
+const isInPeriod = (order: Order, range: PeriodRange) => isInPeriodBase(order, range, isActiveOrder);
 
 function isOrderPickup(order: Order): boolean {
   const f = getOrderFulfillmentType(order);
@@ -1244,7 +1259,7 @@ export default function OrdersScreen() {
   const [viewMode, setViewMode] = useState<'tabs' | 'board'>('tabs');
 
   useEffect(() => {
-    if (routeParams?.channel && ['all', 'delivery', 'pickup', 'takeaway', 'dine_in'].includes(routeParams.channel)) {
+    if (routeParams?.channel && (ORDER_TYPE_FILTER_VALUES as readonly string[]).includes(routeParams.channel)) {
       setTypeFilter(routeParams.channel);
     }
   }, [routeParams?.channel]);
@@ -1281,9 +1296,16 @@ export default function OrdersScreen() {
   const [filterModalOpen, setFilterModalOpen] = useState(false);
 
   // Date filter
-  const [datePreset, setDatePreset] = useState<'today' | 'yesterday' | '7days' | '30days' | 'all' | 'custom'>('today');
+  const [datePreset, setDatePreset] = useState<DatePresetKey>('today');
   const [customDateFrom, setCustomDateFrom] = useState('');
   const [customDateTo, setCustomDateTo] = useState('');
+  const periodRange = useMemo(
+    () => getPeriodRange(datePreset, customDateFrom, customDateTo),
+    [datePreset, customDateFrom, customDateTo]
+  );
+  /** Latest period for fetchOrders (a stable callback used by the poll and socket listeners). */
+  const periodRangeRef = useRef<PeriodRange>(periodRange);
+  periodRangeRef.current = periodRange;
   const [customDateModalOpen, setCustomDateModalOpen] = useState(false);
   const [tempDateFrom, setTempDateFrom] = useState('');
   const [tempDateTo, setTempDateTo] = useState('');
@@ -1330,48 +1352,6 @@ export default function OrdersScreen() {
     setActiveTab('all');
   }, []);
 
-  const filterCounts = useMemo(() => {
-    const total = orders.length;
-    const delivery = orders.filter((o) => getOrderFulfillmentType(o) === 'delivery').length;
-    const takeaway = orders.filter((o) => getOrderFulfillmentType(o) === 'takeaway').length;
-    const pickup = orders.filter((o) => getOrderFulfillmentType(o) === 'pickup').length;
-    const dineIn = orders.filter((o) => getOrderFulfillmentType(o) === 'dine_in').length;
-
-    const scheduled = orders.filter((o) => getOrderScheduleInfo(o).isScheduled).length;
-    const asap = total - scheduled;
-
-    const marketplace = orders.filter((o) => !getOrderSourceDetails(o).isExternal).length;
-    const external = orders.filter((o) => getOrderSourceDetails(o).isExternal).length;
-
-    const cash = orders.filter((o) => {
-      const p = (o.paymentType || (o as any).paymentMethod || '').toLowerCase();
-      return p.includes('cash') || p === 'cod';
-    }).length;
-    const card = orders.filter((o) => {
-      const p = (o.paymentType || (o as any).paymentMethod || '').toLowerCase();
-      return p.includes('card') || p.includes('stripe') || p.includes('online');
-    }).length;
-
-    const paid = orders.filter((o) => (o.paymentStatus || '').toLowerCase() === 'paid' || (o.paymentStatus || '').toLowerCase() === 'completed').length;
-    const pending = total - paid;
-
-    return {
-      total,
-      delivery,
-      takeaway,
-      pickup,
-      dineIn,
-      scheduled,
-      asap,
-      marketplace,
-      external,
-      cash,
-      card,
-      paid,
-      pending,
-    };
-  }, [orders]);
-
   const isFetchingRef = useRef(false);
   const [paperRollSize, setPaperRollSize] = useState<string>('58');
   const [ordersError, setOrdersError] = useState<{ type: ApiErrorType; message: string; statusCode?: number } | null>(null);
@@ -1404,30 +1384,66 @@ export default function OrdersScreen() {
   const [updatingIds, setUpdatingIds] = useState<Set<string>>(new Set());
   const isFocusedRef = useRef(false);
 
-  const fetchOrders = useCallback(async (isRefresh = false) => {
+  /** A full load was asked for while another fetch ran — run it as soon as that one finishes. */
+  const pendingFullFetchRef = useRef(false);
+
+  /**
+   * Loads orders.
+   *  - full (opening the tab, pull to refresh, changing the period): EVERY order in the chosen
+   *    period plus every order still in progress (any date). Previously only the newest 150
+   *    orders were loaded, so "30 days" / "All time" and the counts stopped at 150.
+   *  - quick (the 12 s poll, socket events, back from background): the newest page plus every
+   *    order in progress, merged into the list — so a refresh every few seconds stays light and
+   *    older orders of the period don't disappear.
+   */
+  const fetchOrders = useCallback(async (isRefresh = false, full = true) => {
     if (isFetchingRef.current) {
+      if (full) pendingFullFetchRef.current = true;
       if (isRefresh) setRefreshing(false);
       return;
     }
     isFetchingRef.current = true;
     const startedAt = Date.now();
+    const range = periodRangeRef.current;
     try {
       if (!isRefresh) setLoading(true);
-      const res: any = await orderService.fetchAllOrders();
+      const [res, activeRes]: any[] = await Promise.all([
+        full
+          ? orderService.fetchAllOrders({
+              ...(range ? { startDate: range.from.toISOString(), endDate: range.to.toISOString() } : {}),
+              allPages: true,
+            })
+          : orderService.fetchAllOrders(),
+        orderService
+          .fetchAllOrders({ status: ACTIVE_ORDER_STATUSES.join(','), allPages: true })
+          .catch(() => ({ success: false, data: [] })),
+      ]);
       if (res.success && res.data) {
         // Forget mutation timestamps older than a minute.
         recentMutationsRef.current.forEach((at, id) => {
           if (startedAt - at > 60000) recentMutationsRef.current.delete(id);
         });
+        // Period orders + in-progress orders, each once
+        const incomingById = new Map<string, Order>();
+        [...(res.data as Order[]), ...((activeRes?.success ? activeRes.data : []) as Order[])].forEach((o) => {
+          if (o?._id) incomingById.set(o._id, o);
+        });
+        const newestFirst = (a: Order, b: Order) =>
+          new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
         setOrders((prev) => {
           const prevById = new Map(prev.map((o) => [o._id, o]));
-          return (res.data as Order[]).map((server) => {
+          const reconcile = (server: Order) => {
             const pending = pendingPatchesRef.current.get(server._id);
             if (pending) return { ...server, ...pending } as Order;
             const mutatedAt = recentMutationsRef.current.get(server._id);
             if (mutatedAt && mutatedAt > startedAt) return prevById.get(server._id) ?? server;
             return server;
-          });
+          };
+          const fresh = Array.from(incomingById.values()).map(reconcile);
+          if (full) return fresh.sort(newestFirst);
+          // Quick refresh: update what came back, keep the rest of the period as it was
+          const kept = prev.filter((o) => !incomingById.has(o._id));
+          return [...fresh, ...kept].sort(newestFirst);
         });
         setOrdersError(null);
       } else {
@@ -1448,8 +1464,15 @@ export default function OrdersScreen() {
       isFetchingRef.current = false;
       setLoading(false);
       setRefreshing(false);
+      // e.g. the period changed while a quick refresh was running: load the new period now
+      if (pendingFullFetchRef.current) {
+        pendingFullFetchRef.current = false;
+        setTimeout(() => fetchOrdersRef.current(true, true), 0);
+      }
     }
   }, []);
+  const fetchOrdersRef = useRef(fetchOrders);
+  fetchOrdersRef.current = fetchOrders;
 
   // 1. Refetch whenever screen comes into focus (this also covers the very first load).
   useFocusEffect(
@@ -1473,7 +1496,7 @@ export default function OrdersScreen() {
       if (socketTimer) clearTimeout(socketTimer);
       socketTimer = setTimeout(() => {
         socketTimer = null;
-        if (canRefresh()) fetchOrders(true);
+        if (canRefresh()) fetchOrders(true, false);
       }, 600);
     };
 
@@ -1500,13 +1523,13 @@ export default function OrdersScreen() {
 
     // Fallback poll every 12 seconds so orders stay fresh if WebSocket disconnects
     const interval = setInterval(() => {
-      if (canRefresh()) fetchOrders(true);
+      if (canRefresh()) fetchOrders(true, false);
     }, 12000);
 
     // Refresh immediately when coming back from background
     const appStateSub = AppState.addEventListener('change', (nextState) => {
       if (nextState === 'active' && isFocusedRef.current) {
-        fetchOrders(true);
+        fetchOrders(true, false);
       }
     });
 
@@ -1520,96 +1543,93 @@ export default function OrdersScreen() {
 
   const onRefresh = () => { setRefreshing(true); fetchOrders(true); };
 
-  const filteredOrders = useMemo(() => {
-    // Compute date range for the selected preset
-    const now = new Date();
-    const startOfDay = (d: Date) => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; };
-    const endOfDay = (d: Date) => { const x = new Date(d); x.setHours(23, 59, 59, 999); return x; };
-
-    let dateFrom: Date | null = null;
-    let dateTo: Date | null = null;
-
-    if (datePreset === 'today') {
-      dateFrom = startOfDay(now);
-      dateTo = endOfDay(now);
-    } else if (datePreset === 'yesterday') {
-      const y = new Date(now);
-      y.setDate(y.getDate() - 1);
-      dateFrom = startOfDay(y);
-      dateTo = endOfDay(y);
-    } else if (datePreset === '7days') {
-      // "Last 7 days" = today plus the 6 days before it.
-      const past7 = new Date(now);
-      past7.setDate(past7.getDate() - 6);
-      dateFrom = startOfDay(past7);
-      dateTo = endOfDay(now);
-    } else if (datePreset === '30days') {
-      const past30 = new Date(now);
-      past30.setDate(past30.getDate() - 29);
-      dateFrom = startOfDay(past30);
-      dateTo = endOfDay(now);
-    } else if (datePreset === 'custom') {
-      const from = parseLocalYMD(customDateFrom);
-      const to = parseLocalYMD(customDateTo);
-      if (from && to) {
-        dateFrom = startOfDay(from);
-        dateTo = endOfDay(to);
-      }
+  // A different period needs its own orders (a full load). Skips the first render: opening the
+  // tab already loads through useFocusEffect.
+  const firstPeriodRef = useRef(true);
+  useEffect(() => {
+    if (firstPeriodRef.current) {
+      firstPeriodRef.current = false;
+      return;
     }
+    fetchOrders(false, true);
+  }, [periodRange, fetchOrders]);
 
+  /**
+   * One yes/no check per filter. The list is what passes them all; each filter section's chip
+   * counts come from what passes every OTHER check (facetedFilter), so every number matches the
+   * list you'd get by tapping it — date, search and the other filters included. Previously only
+   * the status chips did; the others counted every loaded order ("Dine-in 95" on a 71-order day).
+   */
+  const facets = useMemo(() => {
     // Normalise the search once: "#1234" should match order 1234; phone search ignores spaces.
     const rawQuery = searchQuery.trim().toLowerCase();
     const q = rawQuery.replace(/^#/, '');
     const qDigits = q.replace(/\D/g, '');
 
-    return orders.filter((order) => {
-      const sourceDetails = getOrderSourceDetails(order);
-      if (q) {
+    return facetedFilter(orders, {
+      search: (order: Order) => {
+        if (!q) return true;
         const orderNum = String(order.orderNumber ?? '').toLowerCase();
         const idMatch = String(order._id ?? '').toLowerCase().includes(q) || orderNum.includes(q);
         const restMatch = getRestaurantName(order).toLowerCase().includes(q);
         const custMatch = getCustomerName(order).toLowerCase().includes(q);
-        const domainMatch = sourceDetails.domainUrl.toLowerCase().includes(q);
+        const domainMatch = getOrderSourceDetails(order).domainUrl.toLowerCase().includes(q);
         const phoneMatch = qDigits.length >= 3 && getCustomerPhone(order).replace(/\D/g, '').includes(qDigits);
         const itemMatch =
           !idMatch && !custMatch && getOrderItems(order).some((it) => getItemName(it).toLowerCase().includes(q));
-        if (!idMatch && !restMatch && !custMatch && !domainMatch && !phoneMatch && !itemMatch) return false;
-      }
-      const fType = getOrderFulfillmentType(order);
-      if (typeFilter !== 'all' && fType !== typeFilter) return false;
-
-      const isExt = sourceDetails.isExternal;
-      if (sourceFilter === 'external' && !isExt) return false;
-      if (sourceFilter === 'krifoo' && isExt) return false;
-
-      // Schedule filter
-      const schedInfo = getOrderScheduleInfo(order);
-      if (scheduleFilter === 'scheduled' && !schedInfo.isScheduled) return false;
-      if (scheduleFilter === 'asap' && schedInfo.isScheduled) return false;
-
-      // Payment method filter
-      const pType = (order.paymentType || (order as any).paymentMethod || '').toLowerCase();
-      const isCash = pType.includes('cash') || pType === 'cod';
-      const isCard = pType.includes('card') || pType.includes('stripe') || pType.includes('online');
-      if (paymentFilter === 'cash' && !isCash) return false;
-      if (paymentFilter === 'card' && !isCard) return false;
-
-      // Payment status filter
-      const pStatus = (order.paymentStatus || '').toLowerCase();
-      if (paymentStatusFilter === 'paid' && pStatus !== 'paid' && pStatus !== 'completed') return false;
-      if (paymentStatusFilter === 'pending' && (pStatus === 'paid' || pStatus === 'completed')) return false;
-
-      // Date filter — applies to finished orders only. Orders still in progress are always shown
+        return idMatch || restMatch || custMatch || domainMatch || phoneMatch || itemMatch;
+      },
+      // Date — applies to finished orders only. Orders still in progress are always shown
       // so nothing placed before midnight (or scheduled for later) can drop off the board.
-      if (dateFrom && dateTo && !isActiveOrder(order)) {
-        const created = order.createdAt ? new Date(order.createdAt) : null;
-        if (!created || isNaN(created.getTime())) return false;
-        if (created < dateFrom || created > dateTo) return false;
-      }
-
-      return true;
+      date: (order: Order) => isInPeriod(order, periodRange),
+      type: (order: Order) => matchesOrderTypeFilter(order, typeFilter),
+      source: (order: Order) => {
+        const isExt = getOrderSourceDetails(order).isExternal;
+        return sourceFilter === 'all' || (sourceFilter === 'external' ? isExt : !isExt);
+      },
+      schedule: (order: Order) => {
+        if (scheduleFilter === 'all') return true;
+        const scheduled = getOrderScheduleInfo(order).isScheduled;
+        return scheduleFilter === 'scheduled' ? scheduled : !scheduled;
+      },
+      payment: (order: Order) => paymentFilter === 'all' || paymentKindOf(order) === paymentFilter,
+      paymentStatus: (order: Order) =>
+        paymentStatusFilter === 'all' || (paymentStatusFilter === 'paid' ? isOrderPaid(order) : !isOrderPaid(order)),
     });
-  }, [orders, searchQuery, typeFilter, sourceFilter, scheduleFilter, paymentFilter, paymentStatusFilter, datePreset, customDateFrom, customDateTo]);
+  }, [orders, searchQuery, typeFilter, sourceFilter, scheduleFilter, paymentFilter, paymentStatusFilter, periodRange]);
+
+  const filteredOrders = facets.filtered;
+
+  /** Chip counts per filter section (see facets). Each section's "All" is that section's total. */
+  const filterCounts = useMemo(() => {
+    const byType = facets.except('type');
+    const bySchedule = facets.except('schedule');
+    const bySource = facets.except('source');
+    const byPayment = facets.except('payment');
+    const byPaymentStatus = facets.except('paymentStatus');
+    const count = <T,>(list: T[], test: (o: T) => boolean) => list.reduce((n, o) => n + (test(o) ? 1 : 0), 0);
+    return {
+      typeTotal: byType.length,
+      delivery: count(byType, (o) => getOrderFulfillmentType(o) === 'delivery'),
+      pickup: count(byType, (o) => getOrderFulfillmentType(o) === 'pickup'),
+      takeaway: count(byType, (o) => getOrderFulfillmentType(o) === 'takeaway'),
+      dineIn: count(byType, (o) => getOrderFulfillmentType(o) === 'dine_in'),
+      scheduleTotal: bySchedule.length,
+      scheduled: count(bySchedule, (o) => getOrderScheduleInfo(o).isScheduled),
+      asap: count(bySchedule, (o) => !getOrderScheduleInfo(o).isScheduled),
+      sourceTotal: bySource.length,
+      marketplace: count(bySource, (o) => !getOrderSourceDetails(o).isExternal),
+      external: count(bySource, (o) => getOrderSourceDetails(o).isExternal),
+      paymentTotal: byPayment.length,
+      cash: count(byPayment, (o) => paymentKindOf(o) === 'cash'),
+      card: count(byPayment, (o) => paymentKindOf(o) === 'card'),
+      paymentStatusTotal: byPaymentStatus.length,
+      paid: count(byPaymentStatus, isOrderPaid),
+      pending: count(byPaymentStatus, (o) => !isOrderPaid(o)),
+      /** Orders in the chosen period, before the other filters — the sheet's "of N". */
+      periodTotal: count(orders, (o) => isInPeriod(o, periodRange)),
+    };
+  }, [facets, orders, periodRange]);
 
   const tabCounts = useMemo(() => {
     const counts: Record<string, number> = {
@@ -2029,7 +2049,7 @@ export default function OrdersScreen() {
                   activeOpacity={0.7}
                 >
                   <Text style={styles.activeFilterChipText}>
-                      Type: {typeFilter === 'takeaway' ? 'Takeaway' : typeFilter === 'dine_in' ? 'Dine-In' : typeFilter === 'pickup' ? 'Self Pickup' : typeFilter === 'delivery' ? 'Delivery' : typeFilter}
+                      Type: {typeFilter === 'in_store' ? 'Dine-in & takeaway' : typeFilter === 'takeaway' ? 'Takeaway' : typeFilter === 'dine_in' ? 'Dine-In' : typeFilter === 'pickup' ? 'Self Pickup' : typeFilter === 'delivery' ? 'Delivery' : typeFilter}
                   </Text>
                   <X size={11} color="#FF5C39" />
                 </TouchableOpacity>
@@ -2123,10 +2143,10 @@ export default function OrdersScreen() {
         visible={filterModalOpen}
         onClose={() => setFilterModalOpen(false)}
         title="Filter orders"
-        subtitle={`Showing ${filteredOrders.length} of ${orders.length} orders`}
+        subtitle={`Showing ${activeTabOrders.length} of ${filterCounts.periodTotal} orders`}
         activeCount={activeFilterCount}
         onReset={resetAllFilters}
-        applyLabel={`Show ${filteredOrders.length} order${filteredOrders.length !== 1 ? 's' : ''}`}
+        applyLabel={`Show ${activeTabOrders.length} order${activeTabOrders.length !== 1 ? 's' : ''}`}
       >
         <FilterSection title="Order status" hint="Kitchen & dispatch stage">
           <FilterChips
@@ -2148,7 +2168,7 @@ export default function OrdersScreen() {
             value={typeFilter}
             onChange={setTypeFilter}
             options={[
-              { value: 'all', label: 'All', count: filterCounts.total },
+              { value: 'all', label: 'All', count: filterCounts.typeTotal },
               { value: 'delivery', label: 'Delivery', count: filterCounts.delivery, Icon: Bike },
               { value: 'pickup', label: 'Self pickup', count: filterCounts.pickup, Icon: ShoppingBag },
               { value: 'takeaway', label: 'Takeaway', count: filterCounts.takeaway, Icon: Package },
@@ -2163,7 +2183,7 @@ export default function OrdersScreen() {
             value={scheduleFilter}
             onChange={setScheduleFilter}
             options={[
-              { value: 'all', label: 'All', count: filterCounts.total },
+              { value: 'all', label: 'All', count: filterCounts.scheduleTotal },
               { value: 'asap', label: 'ASAP', count: filterCounts.asap, Icon: Zap },
               { value: 'scheduled', label: 'Scheduled', count: filterCounts.scheduled, Icon: CalendarClock },
             ]}
@@ -2176,7 +2196,7 @@ export default function OrdersScreen() {
             value={sourceFilter}
             onChange={setSourceFilter}
             options={[
-              { value: 'all', label: 'All', count: filterCounts.total },
+              { value: 'all', label: 'All', count: filterCounts.sourceTotal },
               { value: 'krifoo', label: 'Krifoo app', count: filterCounts.marketplace, Icon: Smartphone },
               { value: 'external', label: 'Own website', count: filterCounts.external, Icon: Globe },
             ]}
@@ -2189,7 +2209,7 @@ export default function OrdersScreen() {
             value={paymentFilter}
             onChange={setPaymentFilter}
             options={[
-              { value: 'all', label: 'All', count: filterCounts.total },
+              { value: 'all', label: 'All', count: filterCounts.paymentTotal },
               { value: 'cash', label: 'Cash', count: filterCounts.cash, Icon: Banknote },
               { value: 'card', label: 'Card / online', count: filterCounts.card, Icon: CreditCard },
             ]}
@@ -2202,9 +2222,9 @@ export default function OrdersScreen() {
             value={paymentStatusFilter}
             onChange={setPaymentStatusFilter}
             options={[
-              { value: 'all', label: 'All' },
-              { value: 'paid', label: 'Paid', dotColor: '#16A34A' },
-              { value: 'pending', label: 'Unpaid', dotColor: '#F59E0B' },
+              { value: 'all', label: 'All', count: filterCounts.paymentStatusTotal },
+              { value: 'paid', label: 'Paid', count: filterCounts.paid, dotColor: '#16A34A' },
+              { value: 'pending', label: 'Unpaid', count: filterCounts.pending, dotColor: '#F59E0B' },
             ]}
           />
         </FilterSection>

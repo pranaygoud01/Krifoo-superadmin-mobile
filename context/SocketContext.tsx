@@ -3,7 +3,7 @@ import { DeviceEventEmitter, AppState } from 'react-native';
 import { useAuth } from './AuthContext';
 import { getApiBaseUrl, getAuthToken } from '../services/api';
 import { playOrderBuzzSound } from '../services/sound.service';
-import { printThermalReceipt, isAutoPrintEnabled, PRINT_FAILED_EVENT } from '../services/thermal-print.service';
+import { printThermalReceipt, isAutoPrintEnabled, PRINT_FAILED_EVENT, retryFailedAutoPrints } from '../services/thermal-print.service';
 import { useToast } from './ToastContext';
 import { orderService } from '../services/order.service';
 import { claimOrderAlert, markOrdersSeen } from '../services/order-alert-registry';
@@ -22,14 +22,40 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   // Unattended auto-prints never open a print dialog — tell staff when one fails instead
   useEffect(() => {
     if (!PRINT_FAILED_EVENT) return;
-    const sub = DeviceEventEmitter.addListener(PRINT_FAILED_EVENT, (report: any) => {
+    // In a rush with the printer off, every order fails within seconds of the others:
+    // gather failures for a moment and show one message instead of a wall of toasts.
+    let pending: any[] = [];
+    let flushTimer: ReturnType<typeof setTimeout> | null = null;
+    const flush = () => {
+      flushTimer = null;
+      const reports = pending;
+      pending = [];
+      if (reports.length === 0) return;
+      if (reports.length === 1) {
+        const report = reports[0];
+        showToast?.({
+          title: `Order ${report?.orderNumber || ''} did not print`,
+          message: report?.error || 'Check that the printer is on and connected, then print it from the order.',
+          type: 'error',
+        });
+        return;
+      }
+      const numbers = reports.map((r) => `#${r?.orderNumber || '?'}`);
+      const shown = numbers.length > 6 ? `${numbers.slice(0, 6).join(', ')} +${numbers.length - 6} more` : numbers.join(', ');
       showToast?.({
-        title: `Order ${report?.orderNumber || ''} did not print`,
-        message: report?.error || 'Check that the printer is on and connected, then print it from the order.',
+        title: `${reports.length} orders did not print`,
+        message: `${shown}. ${reports[reports.length - 1]?.error || 'Check that the printer is on and connected.'} They will be retried automatically.`,
         type: 'error',
       });
+    };
+    const sub = DeviceEventEmitter.addListener(PRINT_FAILED_EVENT, (report: any) => {
+      pending.push(report);
+      if (!flushTimer) flushTimer = setTimeout(flush, 2500);
     });
-    return () => sub.remove();
+    return () => {
+      sub.remove();
+      if (flushTimer) clearTimeout(flushTimer);
+    };
   }, [showToast]);
 
   useEffect(() => {
@@ -217,7 +243,9 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       isSyncing = true;
 
       try {
-        const res = await orderService.getAllOrders({ status: 'placed', limit: 20 });
+        // Newest first: with a cap of 20, a rush of more than 20 waiting orders hid the oldest ones
+        // from this fallback for good (if the socket and push had also missed them).
+        const res = await orderService.getAllOrders({ status: 'placed', limit: 100 });
         if (res.success && res.data) {
           const freshOrders = res.data;
 
@@ -277,7 +305,11 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     // Run initial sync check on mount, then check at a relaxed 15s cadence (which respects minInterval)
     checkForNewOrders(true);
-    orderSyncInterval = setInterval(() => checkForNewOrders(false), 15000);
+    orderSyncInterval = setInterval(() => {
+      checkForNewOrders(false);
+      // Re-try any automatic print that failed (printer was off, Wi-Fi dropped…); backs off per order
+      retryFailedAutoPrints().catch(() => {});
+    }, 15000);
 
     // Auto-reconnect and immediate sync when app returns from background
     const appStateSub = AppState.addEventListener('change', (nextAppState) => {
@@ -285,6 +317,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         console.log('[Socket] App came to foreground. Reconnecting & syncing...');
         connect();
         checkForNewOrders(true);
+        retryFailedAutoPrints().catch(() => {});
       }
     });
 

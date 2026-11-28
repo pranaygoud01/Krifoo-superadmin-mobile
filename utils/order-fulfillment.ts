@@ -1,4 +1,5 @@
 import type { Order } from '../types';
+import { isActiveOrder } from './order-status';
 
 /** Works out how an order is fulfilled. Shared by the Orders board and Kitchen Mode. */
 export function getOrderFulfillmentType(order: Order): 'delivery' | 'pickup' | 'takeaway' | 'dine_in' {
@@ -65,4 +66,44 @@ export function getOrderFulfillmentType(order: Order): 'delivery' | 'pickup' | '
     return 'delivery';
   }
   return isTakeawayApp ? 'takeaway' : 'pickup';
+}
+
+/**
+ * Orders tab "Order type" filter values: 'all', a single type, or 'in_store' — dine-in and
+ * takeaway together, which the home "Dine-in & Takeaway" card opens.
+ */
+export type OrderTypeFilter = 'all' | 'in_store' | ReturnType<typeof getOrderFulfillmentType>;
+
+export const ORDER_TYPE_FILTER_VALUES: readonly OrderTypeFilter[] = ['all', 'in_store', 'delivery', 'pickup', 'takeaway', 'dine_in'];
+
+export function matchesOrderTypeFilter(order: Order, filter: string): boolean {
+  if (!filter || filter === 'all') return true;
+  const type = getOrderFulfillmentType(order);
+  if (filter === 'in_store') return type === 'dine_in' || type === 'takeaway';
+  return type === filter;
+}
+
+/**
+ * Active orders per home channel card. Only orders still being worked on are counted
+ * (see isActiveOrder): delivered/collected, cancelled and rejected ones are left out.
+ * The type comes from getOrderFulfillmentType, the same rule as the Orders tab.
+ * Takeaway is counted on the "Dine-in & Takeaway" card, which opens the Orders tab with the
+ * 'in_store' filter so its list shows exactly what it counts. Pickup is pickup only.
+ */
+export function countActiveOrdersByChannel(orders: Order[]): { inStore: number; pickup: number; delivery: number } {
+  const counts = { inStore: 0, pickup: 0, delivery: 0 };
+  const seen = new Set<string>();
+  for (const order of orders) {
+    if (!isActiveOrder(order as any)) continue;
+    const id = String(order._id || '');
+    if (id) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+    }
+    const type = getOrderFulfillmentType(order);
+    if (type === 'dine_in' || type === 'takeaway') counts.inStore += 1;
+    else if (type === 'pickup') counts.pickup += 1;
+    else counts.delivery += 1;
+  }
+  return counts;
 }

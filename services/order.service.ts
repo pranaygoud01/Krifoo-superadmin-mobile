@@ -78,6 +78,12 @@ export const orderService = {
     startDate?: string;
     endDate?: string;
     limit?: number;
+    /**
+     * Fetch every page, not just the newest PAGE_LIMIT orders. Needed wherever orders are
+     * totalled (analytics): with only page 1, "All time" and busy date ranges silently dropped
+     * everything older than the newest 150 orders. Off by default — live screens poll this often.
+     */
+    allPages?: boolean;
   }): Promise<{
     success: boolean;
     data: Order[];
@@ -89,12 +95,15 @@ export const orderService = {
       return inFlightFetchAll[cacheKey];
     }
 
-    const PAGE_LIMIT = filters?.limit || 150;
+    const { allPages, ...queryFilters } = filters || {};
+    const PAGE_LIMIT = queryFilters.limit || (allPages ? 200 : 150);
+    /** Safety cap for allPages (200 × 100 = 20,000 orders). */
+    const MAX_PAGES = 100;
 
     const promise = (async () => {
       try {
         const firstRes = await this.getAllOrders({
-          ...filters,
+          ...queryFilters,
           page: 1,
           limit: PAGE_LIMIT,
         });
@@ -114,9 +123,52 @@ export const orderService = {
           firstRes.pagination?.total ??
           firstList.length;
 
+        if (!allPages) {
+          return {
+            success: true,
+            data: firstList,
+            totalOrders: totalCount,
+          };
+        }
+
+        const pageCount = Math.min(
+          MAX_PAGES,
+          firstRes.pagination?.pages ?? firstRes.totalPages ?? Math.ceil(totalCount / PAGE_LIMIT)
+        );
+        const all: Order[] = [...firstList];
+        // A few pages at a time: quick, without flooding the server
+        const BATCH = 4;
+        for (let start = 2; start <= pageCount; start += BATCH) {
+          const pages = Array.from({ length: Math.min(BATCH, pageCount - start + 1) }, (_, i) => start + i);
+          const results = await Promise.all(
+            pages.map((page) => this.getAllOrders({ ...queryFilters, page, limit: PAGE_LIMIT }))
+          );
+          const failed = results.find((r) => !r.success);
+          if (failed) {
+            // Partial totals would just be wrong numbers — report the failure instead
+            return {
+              success: false,
+              data: [],
+              totalOrders: 0,
+              message: failed.message || 'Failed to fetch all orders',
+            };
+          }
+          results.forEach((r) => all.push(...((r.data || (r as any).orders || []) as Order[])));
+        }
+
+        // Orders placed while paging shift the pages by one: drop the duplicates that causes
+        const seen = new Set<string>();
+        const unique = all.filter((o) => {
+          const id = String(o._id || '');
+          if (!id) return true;
+          if (seen.has(id)) return false;
+          seen.add(id);
+          return true;
+        });
+
         return {
           success: true,
-          data: firstList,
+          data: unique,
           totalOrders: totalCount,
         };
       } catch (e: any) {

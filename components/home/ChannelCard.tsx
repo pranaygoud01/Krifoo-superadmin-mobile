@@ -87,7 +87,8 @@ export function ChannelCard({
             </Text>
             {active ? <View style={[styles.liveDot, { backgroundColor: tone.color }]} /> : null}
           </View>
-          <Text style={[styles.statTitle, { fontSize: s.title }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
+          {/* Two lines allowed: "Dine-in & Takeaway" doesn't fit one line on small phones */}
+          <Text style={[styles.statTitle, { fontSize: s.title }]} numberOfLines={2} adjustsFontSizeToFit minimumFontScale={0.85}>
             {title}
           </Text>
           <Text style={[styles.statSub, { fontSize: s.sub }, active && { color: tone.color }]} numberOfLines={1}>
@@ -100,9 +101,10 @@ export function ChannelCard({
 }
 
 const SIZES = {
-  compact: { minHeight: 118, padding: 12, tile: 34, icon: 17, title: 14, sub: 12, count: 24 },
-  phone: { minHeight: 132, padding: 14, tile: 38, icon: 19, title: 15, sub: 12.5, count: 28 },
-  tablet: { minHeight: 148, padding: 18, tile: 44, icon: 22, title: 16.5, sub: 13.5, count: 32 },
+  // Filled flat icons fill more of their box than outline icons, so they sit a little larger in the tile
+  compact: { minHeight: 118, padding: 12, tile: 34, icon: 20, title: 14, sub: 12, count: 24 },
+  phone: { minHeight: 132, padding: 14, tile: 38, icon: 23, title: 15, sub: 12.5, count: 28 },
+  tablet: { minHeight: 148, padding: 18, tile: 44, icon: 26, title: 16.5, sub: 13.5, count: 32 },
 } as const;
 
 const styles = StyleSheet.create({

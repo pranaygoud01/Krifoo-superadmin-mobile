@@ -37,31 +37,38 @@ import { printThermalReceipt } from '../../services/thermal-print.service';
 import {
   Store,
   Clock,
-  ShoppingBag,
   Users,
   AlertTriangle,
   ArrowRight,
   TrendingUp,
   Utensils,
-  UtensilsCrossed,
   Calendar,
   Truck,
   Megaphone,
   Settings,
-  Sparkles,
-  Plus,
   Check,
   Award,
   ChevronRight,
   ChevronLeft,
-  Bike,
   X,
-  CalendarDays,
-  BarChart3,
-  ChefHat,
-  Armchair,
 } from 'lucide-react-native';
+import {
+  BookingsIcon,
+  DeliveryIcon,
+  DineInIcon,
+  FloorIcon,
+  KitchenIcon,
+  MarketingIcon,
+  NewOrderIcon,
+  PickupIcon,
+  ReportsIcon,
+  RidersIcon,
+  TablesIcon,
+} from '../../components/icons/FlatIcon';
 import { useAuth } from '../../context/AuthContext';
+import { ACTIVE_ORDER_STATUSES } from '../../utils/order-status';
+import { countActiveOrdersByChannel } from '../../utils/order-fulfillment';
+import { createGroupedReload } from '../../utils/grouped-reload';
 
 const STATUS_PICKER_OPTIONS: { id: string; label: string; color: string }[] = [
   { id: 'placed', label: 'Placed (New Order)', color: '#D97706' },
@@ -71,6 +78,9 @@ const STATUS_PICKER_OPTIONS: { id: string; label: string; color: string }[] = [
   { id: 'delivered', label: 'Delivered / Completed', color: '#059669' },
   { id: 'cancelled', label: 'Cancelled', color: '#DC2626' },
 ];
+
+/** Super Admin: group platform-wide order changes into at most one full reload per this long. */
+const SUPER_ADMIN_RELOAD_MS = 15000;
 
 export default function DashboardScreen() {
   const router = useRouter();
@@ -87,6 +97,12 @@ export default function DashboardScreen() {
 
   const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
+  /**
+   * Every order still being worked on, fetched on its own (all pages) for the channel cards.
+   * `orders` is only the newest 150 of any status, which can miss e.g. a scheduled order placed
+   * days ago. Null until loaded / if that request fails — the cards then count from `orders`.
+   */
+  const [activeOrders, setActiveOrders] = useState<Order[] | null>(null);
   const [totalUsersCount, setTotalUsersCount] = useState(0);
   const [deliveryPartnersCount, setDeliveryPartnersCount] = useState(0);
   const [tablesCount, setTablesCount] = useState(0);
@@ -162,52 +178,12 @@ export default function DashboardScreen() {
     }
   };
 
-  // Live Counts for Order Terminal channels
-  const orderTerminalCounts = useMemo(() => {
-    let inStore = 0;
-    let pickup = 0;
-    let delivery = 0;
-
-    orders.forEach((o) => {
-      const oType = ((o.orderType || (o as any).deliveryType || '') as string).toLowerCase();
-      const notes = typeof o.notes === 'string' ? o.notes.toLowerCase() : '';
-      const addr1 = typeof (o.deliveryAddress as any)?.addressLine1 === 'string' ? (o.deliveryAddress as any).addressLine1.toLowerCase() : '';
-
-      if (
-        oType === 'dine_in' ||
-        oType === 'dinein' ||
-        oType === 'eatin' ||
-        oType === 'eat_in' ||
-        oType === 'takeaway' ||
-        (o as any).tableNumber ||
-        notes.includes('eat-in') ||
-        notes.includes('dine-in') ||
-        notes.includes('dine in') ||
-        notes.includes('takeaway') ||
-        notes.includes('table') ||
-        addr1.startsWith('table')
-      ) {
-        inStore++;
-      } else if (
-        oType === 'pickup' ||
-        oType === 'collection' ||
-        notes.includes('pickup') ||
-        notes.includes('collection') ||
-        notes.includes('self pickup') ||
-        addr1.includes('pickup') ||
-        addr1.includes('collection')
-      ) {
-        pickup++;
-      } else if (oType === 'delivery') {
-        delivery++;
-      } else {
-        if (o.deliveryAddress) delivery++;
-        else pickup++;
-      }
-    });
-
-    return { inStore, pickup, delivery };
-  }, [orders]);
+  // Live counts for the channel cards ("N active now"): only orders still being worked on.
+  // Delivered/collected, cancelled and rejected orders used to be counted too.
+  const orderTerminalCounts = useMemo(
+    () => countActiveOrdersByChannel(activeOrders ?? orders),
+    [activeOrders, orders]
+  );
 
   const loadDashboardData = async () => {
     setRefreshing(true);
@@ -215,7 +191,9 @@ export default function DashboardScreen() {
       if (isSuperAdmin) {
         const [restRes, orderRes, userRes] = await Promise.all([
           restaurantService.getRestaurants({ limit: 1000 }),
-          orderService.fetchAllOrders(),
+          // Every page: the platform totals (sales, orders, store list) are summed from this list,
+          // and the first page alone was only the newest 150 orders across ALL restaurants.
+          orderService.fetchAllOrders({ allPages: true }),
           userService.getAllUsers({ limit: 1000 }),
         ]);
 
@@ -251,11 +229,15 @@ export default function DashboardScreen() {
           setDeliveryPartnersCount(riders.length);
         }
       } else {
-        const [statsRes, orderRes, tablesRes] = await Promise.all([
+        const [statsRes, orderRes, tablesRes, activeRes] = await Promise.all([
           orderService.getRestaurantStats(),
           orderService.fetchAllOrders(),
           floorService.getStatus(),
+          orderService
+            .fetchAllOrders({ status: ACTIVE_ORDER_STATUSES.join(','), allPages: true })
+            .catch(() => ({ success: false, data: [] as Order[], totalOrders: 0 })),
         ]);
+        setActiveOrders(activeRes.success ? activeRes.data || [] : null);
 
         const anySuccess = statsRes.success || orderRes.success || tablesRes.success;
         if (!anySuccess) {
@@ -315,6 +297,13 @@ export default function DashboardScreen() {
     loadDashboardData();
     loadUpcomingBookings();
 
+    // Super Admin: every order change on the platform arrives here, and each reload now fetches
+    // every order — so a busy evening would mean back-to-back full reloads. Group them: at most
+    // one reload per SUPER_ADMIN_RELOAD_MS (the first change after a quiet spell shows at once).
+    // Restaurant owners keep instant reloads (their own orders only).
+    const grouped = createGroupedReload(() => loadDashboardData(), SUPER_ADMIN_RELOAD_MS);
+    const reloadForOrderChange = () => (isSuperAdmin ? grouped.request() : loadDashboardData());
+
     // Listen for WebSocket updates from the backend
     const sub = DeviceEventEmitter.addListener('websocket_message', (data) => {
       console.log('[Dashboard] WebSocket notification received:', data);
@@ -323,12 +312,15 @@ export default function DashboardScreen() {
         data.type === 'SUPERADMIN_ORDER_UPDATE'
       ) {
         console.log('[Dashboard] Reloading metrics due to WebSocket event');
-        loadDashboardData();
+        reloadForOrderChange();
       }
       if (data.type === 'RESTAURANT_BOOKING_UPDATE') loadUpcomingBookings();
     });
 
-    return () => sub.remove();
+    return () => {
+      sub.remove();
+      grouped.cancel();
+    };
   }, [isSuperAdmin]);
 
   // Super Admin Timeframe State & Filtered Metrics
@@ -603,7 +595,7 @@ export default function DashboardScreen() {
                           variant="action"
                           title="New order"
                           subtitle="Open POS terminal"
-                          icon={Plus}
+                          icon={NewOrderIcon}
                           tone={{ color: '#FF5C39', tint: '#FFF0EC' }}
                           size={isTablet ? 'tablet' : isSmallScreen ? 'compact' : 'phone'}
                           onPress={() => {
@@ -612,12 +604,13 @@ export default function DashboardScreen() {
                           }}
                         />
                         <ChannelCard
-                          title="Dine-in"
+                          title="Dine-in & Takeaway"
                           count={orderTerminalCounts.inStore}
-                          icon={UtensilsCrossed}
+                          icon={DineInIcon}
                           tone={{ color: '#7C3AED', tint: '#F3EEFF' }}
                           size={isTablet ? 'tablet' : isSmallScreen ? 'compact' : 'phone'}
-                          onPress={() => router.push({ pathname: '/(tabs)/orders', params: { channel: 'dine_in' } })}
+                          // Dine-in + takeaway, matching the count on this card
+                          onPress={() => router.push({ pathname: '/(tabs)/orders', params: { channel: 'in_store' } })}
                         />
                       </View>
 
@@ -626,7 +619,7 @@ export default function DashboardScreen() {
                         <ChannelCard
                           title="Pickup"
                           count={orderTerminalCounts.pickup}
-                          icon={ShoppingBag}
+                          icon={PickupIcon}
                           tone={{ color: '#EA580C', tint: '#FFF4EA' }}
                           size={isTablet ? 'tablet' : isSmallScreen ? 'compact' : 'phone'}
                           onPress={() => router.push({ pathname: '/(tabs)/orders', params: { channel: 'pickup' } })}
@@ -634,7 +627,7 @@ export default function DashboardScreen() {
                         <ChannelCard
                           title="Delivery"
                           count={orderTerminalCounts.delivery}
-                          icon={Bike}
+                          icon={DeliveryIcon}
                           tone={{ color: '#2563EB', tint: '#EEF4FF' }}
                           size={isTablet ? 'tablet' : isSmallScreen ? 'compact' : 'phone'}
                           onPress={() => router.push({ pathname: '/(tabs)/orders', params: { channel: 'delivery' } })}
@@ -647,13 +640,13 @@ export default function DashboardScreen() {
                   <QuickActions
                     isTablet={isTablet}
                     items={[
-                      { key: 'kitchen', label: 'Kitchen', hint: 'Live tickets', icon: ChefHat, onPress: () => router.push('/kitchen') },
-                      { key: 'floor', label: 'Live floor', hint: 'Seat & serve', icon: Armchair, onPress: () => router.push('/floor') },
-                      { key: 'bookings', label: 'Bookings', hint: upcomingBookings ? `${upcomingBookings} upcoming` : 'Reservations', icon: CalendarDays, badge: upcomingBookings, onPress: () => router.push('/bookings') },
-                      { key: 'tables', label: 'Table setup', hint: 'Add & arrange', icon: UtensilsCrossed, badge: tablesCount, onPress: () => router.push('/tables') },
-                      { key: 'fleet', label: 'Riders', hint: 'Delivery fleet', icon: Bike, badge: deliveryPartnersCount, onPress: () => router.push('/fleet') },
-                      { key: 'promo', label: 'Marketing', hint: 'Offers & campaigns', icon: Sparkles, onPress: () => router.push(isSuperAdmin ? '/broadcast' : '/marketing') },
-                      { key: 'analytics', label: 'Reports', hint: 'Sales & trends', icon: BarChart3, onPress: () => router.push('/analytics') },
+                      { key: 'kitchen', label: 'Kitchen', hint: 'Live tickets', icon: KitchenIcon, tone: 'orange', onPress: () => router.push('/kitchen') },
+                      { key: 'floor', label: 'Live floor', hint: 'Seat & serve', icon: FloorIcon, tone: 'teal', onPress: () => router.push('/floor') },
+                      { key: 'bookings', label: 'Bookings', hint: upcomingBookings ? `${upcomingBookings} upcoming` : 'Reservations', icon: BookingsIcon, tone: 'blue', badge: upcomingBookings, onPress: () => router.push('/bookings') },
+                      { key: 'tables', label: 'Table setup', hint: 'Add & arrange', icon: TablesIcon, tone: 'violet', badge: tablesCount, onPress: () => router.push('/tables') },
+                      { key: 'fleet', label: 'Riders', hint: 'Delivery fleet', icon: RidersIcon, tone: 'green', badge: deliveryPartnersCount, onPress: () => router.push('/fleet') },
+                      { key: 'promo', label: 'Marketing', hint: 'Offers & campaigns', icon: MarketingIcon, tone: 'pink', onPress: () => router.push(isSuperAdmin ? '/broadcast' : '/marketing') },
+                      { key: 'analytics', label: 'Reports', hint: 'Sales & trends', icon: ReportsIcon, tone: 'slate', onPress: () => router.push('/analytics') },
                     ]}
                   />
           </>

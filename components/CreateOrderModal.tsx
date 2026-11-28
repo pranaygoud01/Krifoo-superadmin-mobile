@@ -50,7 +50,8 @@ import { Colors } from '../constants/colors';
 import { resolveMediaImageSource } from '../services/image.helper';
 import { menuService } from '../services/menu.service';
 import { orderService } from '../services/order.service';
-import { printThermalReceipt } from '../services/thermal-print.service';
+import { printNewPosOrderOnce } from '../services/thermal-print.service';
+import { claimOrderAlert } from '../services/order-alert-registry';
 import { MenuItem } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { getCachedStoreProfile, setCachedStoreProfile, getItemOptionsList } from '../services/receipt-customization.service';
@@ -879,12 +880,13 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
 
       const res = await orderService.createManualOrder(orderPayload);
       if (res.success) {
+        if (res.data?._id) {
+          // Staff created this order here: the live alert for it must not buzz or print it again
+          claimOrderAlert(res.data._id);
+        }
         if (autoPrint && res.data) {
-          try {
-            printThermalReceipt(res.data, true);
-          } catch (pe) {
-            console.warn('Auto print receipt error:', pe);
-          }
+          // Once only — the order's socket event / push may already be printing it
+          printNewPosOrderOnce(res.data).catch((pe) => console.warn('Auto print receipt error:', pe));
         }
         onOrderCreated();
         if (tableContext) {

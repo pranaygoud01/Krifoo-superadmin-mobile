@@ -1,5 +1,19 @@
 /** Status colours and labels shared by the Orders board, order cards and the order detail sheet. */
 
+/** Statuses of an order that still needs work (not delivered/collected, not cancelled). */
+export const ACTIVE_ORDER_STATUSES = ['placed', 'confirmed', 'preparing', 'ready_for_pickup', 'out_for_delivery'] as const;
+
+/**
+ * Is this order still being worked on? Delivered/collected and cancelled orders are not, nor are
+ * orders the restaurant rejected or card checkouts that were never paid (`awaiting_payment`).
+ * Used for every "active" count (home channel cards, Recent orders) so they agree.
+ */
+export function isActiveOrder(order: { status?: string; acceptanceStatus?: string } | null | undefined): boolean {
+  if (!order) return false;
+  if (order.acceptanceStatus === 'rejected') return false;
+  return (ACTIVE_ORDER_STATUSES as readonly string[]).includes(String(order.status || '').toLowerCase());
+}
+
 export const ORDER_STATUS_LABELS: Record<string, string> = {
   placed: 'New',
   confirmed: 'Confirmed',

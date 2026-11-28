@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react-native';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react-native';
 import { RestaurantAnalytics } from '../components/RestaurantAnalytics';
 import { orderService } from '../services/order.service';
 
@@ -27,8 +27,8 @@ const day = (offset: number) => {
 // Two days of sales: £20 yesterday-ish, £50 three days ago (the best day)
 const orders = [
   { _id: 'a', status: 'delivered', paymentType: 'cash', orderType: 'dine_in', createdAt: day(1), pricing: { totalAmount: 20 }, orderedItems: [] },
-  { _id: 'b', status: 'delivered', paymentType: 'card', orderType: 'pickup', createdAt: day(3), pricing: { totalAmount: 30 }, orderedItems: [] },
-  { _id: 'c', status: 'delivered', paymentType: 'card', orderType: 'delivery', createdAt: day(3), pricing: { totalAmount: 20 }, orderedItems: [] },
+  { _id: 'b', status: 'delivered', paymentType: 'card', paymentStatus: 'paid', orderType: 'pickup', createdAt: day(3), pricing: { totalAmount: 30 }, orderedItems: [] },
+  { _id: 'c', status: 'delivered', paymentType: 'card', paymentStatus: 'paid', orderType: 'delivery', createdAt: day(3), pricing: { totalAmount: 20 }, orderedItems: [] },
 ] as any;
 
 beforeEach(() => {
@@ -67,6 +67,67 @@ it('reloads when the screen’s refresh is pressed', async () => {
   await waitFor(() => expect(svc.fetchAllOrders).toHaveBeenCalledTimes(1));
   await rerender(<RestaurantAnalytics initialOrders={orders} ownerStats={{ totalOrders: 3, totalDelivered: 3, totalCancelled: 0, totalIncome: 70 }} refreshKey={1} />);
   await waitFor(() => expect(svc.fetchAllOrders).toHaveBeenCalledTimes(2));
+});
+
+it('asks for every page of orders, not just the newest 150', async () => {
+  await open();
+  await waitFor(() => expect(svc.fetchAllOrders).toHaveBeenCalled());
+  expect(svc.fetchAllOrders.mock.calls[0][0]).toMatchObject({ allPages: true });
+});
+
+it('keeps only the chosen day, even if the server sends orders from the next morning', async () => {
+  const tomorrowEarly = new Date();
+  tomorrowEarly.setDate(tomorrowEarly.getDate() + 1);
+  tomorrowEarly.setHours(2, 0, 0, 0);
+  const todayNoon = new Date();
+  todayNoon.setHours(12, 0, 0, 0);
+  svc.fetchAllOrders.mockResolvedValue({
+    success: true,
+    data: [
+      { _id: 't', status: 'delivered', paymentType: 'cash', createdAt: todayNoon.toISOString(), pricing: { totalAmount: 10 } },
+      { _id: 'n', status: 'delivered', paymentType: 'cash', createdAt: tomorrowEarly.toISOString(), pricing: { totalAmount: 99 } },
+    ],
+  } as any);
+  await open(); // opens on "Today"
+  expect((await screen.findAllByText('£10.00')).length).toBeGreaterThan(0);
+  expect(screen.queryByText('£109.00')).toBeNull();
+});
+
+it('shows an error instead of the previous period’s numbers when loading fails', async () => {
+  await open();
+  await waitFor(() => expect(svc.fetchAllOrders).toHaveBeenCalledTimes(1));
+  svc.fetchAllOrders.mockResolvedValue({ success: false, data: [], totalOrders: 0, message: 'Network error' } as any);
+  await fireEvent.press(await screen.findByText('All Time'));
+  expect(await screen.findByText('Network error')).toBeTruthy();
+});
+
+it('shows a skeleton while orders load, then the numbers', async () => {
+  let finish!: (v: any) => void;
+  svc.fetchAllOrders.mockReturnValueOnce(new Promise((r) => { finish = r; }) as any);
+  await open();
+  expect(screen.getByTestId('analytics-skeleton')).toBeTruthy();
+  expect(screen.getByLabelText('Loading analytics')).toBeTruthy();
+  expect(screen.queryByText('Average order')).toBeNull(); // no real (empty) numbers underneath
+
+  await act(async () => finish({ success: true, data: orders }));
+  await waitFor(() => expect(screen.queryByTestId('analytics-skeleton')).toBeNull());
+  expect(screen.getByText('Average order')).toBeTruthy();
+});
+
+it('shows the skeleton again when switching to another period', async () => {
+  await open();
+  await waitFor(() => expect(screen.queryByTestId('analytics-skeleton')).toBeNull());
+  svc.fetchAllOrders.mockReturnValueOnce(new Promise(() => {}) as any); // never finishes
+  await fireEvent.press(await screen.findByText('All Time'));
+  expect(await screen.findByTestId('analytics-skeleton')).toBeTruthy();
+});
+
+it('landscape tablet skeleton uses the same two-column layout', async () => {
+  mockScreen = { width: 1280, height: 800 };
+  svc.fetchAllOrders.mockReturnValueOnce(new Promise(() => {}) as any);
+  await open();
+  expect(screen.getByTestId('analytics-skeleton-kpis')).toBeTruthy();
+  expect(screen.getByTestId('analytics-skeleton-trend')).toBeTruthy();
 });
 
 it('landscape tablet: two columns', async () => {

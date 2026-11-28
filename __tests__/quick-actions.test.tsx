@@ -1,7 +1,8 @@
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react-native';
 import { ChefHat, Bike } from 'lucide-react-native';
-import { QuickActions } from '../components/home/QuickActions';
+import { StyleSheet } from 'react-native';
+import { QuickActions, QUICK_ACTION_TONES } from '../components/home/QuickActions';
 
 const layout = async () =>
   fireEvent(screen.getByTestId('quick-actions-grid'), 'layout', { nativeEvent: { layout: { width: 360, height: 200 } } });
@@ -26,6 +27,21 @@ describe('Quick actions', () => {
     expect(screen.getByText('3')).toBeTruthy();
     await fireEvent.press(screen.getByLabelText('Fleet, 3. Riders'));
     expect(openFleet).toHaveBeenCalled();
+  });
+
+  it('colours each tile by its tone, with a neutral default', async () => {
+    await render(
+      <QuickActions
+        items={[
+          { key: 'k', label: 'Kitchen', icon: ChefHat, tone: 'orange', onPress: jest.fn() },
+          { key: 'f', label: 'Fleet', icon: Bike, onPress: jest.fn() },
+        ]}
+      />
+    );
+    await layout();
+    const bg = (id: string) => StyleSheet.flatten(screen.getByTestId(id).props.style).backgroundColor;
+    expect(bg('quick-action-icon-k')).toBe(QUICK_ACTION_TONES.orange.bg);
+    expect(bg('quick-action-icon-f')).toBe(QUICK_ACTION_TONES.slate.bg);
   });
 
   it('hides a zero count', async () => {

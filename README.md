@@ -59,3 +59,7 @@ npm start
 
 ### 3. Connect to Backend
 By default, the app points to `http://localhost:5000`. You can change this on the Login screen or in the Settings tab.
+
+
+##Testing orders 
+ node scripts/place-test-orders.mjs --restaurant 6adb673b5d2e28d7d0ff23d5

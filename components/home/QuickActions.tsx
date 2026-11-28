@@ -1,19 +1,40 @@
 /**
  * Home: shortcuts to the restaurant's day-to-day screens.
- * A titled card with an even grid of tiles in one brand colour: icon, label, a short hint and an optional count.
+ * A titled card with an even grid of tiles, each in its own colour: icon, label, a short hint and an optional count.
  * Phones: 4 per row; tablets: all in one row (or 4 per row when narrow).
  */
 import React, { useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import type { LucideIcon } from 'lucide-react-native';
 import { Colors } from '../../constants/colors';
+
+/** Any icon with lucide's props: lucide icons or the flat icons in components/icons. */
+type IconType = React.ComponentType<{ size?: number; color?: string; strokeWidth?: number }>;
+
+/**
+ * Tile colours: a soft tint behind the icon and a deep shade of the same hue for the icon itself
+ * (every icon shade is well above 3:1 contrast on its tint). Distinct hues so neighbouring tiles
+ * are easy to tell apart at a glance.
+ */
+export const QUICK_ACTION_TONES = {
+  orange: { icon: '#C2410C', bg: '#FFF1EA' },
+  teal: { icon: '#0F766E', bg: '#E7F6F3' },
+  blue: { icon: '#1D4ED8', bg: '#EBF1FE' },
+  violet: { icon: '#6D28D9', bg: '#F3EEFE' },
+  green: { icon: '#15803D', bg: '#E9F7EE' },
+  pink: { icon: '#BE185D', bg: '#FDEEF4' },
+  slate: { icon: '#334155', bg: '#EEF2F6' },
+} as const;
+
+export type QuickActionTone = keyof typeof QUICK_ACTION_TONES;
 
 export interface QuickActionItem {
   key: string;
   label: string;
   /** Short line under the label (tablets): "Live tables", "Riders"… */
   hint?: string;
-  icon: LucideIcon;
+  icon: IconType;
+  /** Tile colour (default: slate) */
+  tone?: QuickActionTone;
   badge?: number;
   onPress: () => void;
 }
@@ -30,7 +51,9 @@ export function QuickActions({ items, isTablet }: { items: QuickActionItem[]; is
         Quick actions
       </Text>
       <View style={[styles.grid, { gap: GAP }]} onLayout={(e) => setWidth(e.nativeEvent.layout.width)} testID="quick-actions-grid">
-        {items.map(({ key, label, hint, icon: Icon, badge, onPress }) => (
+        {items.map(({ key, label, hint, icon: Icon, tone, badge, onPress }) => {
+          const colors = QUICK_ACTION_TONES[tone || 'slate'];
+          return (
             <TouchableOpacity
               key={key}
               style={[styles.tile, { width: tileW > 0 ? tileW : (`${Math.floor(100 / cols) - 2}%` as const) }, isTablet && styles.tileTablet]}
@@ -39,8 +62,8 @@ export function QuickActions({ items, isTablet }: { items: QuickActionItem[]; is
               accessibilityRole="button"
               accessibilityLabel={`${label}${badge ? `, ${badge}` : ''}${hint ? `. ${hint}` : ''}`}
             >
-              <View style={[styles.iconBox, isTablet && styles.iconBoxTablet]}>
-                <Icon size={isTablet ? 24 : 21} color={Colors.primary} strokeWidth={2.2} />
+              <View style={[styles.iconBox, isTablet && styles.iconBoxTablet, { backgroundColor: colors.bg }]} testID={`quick-action-icon-${key}`}>
+                <Icon size={isTablet ? 29 : 25} color={colors.icon} strokeWidth={2.2} />
                 {badge ? (
                   <View style={styles.badge}>
                     <Text style={styles.badgeText}>{badge > 99 ? '99+' : badge}</Text>
@@ -56,7 +79,8 @@ export function QuickActions({ items, isTablet }: { items: QuickActionItem[]; is
                 </Text>
               ) : null}
             </TouchableOpacity>
-          ))}
+          );
+        })}
       </View>
     </View>
   );
@@ -78,7 +102,7 @@ const styles = StyleSheet.create({
   grid: { flexDirection: 'row', flexWrap: 'wrap' },
   tile: { alignItems: 'center', paddingVertical: 8, borderRadius: 14 },
   tileTablet: { paddingVertical: 12, backgroundColor: Colors.cardSurface },
-  iconBox: { width: 50, height: 50, borderRadius: 15, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.primaryLight },
+  iconBox: { width: 50, height: 50, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
   iconBoxTablet: { width: 56, height: 56, borderRadius: 17 },
   label: { marginTop: 8, fontSize: 12.5, fontWeight: '700', color: Colors.text },
   labelTablet: { fontSize: 14 },

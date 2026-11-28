@@ -4,10 +4,10 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  ActivityIndicator,
   useWindowDimensions,
   Modal,
 } from 'react-native';
+import { Skeleton } from './Skeleton';
 import { Colors } from '../constants/colors';
 import { Order } from '../types';
 import { orderService } from '../services/order.service';
@@ -27,6 +27,10 @@ export type ChartMetric = 'revenue' | 'orders' | 'payment';
 export interface DashboardAnalytics {
   totalRevenue: number;
   totalOrders: number;
+  /** Orders counted in sales: not cancelled and, for card/online, paid. */
+  salesCount: number;
+  /** Card/online orders whose payment isn't complete (left out of sales). */
+  unpaidOrders: number;
   deliveredOrders: number;
   deliveredRevenue: number;
   cancelledOrders: number;
@@ -60,20 +64,77 @@ export interface DashboardAnalytics {
   }>;
 }
 
+/**
+ * How each order counts (one place, so every figure on the screen agrees):
+ *  - Ignored entirely: `awaiting_payment` (a card checkout that was never paid — not a real order).
+ *  - Cancelled: status `cancelled`, or rejected by the restaurant.
+ *  - Unpaid: a card / online order whose payment is not `paid` (pending, failed or refunded).
+ *    Cash orders are paid at the counter or door, so they count from the moment they are placed.
+ *  - Sale: every order that is neither cancelled nor unpaid. Sales, average order, channel and
+ *    payment figures and the daily chart are built from sales only.
+ *  - Orders (the count) is every order except awaiting_payment, cancelled ones included,
+ *    so "cancelled" and "completed" can be shown against it.
+ */
+export function orderTotalOf(order: Order): number {
+  const explicitTotal =
+    order.pricing?.totalAmount ??
+    order.pricing?.total ??
+    order.totalAmount ??
+    (order as any).totalPrice ??
+    (order as any).grandTotal;
+  if (explicitTotal !== undefined && explicitTotal !== null && !isNaN(Number(explicitTotal))) {
+    return Number(explicitTotal);
+  }
+  if (Array.isArray(order.orderedItems)) {
+    return order.orderedItems.reduce((sum, it: any) => {
+      const p = Number(it.itemTotal || it.totalPrice || (it.price ? it.price * (it.quantity || 1) : 0));
+      return sum + (isNaN(p) ? 0 : p);
+    }, 0);
+  }
+  return 0;
+}
+
+export function classifyOrder(order: Order) {
+  const status = String(order.status || 'placed').toLowerCase();
+  const ignored = status === 'awaiting_payment';
+  const cancelled = status === 'cancelled' || (order as any).acceptanceStatus === 'rejected';
+  const payType = String(order.paymentType || '').toLowerCase();
+  const isCash = payType === 'cash';
+  const paymentStatus = String((order as any).paymentStatus || '').toLowerCase();
+  const unpaid = !isCash && paymentStatus !== 'paid';
+  return { status, ignored, cancelled, isCash, unpaid, isSale: !ignored && !cancelled && !unpaid };
+}
+
+/** delivery | pickup (pickup + takeaway, both collected at the counter) | dine_in */
+export function channelOf(order: Order): 'delivery' | 'pickup' | 'dine_in' {
+  const raw = String(order.orderType || (order as any).fulfillmentType || '').toLowerCase();
+  if (raw.includes('dine')) return 'dine_in';
+  if (raw.includes('pick') || raw.includes('takeaway') || raw.includes('collect')) return 'pickup';
+  return 'delivery';
+}
+
+/** Local calendar day, with the year (so "All time" never merges 5 Mar 2025 with 5 Mar 2026). */
+function dayKeyOf(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 export function computeDashboardAnalytics(orders: Order[]): DashboardAnalytics {
+  let totalOrders = 0;
+  let salesCount = 0;
   let totalRevenue = 0;
   let deliveredOrders = 0;
   let deliveredRevenue = 0;
   let cancelledOrders = 0;
   let cancelledRevenue = 0;
+  let unpaidOrders = 0;
   let cashOrdersCount = 0;
   let cashRevenue = 0;
   let onlineOrdersCount = 0;
   let onlineRevenue = 0;
 
-  const dailyMap = new Map<string, any>();
-  const fulfillmentMap: Record<string, number> = { delivery: 0, pickup: 0, dine_in: 0 };
-  const fulfillmentRevMap: Record<string, number> = { delivery: 0, pickup: 0, dine_in: 0 };
+  const dailyMap = new Map<string, DashboardAnalytics['dailyBreakdown'][number]>();
+  const channelCount: Record<string, number> = { delivery: 0, pickup: 0, dine_in: 0 };
+  const channelRevenue: Record<string, number> = { delivery: 0, pickup: 0, dine_in: 0 };
   const statusMap: Record<string, number> = {
     placed: 0,
     preparing: 0,
@@ -84,153 +145,104 @@ export function computeDashboardAnalytics(orders: Order[]): DashboardAnalytics {
   };
 
   orders.forEach((order) => {
-    const explicitTotal =
-      order.pricing?.totalAmount ??
-      order.pricing?.total ??
-      order.totalAmount ??
-      (order as any).totalPrice ??
-      (order as any).grandTotal;
+    const c = classifyOrder(order);
+    if (c.ignored) return;
+    totalOrders += 1;
 
-    let orderTotal = 0;
-    if (explicitTotal !== undefined && explicitTotal !== null && !isNaN(Number(explicitTotal))) {
-      orderTotal = Number(explicitTotal);
-    } else if (Array.isArray(order.orderedItems)) {
-      orderTotal = order.orderedItems.reduce((sum, it: any) => {
-        const p = Number(it.itemTotal || it.totalPrice || (it.price ? it.price * (it.quantity || 1) : 0));
-        return sum + (isNaN(p) ? 0 : p);
-      }, 0);
-    }
+    const orderTotal = orderTotalOf(order);
+    const isDelivered = c.status === 'delivered' && !c.cancelled;
 
-    const st = (order.status || 'placed').toLowerCase();
-    const isDelivered = st === 'delivered';
-    const isCancelled = st === 'cancelled' || (order as any).acceptanceStatus === 'rejected';
-    const isValid = !isCancelled;
+    // Status breakdown: a rejected order is cancelled even if its status still says "placed"
+    const statusBucket = c.cancelled
+      ? 'cancelled'
+      : c.status === 'confirmed'
+        ? 'preparing'
+        : statusMap[c.status] !== undefined
+          ? c.status
+          : 'placed';
+    statusMap[statusBucket] += 1;
 
-    const pType = (order.paymentType || '').toLowerCase();
-    const isCash = pType === 'cash';
-    const isOnline = ['card', 'online', 'stripe', 'wallet'].includes(pType) || (!isCash && Boolean(pType));
-
-    // Fulfillment
-    const rawFType = ((order.orderType || (order as any).fulfillmentType || '') as string).toLowerCase();
-    const fType = rawFType.includes('dine') ? 'dine_in' : rawFType.includes('pick') ? 'pickup' : 'delivery';
-    fulfillmentMap[fType] = (fulfillmentMap[fType] || 0) + 1;
-
-    // Status
-    if (statusMap[st] !== undefined) {
-      statusMap[st] += 1;
-    } else {
-      statusMap.placed += 1;
-    }
-
-    if (isValid) {
-      totalRevenue += orderTotal;
-      fulfillmentRevMap[fType] = (fulfillmentRevMap[fType] || 0) + orderTotal;
+    if (c.cancelled) {
+      cancelledOrders += 1;
+      cancelledRevenue += orderTotal;
+    } else if (c.unpaid) {
+      unpaidOrders += 1;
     }
     if (isDelivered) {
       deliveredOrders += 1;
       deliveredRevenue += orderTotal;
     }
-    if (isCancelled) {
-      cancelledOrders += 1;
-      cancelledRevenue += orderTotal;
-    }
 
-    if (isCash) {
-      cashOrdersCount += 1;
-      if (isValid) cashRevenue += orderTotal;
-    } else {
-      onlineOrdersCount += 1;
-      if (isValid) onlineRevenue += orderTotal;
-    }
-
-    // Daily grouping
-    const dateObj = order.createdAt ? new Date(order.createdAt) : new Date();
-    const day = dateObj.getDate().toString().padStart(2, '0');
-    const month = (dateObj.getMonth() + 1).toString().padStart(2, '0');
-    const dateKey = `${day}/${month}`;
-
-    if (!dailyMap.has(dateKey)) {
-      dailyMap.set(dateKey, {
-        date: dateKey,
-        rawDate: dateObj,
+    // Daily: every order counts towards the day's orders; only sales towards its revenue
+    const created = order.createdAt ? new Date(order.createdAt) : new Date();
+    const key = dayKeyOf(created);
+    let day = dailyMap.get(key);
+    if (!day) {
+      day = {
+        date: key,
+        rawDate: new Date(created.getFullYear(), created.getMonth(), created.getDate()),
         orders: 0,
         delivered: 0,
         revenue: 0,
         cashOrders: 0,
         onlineOrders: 0,
-      });
+      };
+      dailyMap.set(key, day);
     }
+    day.orders += 1;
+    if (isDelivered) day.delivered += 1;
 
-    const dayObj = dailyMap.get(dateKey);
-    dayObj.orders += 1;
-    if (isValid) dayObj.revenue += orderTotal;
-    if (isDelivered) dayObj.delivered += 1;
-    if (isCash) dayObj.cashOrders += 1;
-    else dayObj.onlineOrders += 1;
+    if (!c.isSale) return;
+    salesCount += 1;
+    totalRevenue += orderTotal;
+    day.revenue += orderTotal;
+
+    const channel = channelOf(order);
+    channelCount[channel] += 1;
+    channelRevenue[channel] += orderTotal;
+
+    if (c.isCash) {
+      cashOrdersCount += 1;
+      cashRevenue += orderTotal;
+      day.cashOrders += 1;
+    } else {
+      onlineOrdersCount += 1;
+      onlineRevenue += orderTotal;
+      day.onlineOrders += 1;
+    }
   });
 
-  const dailyBreakdown = Array.from(dailyMap.values()).sort(
-    (a, b) => a.rawDate.getTime() - b.rawDate.getTime()
-  );
-
-  const totalOrdersCount = orders.length;
-  const validOrdersCount = orders.filter(
-    (o) => o.status !== 'cancelled' && (o as any).acceptanceStatus !== 'rejected'
-  ).length;
-
-  const averageOrderValue = validOrdersCount > 0 ? totalRevenue / validOrdersCount : 0;
-
-  const orderTypeBreakdown = [
-    {
-      id: 'delivery',
-      name: 'Delivery',
-      icon: '🛵',
-      count: fulfillmentMap.delivery || 0,
-      revenue: fulfillmentRevMap.delivery || 0,
-      percentage: totalOrdersCount > 0 ? Math.round(((fulfillmentMap.delivery || 0) / totalOrdersCount) * 100) : 0,
-    },
-    {
-      id: 'pickup',
-      name: 'Self Pickup',
-      icon: '🛍️',
-      count: fulfillmentMap.pickup || 0,
-      revenue: fulfillmentRevMap.pickup || 0,
-      percentage: totalOrdersCount > 0 ? Math.round(((fulfillmentMap.pickup || 0) / totalOrdersCount) * 100) : 0,
-    },
-    {
-      id: 'dine_in',
-      name: 'Dine In',
-      icon: '🍽️',
-      count: fulfillmentMap.dine_in || 0,
-      revenue: fulfillmentRevMap.dine_in || 0,
-      percentage: totalOrdersCount > 0 ? Math.round(((fulfillmentMap.dine_in || 0) / totalOrdersCount) * 100) : 0,
-    },
-  ];
-
-  const statusReport = [
-    { id: 'placed', name: 'Placed', count: statusMap.placed || 0 },
-    { id: 'preparing', name: 'In Kitchen', count: statusMap.preparing || 0 },
-    { id: 'ready_for_pickup', name: 'Ready', count: statusMap.ready_for_pickup || 0 },
-    { id: 'out_for_delivery', name: 'Out for delivery', count: statusMap.out_for_delivery || 0 },
-    { id: 'delivered', name: 'Delivered', count: statusMap.delivered || 0 },
-    { id: 'cancelled', name: 'Cancelled', count: statusMap.cancelled || 0 },
-  ];
+  const dailyBreakdown = Array.from(dailyMap.values()).sort((a, b) => a.rawDate.getTime() - b.rawDate.getTime());
+  const pct = (n: number) => (salesCount > 0 ? Math.round((n / salesCount) * 100) : 0);
 
   return {
     totalRevenue,
-    totalOrders: totalOrdersCount,
+    totalOrders,
+    salesCount,
+    unpaidOrders,
     deliveredOrders,
     deliveredRevenue,
     cancelledOrders,
     cancelledRevenue,
-    averageOrderValue,
+    averageOrderValue: salesCount > 0 ? totalRevenue / salesCount : 0,
     cashOrdersCount,
     cashRevenue,
     onlineOrdersCount,
     onlineRevenue,
     dailyBreakdown,
-    orderTypeBreakdown,
-    statusReport,
+    orderTypeBreakdown: [
+      { id: 'delivery', name: 'Delivery', icon: '🛵', count: channelCount.delivery, revenue: channelRevenue.delivery, percentage: pct(channelCount.delivery) },
+      { id: 'pickup', name: 'Pickup & takeaway', icon: '🛍️', count: channelCount.pickup, revenue: channelRevenue.pickup, percentage: pct(channelCount.pickup) },
+      { id: 'dine_in', name: 'Dine In', icon: '🍽️', count: channelCount.dine_in, revenue: channelRevenue.dine_in, percentage: pct(channelCount.dine_in) },
+    ],
+    statusReport: [
+      { id: 'placed', name: 'Placed', count: statusMap.placed },
+      { id: 'preparing', name: 'In Kitchen', count: statusMap.preparing },
+      { id: 'ready_for_pickup', name: 'Ready', count: statusMap.ready_for_pickup },
+      { id: 'out_for_delivery', name: 'Out for delivery', count: statusMap.out_for_delivery },
+      { id: 'delivered', name: 'Delivered', count: statusMap.delivered },
+      { id: 'cancelled', name: 'Cancelled', count: statusMap.cancelled },
+    ],
   };
 }
 
@@ -325,6 +337,111 @@ function SalesTrend({ days, money }: { days: DashboardAnalytics['dailyBreakdown'
   );
 }
 
+/* ── Loading skeleton ─────────────────────────────────────────────────── */
+
+/** A card of placeholder rows (label on the left, value on the right). */
+function SkeletonListCard({ rows, testID }: { rows: number; testID?: string }) {
+  return (
+    <View style={styles.card} testID={testID}>
+      <View style={styles.cardHeader}>
+        <Skeleton width={120} height={16} />
+        <Skeleton width={60} height={12} />
+      </View>
+      <View style={{ gap: 12, marginTop: 4 }}>
+        {Array.from({ length: rows }, (_, i) => (
+          <View key={i} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Skeleton width={`${45 - (i % 3) * 8}%`} height={12} />
+            <Skeleton width={56} height={12} />
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+/** Bar heights for the placeholder chart (fixed, so it doesn't flicker between renders). */
+const SKELETON_BARS = [40, 65, 30, 80, 55, 70, 45, 90, 60, 35, 75, 50];
+
+/**
+ * Placeholder for the whole dashboard while orders load: the same cards in the same places
+ * (phone, portrait tablet, landscape two-column), so nothing jumps when the numbers arrive.
+ */
+function AnalyticsSkeleton({ wide, isTablet, pairInRow }: { wide: boolean; isTablet: boolean; pairInRow: boolean }) {
+  const kpis = (
+    <View style={[styles.kpiArea, isTablet && styles.kpiAreaTablet]} testID="analytics-skeleton-kpis">
+      <View style={[styles.heroCard, isTablet && styles.heroCardTablet, styles.skeletonHero]}>
+        <Skeleton width={60} height={12} style={{ marginBottom: 12 }} />
+        <Skeleton width="65%" height={30} style={{ marginBottom: 10 }} />
+        <Skeleton width="45%" height={12} />
+      </View>
+      <View style={[styles.kpiGrid, isTablet && styles.kpiGridTablet]}>
+        {[0, 1, 2].map((i) => (
+          <View key={i} style={[styles.kpiCard, isTablet ? styles.kpiCardStacked : styles.kpiCardPhone]}>
+            <Skeleton width="55%" height={11} style={{ marginBottom: 10 }} />
+            <Skeleton width="70%" height={22} style={{ marginBottom: 8 }} />
+            <Skeleton width="50%" height={10} />
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+  const trend = (
+    <View style={styles.card} testID="analytics-skeleton-trend">
+      <View style={styles.cardHeader}>
+        <Skeleton width={110} height={16} />
+        <Skeleton width={50} height={12} />
+      </View>
+      <Skeleton width="55%" height={14} style={{ marginBottom: 14 }} />
+      <View style={styles.skeletonBars}>
+        {SKELETON_BARS.map((h, i) => (
+          <View key={i} style={styles.skeletonBarCol}>
+            <Skeleton width="100%" height={`${h}%`} borderRadius={4} />
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+  const status = <SkeletonListCard rows={6} />;
+  const payments = <SkeletonListCard rows={2} />;
+  const dishes = <SkeletonListCard rows={5} />;
+  const channels = <SkeletonListCard rows={3} />;
+
+  return (
+    <View
+      testID="analytics-skeleton"
+      accessible
+      accessibilityLabel="Loading analytics"
+      accessibilityState={{ busy: true }}
+    >
+      {wide ? (
+        <View style={styles.wideRow}>
+          <View style={styles.wideCol}>
+            {kpis}
+            {trend}
+            {channels}
+          </View>
+          <View style={styles.wideCol}>
+            {status}
+            {payments}
+            {dishes}
+          </View>
+        </View>
+      ) : (
+        <>
+          {kpis}
+          {trend}
+          {status}
+          <View style={[styles.pairRow, pairInRow && styles.pairRowTablet]}>
+            {payments}
+            {dishes}
+          </View>
+          {channels}
+        </>
+      )}
+    </View>
+  );
+}
+
 export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
   initialOrders,
   ownerStats,
@@ -340,8 +457,13 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
   const pairInRow = isTablet && !wide;
 
   const [timeframe, setTimeframe] = useState<TimeframeKey>('today');
-  const [loading, setLoading] = useState(false);
-  const [timeframeOrders, setTimeframeOrders] = useState<Order[]>(initialOrders);
+  // Start loading with nothing: showing `initialOrders` (every order) under "Today" until the
+  // first fetch finished made the first numbers on screen wrong.
+  const [loading, setLoading] = useState(true);
+  const [timeframeOrders, setTimeframeOrders] = useState<Order[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  /** Only the newest request may update the screen (switching periods quickly used to let a slow, older answer win). */
+  const requestSeq = React.useRef(0);
   const [topDishes, setTopDishes] = useState<TopDishItem[]>([]);
   // The menu report isn't date-filtered, so say so instead of implying it matches the period.
   const [dishesAllTime, setDishesAllTime] = useState(false);
@@ -486,19 +608,34 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
 
   const fetchAnalyticsData = useCallback(
     async (tf: TimeframeKey, overrideStart?: Date, overrideEnd?: Date) => {
+      const seq = ++requestSeq.current;
       setLoading(true);
+      setLoadError(null);
       try {
         const bounds = getTimeframeBounds(tf, overrideStart || customStartDate, overrideEnd || customEndDate);
         const [ordersRes, menuRes] = await Promise.allSettled([
           orderService.fetchAllOrders({
             startDate: bounds.startDate,
             endDate: bounds.endDate,
+            allPages: true,
           }),
           orderService.getMenuPerformanceReport(),
         ]);
+        if (seq !== requestSeq.current) return; // a newer period was chosen meanwhile
 
         if (ordersRes.status === 'fulfilled' && ordersRes.value.success) {
           let list = ordersRes.value.data || (ordersRes.value as any).orders || [];
+          // Keep exactly the chosen period on this device's clock. (The server stretches the end
+          // of the range to 23:59 in its own time zone, which adds hours of the next day for
+          // phones ahead of UTC.)
+          if (bounds.startDate || bounds.endDate) {
+            const from = bounds.startDate ? new Date(bounds.startDate).getTime() : -Infinity;
+            const to = bounds.endDate ? new Date(bounds.endDate).getTime() : Infinity;
+            list = list.filter((o: any) => {
+              const t = o.createdAt ? new Date(o.createdAt).getTime() : NaN;
+              return Number.isFinite(t) && t >= from && t <= to;
+            });
+          }
           if (restaurantId) {
             list = list.filter((o: any) => {
               const rId =
@@ -511,20 +648,13 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
             });
           }
           setTimeframeOrders(list);
-        } else if (tf === 'all' && initialOrders.length > 0) {
-          let list = initialOrders;
-          if (restaurantId) {
-            list = list.filter((o: any) => {
-              const rId =
-                o.restaurantId?._id ||
-                o.restaurantId?.id ||
-                o.restaurantId ||
-                (o.restaurant as any)?._id ||
-                (o.restaurant as any)?.id;
-              return String(rId) === String(restaurantId);
-            });
-          }
-          setTimeframeOrders(list);
+        } else {
+          // Never leave the previous period's numbers on screen under the new period's name
+          setTimeframeOrders([]);
+          setLoadError(
+            (ordersRes.status === 'fulfilled' && ordersRes.value.message) ||
+              'Could not load orders for this period. Pull down to try again.'
+          );
         }
 
         if (menuRes.status === 'fulfilled' && menuRes.value.success && Array.isArray(menuRes.value.data)) {
@@ -569,8 +699,12 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
         }
       } catch (err) {
         console.warn('Failed fetching analytics data:', err);
+        if (seq === requestSeq.current) {
+          setTimeframeOrders([]);
+          setLoadError('Could not load orders for this period. Pull down to try again.');
+        }
       } finally {
-        setLoading(false);
+        if (seq === requestSeq.current) setLoading(false);
       }
     },
     [getTimeframeBounds, initialOrders, customStartDate, customEndDate, restaurantId]
@@ -595,42 +729,10 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
     // refreshKey: the screen's refresh button
   }, [timeframe, fetchAnalyticsData, restaurantId, refreshKey]);
 
-  useEffect(() => {
-    if (initialOrders && initialOrders.length > 0) {
-      if (timeframe === 'all') {
-        let list = initialOrders;
-        if (restaurantId) {
-          list = list.filter((o: any) => {
-            const rId =
-              o.restaurantId?._id ||
-              o.restaurantId?.id ||
-              o.restaurantId ||
-              (o.restaurant as any)?._id ||
-              (o.restaurant as any)?.id;
-            return String(rId) === String(restaurantId);
-          });
-        }
-        setTimeframeOrders(list);
-      }
-    }
-  }, [initialOrders, timeframe, restaurantId]);
-
-  // Compute analytics
-  const analytics = useMemo(() => {
-    const res = computeDashboardAnalytics(timeframeOrders);
-    // If all time and orders is empty or limited, blend ownerStats if available
-    if (timeframe === 'all' && ownerStats && ownerStats.totalIncome > 0 && res.totalRevenue === 0) {
-      return {
-        ...res,
-        totalRevenue: ownerStats.totalIncome,
-        totalOrders: ownerStats.totalOrders,
-        deliveredOrders: ownerStats.totalDelivered,
-        cancelledOrders: ownerStats.totalCancelled,
-        averageOrderValue: ownerStats.totalOrders > 0 ? ownerStats.totalIncome / ownerStats.totalOrders : 0,
-      };
-    }
-    return res;
-  }, [timeframeOrders, timeframe, ownerStats]);
+  // (Removed: an effect that replaced the "All time" orders with `initialOrders` — only the newest
+  // 150 orders — and a fallback that swapped in server totals counted by different rules.
+  // Every figure now comes from the same full list and the same rules.)
+  const analytics = useMemo(() => computeDashboardAnalytics(timeframeOrders), [timeframeOrders]);
 
   const money = (n: number) =>
     `£${(Number.isFinite(n) ? n : 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -649,7 +751,7 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
           : `${shortDate(customStartDate)} – ${longDate(customEndDate)}`
         : 'All time';
 
-  const paidOrders = Math.max(analytics.totalOrders - analytics.cancelledOrders, 0);
+  const salesCount = analytics.salesCount;
   const totalCashAndOnline = analytics.cashOrdersCount + analytics.onlineOrdersCount;
   const cashPct = totalCashAndOnline > 0 ? Math.round((analytics.cashOrdersCount / totalCashAndOnline) * 100) : 0;
   const onlinePct = totalCashAndOnline > 0 ? 100 - cashPct : 0;
@@ -665,9 +767,15 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
   };
 
   const kpis: Array<{ label: string; value: string; sub: string; subTone?: 'bad' }> = [
-    { label: 'Sales', value: money(analytics.totalRevenue), sub: `${paidOrders} paid ${paidOrders === 1 ? 'order' : 'orders'}` },
+    {
+      label: 'Sales',
+      value: money(analytics.totalRevenue),
+      sub:
+        `${salesCount} ${salesCount === 1 ? 'order' : 'orders'}` +
+        (analytics.unpaidOrders > 0 ? ` · ${analytics.unpaidOrders} unpaid not included` : ''),
+    },
     { label: 'Orders', value: String(analytics.totalOrders), sub: `${analytics.deliveredOrders} completed` },
-    { label: 'Average order', value: money(analytics.averageOrderValue), sub: 'Excludes cancelled' },
+    { label: 'Average order', value: money(analytics.averageOrderValue), sub: 'Excludes cancelled & unpaid' },
     {
       label: 'Completion',
       value: `${completionRate}%`,
@@ -891,10 +999,16 @@ export const RestaurantAnalytics: React.FC<RestaurantAnalyticsProps> = ({
 
       <View style={styles.periodRow}>
         <Text style={styles.periodLabel} numberOfLines={1}>{periodLabel}</Text>
-        {loading ? <ActivityIndicator size="small" color={Colors.primary} /> : null}
       </View>
+      {loadError && !loading ? (
+        <Text style={styles.loadError} accessibilityRole="alert">
+          {loadError}
+        </Text>
+      ) : null}
 
-      {wide ? (
+      {loading ? (
+        <AnalyticsSkeleton wide={wide} isTablet={isTablet} pairInRow={pairInRow} />
+      ) : wide ? (
         <View style={styles.wideRow}>
           <View style={styles.wideCol}>
             {kpiBlock}
@@ -1298,12 +1412,26 @@ const styles = StyleSheet.create({
   kpiAreaTablet: { flexDirection: 'row', alignItems: 'stretch' },
   kpiGridTablet: { flex: 1, marginBottom: 0 },
   heroCard: { padding: 16, borderRadius: 16, backgroundColor: Colors.primary },
+  // Loading skeleton: the hero card's shape in a neutral colour, and the chart's bar row
+  skeletonHero: { backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: Colors.cardBorder },
+  skeletonBars: { flexDirection: 'row', alignItems: 'flex-end', gap: 6, height: 120 },
+  skeletonBarCol: { flex: 1, height: '100%', justifyContent: 'flex-end' },
   heroCardTablet: { flexBasis: '34%', justifyContent: 'center' },
   heroLabel: { fontSize: 13, fontWeight: '700', color: 'rgba(255,255,255,0.85)' },
   heroValue: { fontSize: 32, fontWeight: '800', color: '#FFFFFF', marginTop: 4, letterSpacing: -0.6, fontVariant: ['tabular-nums'] },
   heroSub: { fontSize: 13, color: 'rgba(255,255,255,0.85)', marginTop: 2 },
   periodRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: -6, marginBottom: 12 },
   periodLabel: { fontSize: 13, fontWeight: '600', color: Colors.textMuted },
+  loadError: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#B91C1C',
+    backgroundColor: '#FEF2F2',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 12,
+  },
   wideRow: { flexDirection: 'row', gap: 12, alignItems: 'flex-start' },
   wideCol: { flex: 1, minWidth: 0 },
   trendReadout: { fontSize: 13, color: Colors.textMuted, marginBottom: 8 },

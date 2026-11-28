@@ -4,6 +4,9 @@ import { ReceiptCommand } from './receipt-document';
 import { PosPrinterConfig } from '../pos-config.service';
 import { classifyEposXmlResult, classifyRawByteResult } from './print-result-classifier';
 
+/** Longest a single job may take on one printer (connect + send + drain) before it is failed. */
+const JOB_TIMEOUT_MS = 45000;
+
 interface QueuedJob {
   id: string;
   printerId: string;
@@ -46,8 +49,19 @@ export class PrintQueueService {
             // 1. Encode document into wire format using the printer's encoder
             const payload = printer.encoder.encode(commands, config);
 
-            // 2. Transmit bytes/string via printer transport
-            const transportResult = await printer.transport.send(payload);
+            // 2. Transmit bytes/string via printer transport. Some native drivers (e.g. classic
+            //    Bluetooth connect) can hang without ever settling; without this cap the job would
+            //    hold the printer's queue forever and every later order would silently never print.
+            let capTimer: ReturnType<typeof setTimeout> | undefined;
+            const transportResult = await Promise.race([
+              printer.transport.send(payload),
+              new Promise<never>((_, reject) => {
+                capTimer = setTimeout(
+                  () => reject(new Error(`Printer did not respond within ${JOB_TIMEOUT_MS / 1000}s. Check that it is on and connected.`)),
+                  JOB_TIMEOUT_MS
+                );
+              }),
+            ]).finally(() => clearTimeout(capTimer));
 
             // 3. Classify outcome
             let classified: PrintResult;
